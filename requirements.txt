@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+python-multipart
+googletrans==4.0.0rc1
+gTTS
