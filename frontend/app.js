@@ -49,7 +49,7 @@ async function translateAndSpeak(text) {
 
   try {
     // Step 1: Translate
-    const transRes = await fetch(`${API}/translate`, {
+    const transRes = await fetch(`${API_URL}/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
@@ -60,7 +60,7 @@ async function translateAndSpeak(text) {
     document.getElementById("translatedText").textContent = translatedText;
 
     // Step 2: Get Audio
-    const audioRes = await fetch(`${API}/speak`, {
+    const audioRes = await fetch(`${API_URL}/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translatedText, lang: toLang })
