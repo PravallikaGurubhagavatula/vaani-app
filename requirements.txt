@@ -1,6 +1,6 @@
-fastapi
-uvicorn[standard]
-python-multipart
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
 httpx==0.13.3
 googletrans==4.0.0rc1
-gTTS
+gTTS==2.3.2
