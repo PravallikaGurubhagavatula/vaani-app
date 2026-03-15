@@ -1,6 +1,9 @@
 // const API = "http://127.0.0.1:8000";
 const API_URL = "https://vaani-app-ui0z.onrender.com";
+
 let audioBlob = null;
+let lastSpokenText = "";      // stores original spoken text
+let lastFromLang = "";        // stores original from language
 
 // ── Speech Recognition Setup ─────────────────────────
 const SpeechRecognition = window.SpeechRecognition 
@@ -8,6 +11,26 @@ const SpeechRecognition = window.SpeechRecognition
 const recognition = new SpeechRecognition();
 recognition.continuous = false;
 recognition.interimResults = false;
+
+// ── Language Change Listeners ─────────────────────────
+// When "Translate To" language changes → re-translate same text
+document.getElementById("toLang").addEventListener("change", async () => {
+  if (lastSpokenText) {
+    document.getElementById("micStatus").textContent = "Translating...";
+    await translateAndSpeak(lastSpokenText, lastFromLang);
+  }
+});
+
+// When "I Speak" language changes → clear everything, ask to speak again
+document.getElementById("fromLang").addEventListener("change", () => {
+  lastSpokenText = "";
+  lastFromLang = "";
+  audioBlob = null;
+  document.getElementById("originalText").textContent = "—";
+  document.getElementById("translatedText").textContent = "—";
+  document.getElementById("playBtn").style.display = "none";
+  document.getElementById("micStatus").textContent = "Language changed! Press mic and speak again.";
+});
 
 // ── Start Listening ───────────────────────────────────
 function startListening() {
@@ -26,11 +49,17 @@ function startListening() {
 // ── When Speech is Captured ───────────────────────────
 recognition.onresult = async (event) => {
   const spokenText = event.results[0][0].transcript;
+  const fromLang = document.getElementById("fromLang").value;
+
+  // Save for re-use when language changes
+  lastSpokenText = spokenText;
+  lastFromLang = fromLang;
+
   document.getElementById("originalText").textContent = spokenText;
   document.getElementById("micStatus").textContent = "Translating...";
   stopMic();
 
-  await translateAndSpeak(spokenText);
+  await translateAndSpeak(spokenText, fromLang);
 };
 
 recognition.onerror = (e) => {
@@ -43,9 +72,8 @@ function stopMic() {
 }
 
 // ── Translate + Get Audio ─────────────────────────────
-async function translateAndSpeak(text) {
-  const fromLang = document.getElementById("fromLang").value;
-  const toLang   = document.getElementById("toLang").value;
+async function translateAndSpeak(text, fromLang) {
+  const toLang = document.getElementById("toLang").value;
 
   try {
     // Step 1: Translate
@@ -59,11 +87,11 @@ async function translateAndSpeak(text) {
 
     document.getElementById("translatedText").textContent = translatedText;
 
-    // Step 2: Get Audio
+    // Step 2: Get Audio in the CORRECT toLang language
     const audioRes = await fetch(`${API_URL}/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: translatedText, lang: toLang })
+      body: JSON.stringify({ text: translatedText, lang: toLang })  // ← always uses toLang!
     });
 
     audioBlob = await audioRes.blob();
@@ -93,4 +121,13 @@ function swapLanguages() {
   const temp = f.value;
   f.value = t.value;
   t.value = temp;
+
+  // Clear everything after swap
+  lastSpokenText = "";
+  lastFromLang = "";
+  audioBlob = null;
+  document.getElementById("originalText").textContent = "—";
+  document.getElementById("translatedText").textContent = "—";
+  document.getElementById("playBtn").style.display = "none";
+  document.getElementById("micStatus").textContent = "Languages swapped! Press mic and speak again.";
 }
