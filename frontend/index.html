@@ -132,9 +132,14 @@
       </div>
       <p id="translatedText">—</p>
       <div class="action-btns" id="actionBtns" style="display:none">
-        <button class="play-btn" id="playBtn" onclick="playAudio()">▶ Play</button>
-        <button class="copy-btn-full" onclick="copyTranslation()">📋 Copy</button>
-      </div>
+  <button class="play-btn" id="playBtn" onclick="playAudio()">▶ Play</button>
+  <button class="copy-btn-full" onclick="copyTranslation()">📋 Copy</button>
+  <button class="fav-btn" onclick="saveToFavourites(
+    document.getElementById('originalText').textContent,
+    document.getElementById('translatedText').textContent,
+    document.getElementById('fromLang').value,
+    document.getElementById('toLang').value)">⭐ Save</button>
+</div>
     </div>
   </div>
 
@@ -324,10 +329,33 @@
     </div>
   </div>
 
+  <!-- ── PAGE: HISTORY ── -->
+<div id="pageHistory" class="page">
+  <div class="page-header">
+    <h2>📜 Translation History</h2>
+    <p>Your recent translations</p>
+  </div>
+  <div id="historyList" class="history-list">
+    <p class="empty-msg">Sign in to see your history</p>
+  </div>
+</div>
+
+<!-- ── PAGE: FAVOURITES ── -->
+<div id="pageFavourites" class="page">
+  <div class="page-header">
+    <h2>⭐ Favourite Phrases</h2>
+    <p>Your saved translations</p>
+  </div>
+  <div id="favouritesList" class="history-list">
+    <p class="empty-msg">Sign in to see your favourites</p>
+  </div>
+</div>
+  
   <!-- ── TOAST NOTIFICATION ── -->
   <div id="toast" class="toast">📋 Copied!</div>
 
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js"></script>
+<script type="module" src="firebase.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
