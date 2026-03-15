@@ -35,6 +35,9 @@
       <li class="menu-item" id="menuTravel" onclick="navigateTo('Travel')">
         <span class="menu-icon">✈</span><span>Travel Helper</span>
       </li>
+      <li class="menu-item" id="menuImage" onclick="navigateTo('Image')">
+        <span class="menu-icon">📸</span><span>Image Translation</span>
+      </li>
     </ul>
   </div>
 
@@ -214,9 +217,93 @@
     <div id="phrasesList" class="phrases-list"></div>
   </div>
 
+  <!-- ── PAGE: IMAGE TRANSLATION ── -->
+  <div id="pageImage" class="page">
+    <div class="page-header">
+      <h2>📸 Image Translation</h2>
+      <p>Upload an image with text — we'll translate it for you!</p>
+    </div>
+
+    <div class="lang-row">
+      <div class="lang-box">
+        <label>Text Language in Image</label>
+        <select id="imgFromLang">
+          <option value="te">Telugu</option><option value="ta">Tamil</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <span class="arrow-icon">→</span>
+      <div class="lang-box">
+        <label>Translate To</label>
+        <select id="imgToLang">
+          <option value="ta">Tamil</option><option value="te">Telugu</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Upload Area -->
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()"
+         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="handleDrop(event)">
+      <div class="upload-icon">📷</div>
+      <p class="upload-text">Tap to upload image</p>
+      <p class="upload-hint">or drag & drop here</p>
+      <p class="upload-hint">Supports JPG, PNG, WEBP</p>
+      <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+    </div>
+
+    <!-- Preview -->
+    <div id="imgPreviewBox" style="display:none" class="img-preview-box">
+      <img id="imgPreview" src="" alt="Uploaded image">
+      <button class="change-img-btn" onclick="document.getElementById('imageInput').click()">🔄 Change Image</button>
+    </div>
+
+    <!-- Translate Button -->
+    <button class="img-translate-btn" id="imgTranslateBtn" onclick="translateImage()" style="display:none">
+      🔍 Extract & Translate Text
+    </button>
+
+    <!-- Status -->
+    <p class="img-status" id="imgStatus"></p>
+
+    <!-- Results -->
+    <div id="imgResults" style="display:none">
+      <div class="result-box">
+        <div class="result-header">
+          <span class="result-label">📝 Text found in image:</span>
+          <button class="copy-btn" onclick="copyText('imgExtractedText')" title="Copy">📋</button>
+        </div>
+        <p id="imgExtractedText">—</p>
+      </div>
+
+      <div class="result-box translation-box">
+        <div class="result-header">
+          <span class="result-label">🌐 Translation:</span>
+          <button class="copy-btn" onclick="copyText('imgTranslatedText')" title="Copy">📋</button>
+        </div>
+        <p id="imgTranslatedText">—</p>
+        <div class="action-btns" id="imgActionBtns">
+          <button class="play-btn" onclick="playImgAudio()">▶ Play</button>
+          <button class="copy-btn-full" onclick="copyText('imgTranslatedText')">📋 Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── TOAST NOTIFICATION ── -->
   <div id="toast" class="toast">📋 Copied!</div>
 
+  <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
