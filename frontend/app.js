@@ -1,10 +1,153 @@
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
-let audioBlob = null, audioBlobA = null, audioBlobB = null;
 let lastSpokenText = "", lastFromLang = "";
 let currentConvSpeaker = null, currentCategory = "food";
 let travelPhrasesCache = {}, isDarkMode = true;
 
+// ── GLOBAL AUDIO PLAYER ───────────────────────────────
+let currentAudio = null;
+let currentAudioBlob = null;
+let currentPlayBtn = null;
+let currentTimelineId = null;
+let audioBlobA = null, audioBlobB = null;
+let imgAudioBlob = null;
+
+function stopAllAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  // Reset all play buttons
+  document.querySelectorAll('.ac-btn.ac-primary').forEach(btn => {
+    if (btn.dataset.playing === 'true') {
+      btn.dataset.playing = 'false';
+      btn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
+    }
+  });
+  // Clear all timelines
+  document.querySelectorAll('.audio-timeline-wrap').forEach(el => el.remove());
+}
+
+function createAudioPlayer(blob, btnEl, translatedText, containerId) {
+  stopAllAudio();
+  if (!blob) return;
+
+  const audio = new Audio(URL.createObjectURL(blob));
+  currentAudio = audio;
+  currentAudioBlob = blob;
+  currentPlayBtn = btnEl;
+  currentTimelineId = containerId;
+
+  // Update button to pause state
+  btnEl.dataset.playing = 'true';
+  btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
+
+  // Build timeline UI
+  let timelineWrap = document.getElementById('timeline_' + containerId);
+  if (!timelineWrap) {
+    timelineWrap = document.createElement('div');
+    timelineWrap.id = 'timeline_' + containerId;
+    timelineWrap.className = 'audio-timeline-wrap';
+    timelineWrap.innerHTML = `
+      <div class="audio-timeline-bar">
+        <div class="audio-progress" id="progress_${containerId}"></div>
+        <input type="range" class="audio-scrubber" id="scrubber_${containerId}" min="0" max="100" value="0" step="0.1">
+      </div>
+      <div class="audio-time-row">
+        <span class="audio-time" id="curTime_${containerId}">0:00</span>
+        <span class="audio-time" id="durTime_${containerId}">0:00</span>
+      </div>
+      <div class="audio-words" id="words_${containerId}"></div>
+    `;
+    btnEl.closest('.result-card, .result-translated').appendChild(timelineWrap);
+  }
+
+  // Build word spans
+  const words = translatedText.trim().split(/\s+/);
+  const wordsEl = document.getElementById('words_' + containerId);
+  if (wordsEl) {
+    wordsEl.innerHTML = words.map((w, i) =>
+      `<span class="audio-word" data-idx="${i}" onclick="seekToWord(${i}, ${words.length}, '${containerId}')">${w}</span>`
+    ).join(' ');
+  }
+
+  // Scrubber input
+  const scrubber = document.getElementById('scrubber_' + containerId);
+  if (scrubber) {
+    scrubber.addEventListener('input', () => {
+      if (audio.duration) audio.currentTime = (scrubber.value / 100) * audio.duration;
+    });
+  }
+
+  // Time update
+  audio.addEventListener('timeupdate', () => {
+    if (!audio.duration) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    const prog = document.getElementById('progress_' + containerId);
+    const scr = document.getElementById('scrubber_' + containerId);
+    const cur = document.getElementById('curTime_' + containerId);
+    if (prog) prog.style.width = pct + '%';
+    if (scr) scr.value = pct;
+    if (cur) cur.textContent = formatTime(audio.currentTime);
+
+    // Highlight current word
+    const wIdx = Math.floor((audio.currentTime / audio.duration) * words.length);
+    document.querySelectorAll(`#words_${containerId} .audio-word`).forEach((w, i) => {
+      w.classList.toggle('active-word', i === wIdx);
+    });
+  });
+
+  audio.addEventListener('loadedmetadata', () => {
+    const dur = document.getElementById('durTime_' + containerId);
+    if (dur) dur.textContent = formatTime(audio.duration);
+  });
+
+  audio.addEventListener('ended', () => {
+    btnEl.dataset.playing = 'false';
+    btnEl.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
+    const prog = document.getElementById('progress_' + containerId);
+    const scr = document.getElementById('scrubber_' + containerId);
+    if (prog) prog.style.width = '0%';
+    if (scr) scr.value = 0;
+    document.querySelectorAll(`#words_${containerId} .audio-word`).forEach(w => w.classList.remove('active-word'));
+    currentAudio = null;
+  });
+
+  audio.play();
+}
+
+window.seekToWord = function(idx, total, containerId) {
+  if (currentAudio && currentAudio.duration) {
+    currentAudio.currentTime = (idx / total) * currentAudio.duration;
+    if (currentAudio.paused) currentAudio.play();
+  }
+};
+
+function toggleAudio(blob, btnEl, translatedText, containerId) {
+  if (currentAudio && currentPlayBtn === btnEl) {
+    // Same button — toggle pause/resume
+    if (currentAudio.paused) {
+      currentAudio.play();
+      btnEl.dataset.playing = 'true';
+      btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
+    } else {
+      currentAudio.pause();
+      btnEl.dataset.playing = 'false';
+      btnEl.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
+    }
+  } else {
+    // Different button or no audio — start new
+    createAudioPlayer(blob, btnEl, translatedText, containerId);
+  }
+}
+
+function formatTime(s) {
+  if (isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+// ── THEME ──────────────────────────────────────────────
 function toggleTheme() {
   isDarkMode = !isDarkMode;
   document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
@@ -16,6 +159,7 @@ function toggleTheme() {
   }
 }
 
+// ── INPUT MODE ────────────────────────────────────────
 function switchInputMode(mode) {
   document.getElementById('voiceModeBtn').classList.toggle('active', mode === 'voice');
   document.getElementById('textModeBtn').classList.toggle('active', mode === 'text');
@@ -23,6 +167,7 @@ function switchInputMode(mode) {
   document.getElementById('textInput').style.display = mode === 'text' ? 'block' : 'none';
 }
 
+// ── TEXT TRANSLATE ────────────────────────────────────
 async function translateTypedText() {
   const text = document.getElementById('textInputArea').value.trim();
   if (!text) return;
@@ -34,9 +179,10 @@ async function translateTypedText() {
   await translateAndSpeak(text, fromLang);
 }
 
+// ── COPY ──────────────────────────────────────────────
 function copyTranslation() {
   const text = document.getElementById("translatedText").textContent;
-  if (text && text !== "—") navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
+  if (text && text !== "—" && text !== "Translating...") navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
 }
 function copyText(id) {
   const text = document.getElementById(id).textContent;
@@ -48,6 +194,7 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove("show"), 2200);
 }
 
+// ── MENU ──────────────────────────────────────────────
 function toggleMenu() {
   document.getElementById("sideMenu").classList.toggle("open");
   document.getElementById("menuOverlay").classList.toggle("open");
@@ -73,12 +220,49 @@ function navigateTo(page) {
   if (page === "Favourites") loadFavourites();
 }
 
+// ── SPEECH RECOGNITION ───────────────────────────────
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition;
 try { recognition = new SpeechRecognition(); recognition.continuous = false; recognition.interimResults = false; } catch(e) {}
 
-document.getElementById("toLang").addEventListener("change", async () => { if (lastSpokenText) await translateAndSpeak(lastSpokenText, lastFromLang); });
-document.getElementById("fromLang").addEventListener("change", async () => { if (lastSpokenText) { lastFromLang = document.getElementById("fromLang").value; await translateAndSpeak(lastSpokenText, lastFromLang); } });
+// Auto-retranslate on language change
+document.getElementById("toLang").addEventListener("change", async () => {
+  if (lastSpokenText) {
+    stopAllAudio();
+    document.getElementById("translatedText").textContent = "Translating...";
+    await translateAndSpeak(lastSpokenText, lastFromLang);
+  }
+});
+document.getElementById("fromLang").addEventListener("change", async () => {
+  if (lastSpokenText) {
+    stopAllAudio();
+    lastFromLang = document.getElementById("fromLang").value;
+    document.getElementById("translatedText").textContent = "Translating...";
+    await translateAndSpeak(lastSpokenText, lastFromLang);
+  }
+});
+
+// Auto-retranslate image on language change
+document.getElementById("imgToLang").addEventListener("change", async () => {
+  const extracted = document.getElementById('imgExtractedText').textContent;
+  if (extracted && extracted !== "—" && document.getElementById('imgResults').style.display !== 'none') {
+    stopAllAudio();
+    document.getElementById('imgTranslatedText').textContent = "Translating...";
+    const fromLang = document.getElementById('imgFromLang').value;
+    const toLang = document.getElementById('imgToLang').value;
+    try {
+      const { translated } = await fetch(`${API_URL}/translate`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: extracted, from_lang: fromLang, to_lang: toLang })
+      }).then(r => r.json());
+      document.getElementById('imgTranslatedText').textContent = translated;
+      imgAudioBlob = await fetch(`${API_URL}/speak`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: translated, lang: toLang })
+      }).then(r => r.blob());
+    } catch { document.getElementById('imgTranslatedText').textContent = "Translation error"; }
+  }
+});
 
 function startListening() {
   if (!recognition) { showToast("Speech recognition not supported"); return; }
@@ -89,6 +273,7 @@ function startListening() {
   document.getElementById("originalText").textContent = "—";
   document.getElementById("translatedText").textContent = "—";
   document.getElementById("resultsSection").style.display = "none";
+  stopAllAudio();
   recognition.start();
 }
 
@@ -125,59 +310,123 @@ if (recognition) {
       await translateAndSpeak(spokenText, lastFromLang);
     }
   };
-  recognition.onerror = (e) => {
-    if (currentConvSpeaker) { document.getElementById(`micStatus${currentConvSpeaker}`).textContent = "Error. Try again."; document.getElementById(`micBtn${currentConvSpeaker}`).classList.remove("listening"); }
-    else { document.getElementById("micStatus").textContent = "Error. Try again."; document.getElementById("micBtn").classList.remove("listening"); }
+  recognition.onerror = () => {
+    if (currentConvSpeaker) {
+      document.getElementById(`micStatus${currentConvSpeaker}`).textContent = "Error. Try again.";
+      document.getElementById(`micBtn${currentConvSpeaker}`).classList.remove("listening");
+    } else {
+      document.getElementById("micStatus").textContent = "Error. Try again.";
+      document.getElementById("micBtn").classList.remove("listening");
+    }
   };
 }
 
+// ── TRANSLATE + SPEAK (Single) ───────────────────────
 async function translateAndSpeak(text, fromLang) {
   const toLang = document.getElementById("toLang").value;
   try {
-    const transRes = await fetch(`${API_URL}/translate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,from_lang:fromLang,to_lang:toLang})});
-    const { translated } = await transRes.json();
+    const { translated } = await fetch(`${API_URL}/translate`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
+    }).then(r => r.json());
     document.getElementById("translatedText").textContent = translated;
-    const audioRes = await fetch(`${API_URL}/speak`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:translated,lang:toLang})});
-    audioBlob = await audioRes.blob();
+    const blob = await fetch(`${API_URL}/speak`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: translated, lang: toLang })
+    }).then(r => r.blob());
+    // Store blob for play button
     document.getElementById("actionBtns").style.display = "flex";
+    document.getElementById("actionBtns").dataset.blob = ''; // clear old
+    window._singleAudioBlob = blob;
+    window._singleTranslatedText = translated;
     document.getElementById("micStatus").textContent = "Tap to speak";
-    playAudio();
+    // Remove old timeline
+    const old = document.getElementById('timeline_single');
+    if (old) old.remove();
+    // Auto play
+    const btn = document.getElementById('playBtn');
+    createAudioPlayer(blob, btn, translated, 'single');
     if (window.getCurrentUser && window.getCurrentUser()) saveToHistory(text, translated, fromLang, toLang);
-  } catch { document.getElementById("translatedText").textContent = "—"; document.getElementById("micStatus").textContent = "Server error. Is backend running?"; }
+  } catch {
+    document.getElementById("translatedText").textContent = "—";
+    document.getElementById("micStatus").textContent = "Server error. Is backend running?";
+  }
 }
 
+// ── PLAY AUDIO (Single) ───────────────────────────────
+function playAudio() {
+  const blob = window._singleAudioBlob;
+  const text = window._singleTranslatedText || document.getElementById("translatedText").textContent;
+  const btn = document.getElementById('playBtn');
+  if (!blob) return;
+  // Remove old timeline if switching
+  const old = document.getElementById('timeline_single');
+  if (old && currentPlayBtn !== btn) old.remove();
+  toggleAudio(blob, btn, text, 'single');
+}
+
+// ── TRANSLATE + SPEAK (Conversation) ─────────────────
 async function translateAndSpeakConv(text, fromLang, toLang, person) {
   try {
-    const { translated } = await fetch(`${API_URL}/translate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,from_lang:fromLang,to_lang:toLang})}).then(r=>r.json());
+    const { translated } = await fetch(`${API_URL}/translate`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
+    }).then(r => r.json());
     document.getElementById(`translatedText${person}`).textContent = translated;
-    const blob = await fetch(`${API_URL}/speak`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:translated,lang:toLang})}).then(r=>r.blob());
-    if (person==='A'){audioBlobA=blob;playAudioA();}else{audioBlobB=blob;playAudioB();}
+    const blob = await fetch(`${API_URL}/speak`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: translated, lang: toLang })
+    }).then(r => r.blob());
+    if (person === 'A') audioBlobA = blob; else audioBlobB = blob;
+    window[`_convText${person}`] = translated;
     document.getElementById(`playBtn${person}`).style.display = "flex";
     document.getElementById(`micStatus${person}`).textContent = "Tap to speak";
-  } catch { document.getElementById(`micStatus${person}`).textContent = "Error. Try again."; }
+    const btn = document.getElementById(`playBtn${person}`);
+    const old = document.getElementById(`timeline_conv${person}`);
+    if (old) old.remove();
+    createAudioPlayer(blob, btn, translated, `conv${person}`);
+  } catch {
+    document.getElementById(`micStatus${person}`).textContent = "Error. Try again.";
+  }
 }
 
-function playAudio() { if (audioBlob) new Audio(URL.createObjectURL(audioBlob)).play(); }
-function playAudioA() { if (audioBlobA) new Audio(URL.createObjectURL(audioBlobA)).play(); }
-function playAudioB() { if (audioBlobB) new Audio(URL.createObjectURL(audioBlobB)).play(); }
+function playAudioA() {
+  const blob = audioBlobA;
+  const text = window._convTextA || document.getElementById("translatedTextA").textContent;
+  const btn = document.getElementById('playBtnA');
+  if (!blob) return;
+  toggleAudio(blob, btn, text, 'convA');
+}
+function playAudioB() {
+  const blob = audioBlobB;
+  const text = window._convTextB || document.getElementById("translatedTextB").textContent;
+  const btn = document.getElementById('playBtnB');
+  if (!blob) return;
+  toggleAudio(blob, btn, text, 'convB');
+}
 
+// ── SWAP ──────────────────────────────────────────────
 function swapLanguages() {
   const f = document.getElementById("fromLang"), t = document.getElementById("toLang");
   [f.value, t.value] = [t.value, f.value];
-  lastSpokenText = ""; lastFromLang = ""; audioBlob = null;
+  lastSpokenText = ""; lastFromLang = ""; stopAllAudio();
+  window._singleAudioBlob = null;
   document.getElementById("originalText").textContent = "—";
   document.getElementById("translatedText").textContent = "—";
   document.getElementById("resultsSection").style.display = "none";
+  const old = document.getElementById('timeline_single');
+  if (old) old.remove();
   showToast("Languages swapped");
 }
 
-const LANG_NAMES = {te:"Telugu",ta:"Tamil",hi:"Hindi",kn:"Kannada",ml:"Malayalam",mr:"Marathi",bn:"Bengali",gu:"Gujarati",pa:"Punjabi",ur:"Urdu",en:"English"};
+// ── TRAVEL ────────────────────────────────────────────
+const LANG_NAMES = { te:"Telugu", ta:"Tamil", hi:"Hindi", kn:"Kannada", ml:"Malayalam", mr:"Marathi", bn:"Bengali", gu:"Gujarati", pa:"Punjabi", ur:"Urdu", en:"English" };
 const PHRASES = {
-  food:[{en:"I am hungry"},{en:"Give me a menu please"},{en:"How much is this?"},{en:"This is delicious!"},{en:"I am vegetarian"},{en:"Water please"},{en:"The bill please"},{en:"No spicy food please"}],
-  transport:[{en:"Where is the bus stop?"},{en:"How much is the ticket?"},{en:"Take me to this address"},{en:"Stop here please"},{en:"Is this the right train?"},{en:"Where is the airport?"},{en:"How far is it?"},{en:"Call a taxi please"}],
-  hotel:[{en:"I have a reservation"},{en:"What time is checkout?"},{en:"Can I get extra towels?"},{en:"The AC is not working"},{en:"Is breakfast included?"},{en:"I need a wake up call"},{en:"Where is the lift?"},{en:"Can I extend my stay?"}],
-  emergency:[{en:"Help me please!"},{en:"Call the police"},{en:"I need a doctor"},{en:"I am lost"},{en:"Call an ambulance"},{en:"I have been robbed"},{en:"Where is the hospital?"},{en:"I am allergic to this"}],
-  shopping:[{en:"How much does this cost?"},{en:"Can you give a discount?"},{en:"Do you have a smaller size?"},{en:"I am just looking"},{en:"I will take this one"},{en:"Do you accept cards?"},{en:"Can I return this?"},{en:"Where is the trial room?"}]
+  food: [{en:"I am hungry"},{en:"Give me a menu please"},{en:"How much does this cost?"},{en:"This is delicious!"},{en:"I am vegetarian"},{en:"Water please"},{en:"The bill please"},{en:"No spicy food please"}],
+  transport: [{en:"Where is the bus stop?"},{en:"How much is the ticket?"},{en:"Take me to this address"},{en:"Stop here please"},{en:"Is this the right train?"},{en:"Where is the airport?"},{en:"How far is it?"},{en:"Call a taxi please"}],
+  hotel: [{en:"I have a reservation"},{en:"What time is checkout?"},{en:"Can I get extra towels?"},{en:"The AC is not working"},{en:"Is breakfast included?"},{en:"I need a wake up call"},{en:"Where is the lift?"},{en:"Can I extend my stay?"}],
+  emergency: [{en:"Help me please!"},{en:"Call the police"},{en:"I need a doctor"},{en:"I am lost"},{en:"Call an ambulance"},{en:"I have been robbed"},{en:"Where is the hospital?"},{en:"I am allergic to this"}],
+  shopping: [{en:"How much does this cost?"},{en:"Can you give a discount?"},{en:"Do you have a smaller size?"},{en:"I am just looking"},{en:"I will take this one"},{en:"Do you accept cards?"},{en:"Can I return this?"},{en:"Where is the trial room?"}]
 };
 
 function selectCategory(cat, btn) {
@@ -193,15 +442,18 @@ async function loadTravelPhrases() {
   const key = `${currentCategory}_${fromLang}_${toLang}`;
   document.getElementById("phrasesList").innerHTML = "";
   document.getElementById("travelLoading").style.display = "flex";
-  if (travelPhrasesCache[key]) { document.getElementById("travelLoading").style.display = "none"; renderPhrases(travelPhrasesCache[key], fromLang, toLang); return; }
+  if (travelPhrasesCache[key]) {
+    document.getElementById("travelLoading").style.display = "none";
+    renderPhrases(travelPhrasesCache[key], fromLang, toLang); return;
+  }
   try {
     const results = [];
     for (const phrase of PHRASES[currentCategory]) {
       const [fr, tr] = await Promise.all([
-        fetch(`${API_URL}/translate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:fromLang})}).then(r=>r.json()),
-        fetch(`${API_URL}/translate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:toLang})}).then(r=>r.json())
+        fetch(`${API_URL}/translate`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:fromLang}) }).then(r=>r.json()),
+        fetch(`${API_URL}/translate`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:toLang}) }).then(r=>r.json())
       ]);
-      results.push({en:phrase.en,from:fr.translated,to:tr.translated,toLang});
+      results.push({ en:phrase.en, from:fr.translated, to:tr.translated, toLang });
     }
     travelPhrasesCache[key] = results;
     document.getElementById("travelLoading").style.display = "none";
@@ -218,23 +470,53 @@ function renderPhrases(results, fromLang, toLang) {
   results.forEach((r, i) => {
     const card = document.createElement("div");
     card.className = "phrase-card";
-    card.innerHTML = `<div class="phrase-texts"><div class="phrase-orig">${LANG_NAMES[fromLang]}: ${r.from}</div><div class="phrase-trans">${LANG_NAMES[toLang]}: ${r.to}</div><div class="phrase-en">${r.en}</div></div><div class="phrase-btns"><button class="phrase-btn" onclick="copyPhraseText(${i})" title="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="phrase-btn phrase-play" onclick="playPhrase(${i})" title="Play"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></button></div>`;
+    card.innerHTML = `
+      <div class="phrase-texts">
+        <div class="phrase-orig">${LANG_NAMES[fromLang]}: ${r.from}</div>
+        <div class="phrase-trans">${LANG_NAMES[toLang]}: ${r.to}</div>
+        <div class="phrase-en">${r.en}</div>
+      </div>
+      <div class="phrase-btns">
+        <button class="phrase-btn" onclick="copyPhraseText(${i})" title="Copy">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button class="phrase-btn phrase-play" onclick="playPhrase(${i})" title="Play">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+      </div>`;
     list.appendChild(card);
   });
   window._phraseResults = results;
 }
 
-function copyPhraseText(i) { const p = window._phraseResults[i]; if (p) navigator.clipboard.writeText(p.to).then(() => showToast("Copied")); }
+function copyPhraseText(i) {
+  const p = window._phraseResults[i];
+  if (p) navigator.clipboard.writeText(p.to).then(() => showToast("Copied"));
+}
 async function playPhrase(i) {
   const p = window._phraseResults[i]; if (!p) return;
-  try { const res = await fetch(`${API_URL}/speak`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:p.to,lang:p.toLang})}); new Audio(URL.createObjectURL(await res.blob())).play(); }
-  catch { showToast("Could not play audio"); }
+  try {
+    const blob = await fetch(`${API_URL}/speak`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:p.to,lang:p.toLang}) }).then(r=>r.blob());
+    stopAllAudio();
+    new Audio(URL.createObjectURL(blob)).play();
+  } catch { showToast("Could not play audio"); }
 }
 
-let imgAudioBlob = null;
-function handleDrop(e) { e.preventDefault(); document.getElementById('uploadArea').classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('image/')) processImageFile(f); }
-function handleImageUpload(e) { const f = e.target.files[0]; if (f) processImageFile(f); }
+// ── IMAGE TRANSLATION ─────────────────────────────────
+let currentImageFile = null;
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadArea').classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) processImageFile(f);
+}
+function handleImageUpload(e) {
+  const f = e.target.files[0];
+  if (f) processImageFile(f);
+}
 function processImageFile(file) {
+  currentImageFile = file;
   const reader = new FileReader();
   reader.onload = (e) => {
     document.getElementById('imgPreview').src = e.target.result;
@@ -244,34 +526,72 @@ function processImageFile(file) {
     document.getElementById('imgResults').style.display = 'none';
     document.getElementById('imgStatus').textContent = '';
     imgAudioBlob = null;
+    stopAllAudio();
+    const old = document.getElementById('timeline_img');
+    if (old) old.remove();
   };
   reader.readAsDataURL(file);
 }
 
+const BTN_READY_HTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:white;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Extract & Translate`;
+
 async function translateImage() {
-  const file = document.getElementById('imageInput').files[0]; if (!file) return;
+  if (!currentImageFile) { showToast("Please upload an image first"); return; }
   const fromLang = document.getElementById('imgFromLang').value;
   const toLang = document.getElementById('imgToLang').value;
   const btn = document.getElementById('imgTranslateBtn');
-  btn.disabled = true; btn.textContent = 'Processing...';
-  document.getElementById('imgStatus').textContent = 'Reading text from image...';
+  const statusEl = document.getElementById('imgStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ Reading image...';
+  statusEl.textContent = 'Extracting text from image...';
   document.getElementById('imgResults').style.display = 'none';
+  stopAllAudio();
+  const old = document.getElementById('timeline_img');
+  if (old) old.remove();
+  imgAudioBlob = null;
   try {
-    const langs = {en:'eng',hi:'hin',te:'tel',ta:'tam',kn:'kan',ml:'mal',bn:'ben',mr:'mar',gu:'guj',pa:'pan',ur:'urd'};
-    const worker = await Tesseract.createWorker(langs[fromLang] || 'eng');
-    const { data: { text } } = await worker.recognize(document.getElementById('imgPreview').src);
+    const tessLangs = { en:'eng', hi:'hin', te:'tel', ta:'tam', kn:'kan', ml:'mal', bn:'ben', mr:'mar', gu:'guj', pa:'pan', ur:'urd' };
+    const ocrLang = tessLangs[fromLang] || 'eng';
+    statusEl.textContent = 'Reading text... (may take 10–30 seconds)';
+    const { createWorker } = Tesseract;
+    const worker = await createWorker(ocrLang);
+    const { data: { text } } = await worker.recognize(currentImageFile);
     await worker.terminate();
     const extracted = text.trim();
-    if (!extracted) { document.getElementById('imgStatus').textContent = 'No text found. Try a clearer image.'; btn.disabled=false; btn.innerHTML='<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Extract & Translate'; return; }
+    if (!extracted || extracted.length < 2) {
+      statusEl.textContent = '❌ No text found. Try a clearer image.';
+      btn.disabled = false; btn.innerHTML = BTN_READY_HTML; return;
+    }
     document.getElementById('imgExtractedText').textContent = extracted;
-    document.getElementById('imgStatus').textContent = 'Translating...';
-    const { translated } = await fetch(`${API_URL}/translate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:extracted,from_lang:fromLang,to_lang:toLang})}).then(r=>r.json());
+    statusEl.textContent = 'Translating...';
+    btn.textContent = '⏳ Translating...';
+    const { translated } = await fetch(`${API_URL}/translate`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:extracted, from_lang:fromLang, to_lang:toLang})
+    }).then(r=>r.json());
     document.getElementById('imgTranslatedText').textContent = translated;
-    imgAudioBlob = await fetch(`${API_URL}/speak`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:translated,lang:toLang})}).then(r=>r.blob());
+    btn.textContent = '⏳ Generating audio...';
+    imgAudioBlob = await fetch(`${API_URL}/speak`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:translated, lang:toLang})
+    }).then(r=>r.blob());
+    window._imgTranslatedText = translated;
     document.getElementById('imgResults').style.display = 'block';
-    document.getElementById('imgStatus').textContent = 'Done!';
-    playImgAudio();
-  } catch(err) { document.getElementById('imgStatus').textContent = 'Error processing image. Try again.'; console.error(err); }
-  btn.disabled=false; btn.innerHTML='<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Extract & Translate';
+    statusEl.textContent = '✅ Done!';
+    // Auto-play with timeline
+    const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
+    if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img');
+  } catch(err) {
+    console.error(err);
+    statusEl.textContent = '❌ Error: ' + (err.message || 'Something went wrong. Try again.');
+  }
+  btn.disabled = false; btn.innerHTML = BTN_READY_HTML;
 }
-function playImgAudio() { if (imgAudioBlob) new Audio(URL.createObjectURL(imgAudioBlob)).play(); }
+
+function playImgAudio() {
+  const blob = imgAudioBlob;
+  const text = window._imgTranslatedText || document.getElementById('imgTranslatedText').textContent;
+  const btn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
+  if (!blob || !btn) return;
+  toggleAudio(blob, btn, text, 'img');
+}
