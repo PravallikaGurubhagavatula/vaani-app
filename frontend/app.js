@@ -45,16 +45,6 @@ function copyTranslation() {
   }
 }
 
-// Auto-save to history if user is logged in
-if (window.getCurrentUser && window.getCurrentUser()) {
-  saveToHistory(
-    document.getElementById('originalText').textContent,
-    translation,  // or whatever your translated variable is called
-    document.getElementById('fromLang').value,
-    document.getElementById('toLang').value
-  );
-}
-
 function copyText(elementId) {
   const text = document.getElementById(elementId).textContent;
   if (text && text !== "—") {
@@ -82,15 +72,12 @@ function navigateTo(page) {
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.querySelectorAll(".menu-item").forEach(m => m.classList.remove("active"));
   document.getElementById("page" + page).classList.add("active");
-  document.getElementById("menu" + page).classList.add("active");
+  const menuEl = document.getElementById("menu" + page);
+  if (menuEl) menuEl.classList.add("active");
   closeMenu();
   if (page === "Travel") loadTravelPhrases();
-  case 'History':
-  loadHistory();
-  break;
-case 'Favourites':
-  loadFavourites();
-  break;
+  if (page === "History") loadHistory();
+  if (page === "Favourites") loadFavourites();
 }
 
 // ── SPEECH RECOGNITION ───────────────────────────────
@@ -191,6 +178,12 @@ async function translateAndSpeak(text, fromLang) {
     audioBlob = await audioRes.blob();
     document.getElementById("actionBtns").style.display = "flex";
     document.getElementById("micStatus").textContent = "Press mic and speak";
+
+    // ── AUTO-SAVE TO HISTORY ──
+    if (window.getCurrentUser && window.getCurrentUser()) {
+      saveToHistory(text, translatedText, fromLang, toLang);
+    }
+
     playAudio();
   } catch (err) {
     document.getElementById("micStatus").textContent = "Server error. Is backend running?";
@@ -416,11 +409,9 @@ async function translateImage() {
   document.getElementById('imgResults').style.display = 'none';
 
   try {
-    // Use Tesseract.js for OCR directly in browser
     const { createWorker } = Tesseract;
     const imgSrc = document.getElementById('imgPreview').src;
 
-    // Map language codes to Tesseract language codes
     const tesseractLangs = {
       en: 'eng', hi: 'hin', te: 'tel', ta: 'tam',
       kn: 'kan', ml: 'mal', bn: 'ben', mr: 'mar',
@@ -446,7 +437,6 @@ async function translateImage() {
     document.getElementById('imgExtractedText').textContent = extractedText;
     document.getElementById('imgStatus').textContent = 'Translating...';
 
-    // Translate extracted text
     const transRes = await fetch(`${API_URL}/translate`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: extractedText, from_lang: fromLang, to_lang: toLang })
@@ -455,7 +445,6 @@ async function translateImage() {
     const translatedText = transData.translated;
     document.getElementById('imgTranslatedText').textContent = translatedText;
 
-    // Get audio
     const audioRes = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translatedText, lang: toLang })
