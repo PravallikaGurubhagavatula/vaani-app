@@ -45,6 +45,16 @@ function copyTranslation() {
   }
 }
 
+// Auto-save to history if user is logged in
+if (window.getCurrentUser && window.getCurrentUser()) {
+  saveToHistory(
+    document.getElementById('originalText').textContent,
+    translation,  // or whatever your translated variable is called
+    document.getElementById('fromLang').value,
+    document.getElementById('toLang').value
+  );
+}
+
 function copyText(elementId) {
   const text = document.getElementById(elementId).textContent;
   if (text && text !== "—") {
@@ -75,6 +85,12 @@ function navigateTo(page) {
   document.getElementById("menu" + page).classList.add("active");
   closeMenu();
   if (page === "Travel") loadTravelPhrases();
+  case 'History':
+  loadHistory();
+  break;
+case 'Favourites':
+  loadFavourites();
+  break;
 }
 
 // ── SPEECH RECOGNITION ───────────────────────────────
