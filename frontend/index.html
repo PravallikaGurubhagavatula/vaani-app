@@ -9,151 +9,177 @@
 </head>
 <body>
 
-  <div class="app-container">
+  <!-- ── NAV BAR ── -->
+  <nav class="navbar">
+    <div class="nav-brand">🎙 Vaani</div>
+    <button class="hamburger" onclick="toggleMenu()">☰</button>
+  </nav>
 
-    <!-- Header -->
-    <div class="header">
-      <h1>🎙 Vaani</h1>
-      <p>Speak in your language. Be heard in theirs.</p>
+  <!-- ── SIDE MENU ── -->
+  <div class="menu-overlay" id="menuOverlay" onclick="closeMenu()"></div>
+  <div class="side-menu" id="sideMenu">
+    <div class="menu-header">
+      <span>🎙 Vaani</span>
+      <button onclick="closeMenu()" class="close-menu-btn">✕</button>
+    </div>
+    <ul class="menu-list">
+      <li class="menu-item active" id="menuSingle" onclick="navigateTo('Single')">
+        <span class="menu-icon">🎤</span>
+        <span>Single Mode</span>
+      </li>
+      <li class="menu-item" id="menuConversation" onclick="navigateTo('Conversation')">
+        <span class="menu-icon">👥</span>
+        <span>Conversation Mode</span>
+      </li>
+      <li class="menu-divider"></li>
+      <li class="menu-item" id="menuTravel" onclick="navigateTo('Travel')">
+        <span class="menu-icon">✈</span>
+        <span>Travel Helper</span>
+      </li>
+    </ul>
+  </div>
 
-      <!-- Mode Toggle -->
-      <div class="mode-toggle">
-        <button id="singleModeBtn" class="mode-btn active" onclick="switchMode('single')">Single Mode</button>
-        <button id="convModeBtn" class="mode-btn" onclick="switchMode('conversation')">Conversation Mode</button>
+  <!-- ── PAGE: SINGLE MODE ── -->
+  <div id="pageSingle" class="page active">
+    <div class="page-header">
+      <h2>🎤 Single Mode</h2>
+      <p>Translate your speech to any language</p>
+    </div>
+    <div class="lang-row">
+      <div class="lang-box">
+        <label>I Speak</label>
+        <select id="fromLang">
+          <option value="te">Telugu</option><option value="ta">Tamil</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <button class="swap-btn" onclick="swapLanguages()">⇄</button>
+      <div class="lang-box">
+        <label>Translate To</label>
+        <select id="toLang">
+          <option value="ta">Tamil</option><option value="te">Telugu</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
       </div>
     </div>
+    <button class="mic-btn" id="micBtn" onclick="startListening()">🎤</button>
+    <p class="mic-status" id="micStatus">Press mic and speak</p>
+    <div class="result-box">
+      <span class="result-label">You said:</span>
+      <p id="originalText">—</p>
+    </div>
+    <div class="result-box translation-box">
+      <span class="result-label">Translation:</span>
+      <p id="translatedText">—</p>
+      <button class="play-btn" id="playBtn" onclick="playAudio()" style="display:none">▶ Play Translation</button>
+    </div>
+  </div>
 
-    <!-- ── SINGLE MODE ── -->
-    <div id="singleMode">
-      <div class="lang-row">
-        <div class="lang-box">
-          <label>I Speak</label>
-          <select id="fromLang">
-            <option value="te">Telugu</option>
-            <option value="ta">Tamil</option>
-            <option value="hi">Hindi</option>
-            <option value="kn">Kannada</option>
-            <option value="ml">Malayalam</option>
-            <option value="mr">Marathi</option>
-            <option value="bn">Bengali</option>
-            <option value="gu">Gujarati</option>
-            <option value="pa">Punjabi</option>
-            <option value="ur">Urdu</option>
+  <!-- ── PAGE: CONVERSATION MODE ── -->
+  <div id="pageConversation" class="page">
+    <div class="page-header">
+      <h2>👥 Conversation Mode</h2>
+      <p>Two people, two languages, one conversation</p>
+    </div>
+    <div class="conv-container">
+      <div class="conv-side side-a">
+        <div class="conv-header">
+          <span class="person-label person-a-label">Person A</span>
+          <select id="convLangA" class="conv-select">
+            <option value="te">Telugu</option><option value="ta">Tamil</option>
+            <option value="hi">Hindi</option><option value="kn">Kannada</option>
+            <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+            <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+            <option value="pa">Punjabi</option><option value="ur">Urdu</option>
             <option value="en">English</option>
           </select>
         </div>
-
-        <button class="swap-btn" onclick="swapLanguages()">⇄</button>
-
-        <div class="lang-box">
-          <label>Translate To</label>
-          <select id="toLang">
-            <option value="ta">Tamil</option>
-            <option value="te">Telugu</option>
-            <option value="hi">Hindi</option>
-            <option value="kn">Kannada</option>
-            <option value="ml">Malayalam</option>
-            <option value="mr">Marathi</option>
-            <option value="bn">Bengali</option>
-            <option value="gu">Gujarati</option>
-            <option value="pa">Punjabi</option>
-            <option value="ur">Urdu</option>
+        <button class="mic-btn mic-a" id="micBtnA" onclick="startConvListening('A')">🎤</button>
+        <p class="mic-status" id="micStatusA">Press mic and speak</p>
+        <div class="result-box"><span class="result-label">Said:</span><p id="originalTextA">—</p></div>
+        <div class="result-box translation-box">
+          <span class="result-label">Translation:</span><p id="translatedTextA">—</p>
+          <button class="play-btn" id="playBtnA" onclick="playAudioA()" style="display:none">▶ Play</button>
+        </div>
+      </div>
+      <div class="conv-divider"></div>
+      <div class="conv-side side-b">
+        <div class="conv-header">
+          <span class="person-label person-b-label">Person B</span>
+          <select id="convLangB" class="conv-select">
+            <option value="ta">Tamil</option><option value="te">Telugu</option>
+            <option value="hi">Hindi</option><option value="kn">Kannada</option>
+            <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+            <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+            <option value="pa">Punjabi</option><option value="ur">Urdu</option>
             <option value="en">English</option>
           </select>
         </div>
+        <button class="mic-btn mic-b" id="micBtnB" onclick="startConvListening('B')">🎤</button>
+        <p class="mic-status" id="micStatusB">Press mic and speak</p>
+        <div class="result-box"><span class="result-label">Said:</span><p id="originalTextB">—</p></div>
+        <div class="result-box translation-box">
+          <span class="result-label">Translation:</span><p id="translatedTextB">—</p>
+          <button class="play-btn" id="playBtnB" onclick="playAudioB()" style="display:none">▶ Play</button>
+        </div>
       </div>
+    </div>
+  </div>
 
-      <button class="mic-btn" id="micBtn" onclick="startListening()">🎤</button>
-      <p class="mic-status" id="micStatus">Press mic and speak</p>
+  <!-- ── PAGE: TRAVEL HELPER ── -->
+  <div id="pageTravel" class="page">
+    <div class="page-header">
+      <h2>✈ Travel Helper</h2>
+      <p>Common phrases for travellers — tap 🔊 to hear!</p>
+    </div>
 
-      <div class="result-box">
-        <span class="result-label">You said:</span>
-        <p id="originalText">—</p>
+    <div class="travel-lang-row">
+      <div class="lang-box">
+        <label>My Language</label>
+        <select id="travelFromLang" onchange="loadTravelPhrases()">
+          <option value="te">Telugu</option><option value="ta">Tamil</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
       </div>
-
-      <div class="result-box translation-box">
-        <span class="result-label">Translation:</span>
-        <p id="translatedText">—</p>
-        <button class="play-btn" id="playBtn" onclick="playAudio()" style="display:none">▶ Play Translation</button>
+      <span class="arrow-icon">→</span>
+      <div class="lang-box">
+        <label>Translate To</label>
+        <select id="travelToLang" onchange="loadTravelPhrases()">
+          <option value="ta">Tamil</option><option value="te">Telugu</option>
+          <option value="hi">Hindi</option><option value="kn">Kannada</option>
+          <option value="ml">Malayalam</option><option value="mr">Marathi</option>
+          <option value="bn">Bengali</option><option value="gu">Gujarati</option>
+          <option value="pa">Punjabi</option><option value="ur">Urdu</option>
+          <option value="en">English</option>
+        </select>
       </div>
     </div>
 
-    <!-- ── CONVERSATION MODE ── -->
-    <div id="convMode" style="display:none">
-      <div class="conv-container">
-
-        <!-- Person A -->
-        <div class="conv-side side-a">
-          <div class="conv-header">
-            <span class="person-label">Person A</span>
-            <select id="convLangA" class="conv-select">
-              <option value="te">Telugu</option>
-              <option value="ta">Tamil</option>
-              <option value="hi">Hindi</option>
-              <option value="kn">Kannada</option>
-              <option value="ml">Malayalam</option>
-              <option value="mr">Marathi</option>
-              <option value="bn">Bengali</option>
-              <option value="gu">Gujarati</option>
-              <option value="pa">Punjabi</option>
-              <option value="ur">Urdu</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-
-          <button class="mic-btn mic-a" id="micBtnA" onclick="startConvListening('A')">🎤</button>
-          <p class="mic-status" id="micStatusA">Press mic and speak</p>
-
-          <div class="result-box">
-            <span class="result-label">Said:</span>
-            <p id="originalTextA">—</p>
-          </div>
-          <div class="result-box translation-box">
-            <span class="result-label">Translation:</span>
-            <p id="translatedTextA">—</p>
-            <button class="play-btn" id="playBtnA" onclick="playAudioA()" style="display:none">▶ Play</button>
-          </div>
-        </div>
-
-        <!-- Divider -->
-        <div class="conv-divider"></div>
-
-        <!-- Person B -->
-        <div class="conv-side side-b">
-          <div class="conv-header">
-            <span class="person-label">Person B</span>
-            <select id="convLangB" class="conv-select">
-              <option value="ta">Tamil</option>
-              <option value="te">Telugu</option>
-              <option value="hi">Hindi</option>
-              <option value="kn">Kannada</option>
-              <option value="ml">Malayalam</option>
-              <option value="mr">Marathi</option>
-              <option value="bn">Bengali</option>
-              <option value="gu">Gujarati</option>
-              <option value="pa">Punjabi</option>
-              <option value="ur">Urdu</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-
-          <button class="mic-btn mic-b" id="micBtnB" onclick="startConvListening('B')">🎤</button>
-          <p class="mic-status" id="micStatusB">Press mic and speak</p>
-
-          <div class="result-box">
-            <span class="result-label">Said:</span>
-            <p id="originalTextB">—</p>
-          </div>
-          <div class="result-box translation-box">
-            <span class="result-label">Translation:</span>
-            <p id="translatedTextB">—</p>
-            <button class="play-btn" id="playBtnB" onclick="playAudioB()" style="display:none">▶ Play</button>
-          </div>
-        </div>
-
-      </div>
+    <div class="category-tabs">
+      <button class="cat-btn active" onclick="selectCategory('food', this)">🍽 Food</button>
+      <button class="cat-btn" onclick="selectCategory('transport', this)">🚗 Transport</button>
+      <button class="cat-btn" onclick="selectCategory('hotel', this)">🏨 Hotel</button>
+      <button class="cat-btn" onclick="selectCategory('emergency', this)">🆘 Emergency</button>
+      <button class="cat-btn" onclick="selectCategory('shopping', this)">🛍 Shopping</button>
     </div>
 
+    <div id="travelLoading" style="display:none; text-align:center; padding:30px; color:#888; font-size:0.9rem;">
+      ⏳ Translating phrases...
+    </div>
+
+    <div id="phrasesList" class="phrases-list"></div>
   </div>
 
   <script src="app.js"></script>
