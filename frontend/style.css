@@ -50,16 +50,16 @@ body {
 .side-menu {
   position: fixed;
   top: 0;
-  left: -280px;
+  right: -280px;
   width: 260px;
   height: 100vh;
   background: #111125;
-  border-right: 1px solid #222;
+  border-left: 1px solid #222;
   z-index: 300;
-  transition: left 0.3s ease;
+  transition: right 0.3s ease;
   padding: 0;
 }
-.side-menu.open { left: 0; }
+.side-menu.open { right: 0; }
 
 .menu-header {
   display: flex;
