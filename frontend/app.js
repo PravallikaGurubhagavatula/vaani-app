@@ -183,73 +183,22 @@ function formatTime(s) {
 }
 
 // ── TRANSLATION ───────────────────────────────────────
-// Uses Google Translate's free public endpoint — no API key, supports ALL language pairs
-// including Indian language to Indian language (te→ta, te→hi, ta→kn, etc.)
+// Frontend calls YOUR backend only. Backend calls Google Translate server-side.
+// This avoids all CORS issues and supports every Indian language pair.
 
 async function translateText(text, fromLang, toLang) {
   if (!text || !text.trim()) return "";
 
-  // Split into chunks of max 4000 chars (Google's limit is much higher than MyMemory)
-  const MAX_CHUNK = 3000;
-  const chunks = [];
-  const sentences = text.split(/(?<=[।.!?\n])\s*/);
-  let current = "";
-  for (const sentence of sentences) {
-    const s = sentence.trim();
-    if (!s) continue;
-    if ((current + " " + s).trim().length > MAX_CHUNK && current.length > 0) {
-      chunks.push(current.trim());
-      current = s;
-    } else {
-      current = current ? current + " " + s : s;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
+  const res = await fetch(`${API_URL}/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text.trim(), from_lang: fromLang, to_lang: toLang })
+  });
 
-  const translatedChunks = [];
-  for (const chunk of chunks) {
-    const result = await translateChunk(chunk, fromLang, toLang);
-    translatedChunks.push(result);
-  }
-  return translatedChunks.join(" ");
-}
-
-async function translateChunk(text, fromLang, toLang) {
-  // Primary: Google Translate free endpoint (works for ALL language pairs)
-  try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      // Response is nested arrays: data[0] contains translation segments
-      if (data && data[0]) {
-        const translated = data[0]
-          .filter(seg => seg && seg[0])
-          .map(seg => seg[0])
-          .join("");
-        if (translated) return translated;
-      }
-    }
-  } catch(e) {
-    console.warn("Google Translate failed, trying backend...", e);
-  }
-
-  // Fallback: Your backend /translate endpoint
-  try {
-    const res = await fetch(`${API_URL}/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.translated) return data.translated;
-    }
-  } catch(e) {
-    console.warn("Backend translate failed", e);
-  }
-
-  throw new Error("Translation failed. Please check your connection.");
+  if (!res.ok) throw new Error(`Translation failed (status ${res.status})`);
+  const data = await res.json();
+  if (!data.translated) throw new Error("Empty translation response");
+  return data.translated;
 }
 
 // ── THEME ──────────────────────────────────────────────
