@@ -17,14 +17,12 @@ function stopAllAudio() {
     currentAudio.pause();
     currentAudio = null;
   }
-  // Reset all play buttons
   document.querySelectorAll('.ac-btn.ac-primary').forEach(btn => {
     if (btn.dataset.playing === 'true') {
       btn.dataset.playing = 'false';
       btn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     }
   });
-  // Clear all timelines
   document.querySelectorAll('.audio-timeline-wrap').forEach(el => el.remove());
 }
 
@@ -38,11 +36,9 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
   currentPlayBtn = btnEl;
   currentTimelineId = containerId;
 
-  // Update button to pause state
   btnEl.dataset.playing = 'true';
   btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
 
-  // Build timeline UI
   let timelineWrap = document.getElementById('timeline_' + containerId);
   if (!timelineWrap) {
     timelineWrap = document.createElement('div');
@@ -62,7 +58,7 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     btnEl.closest('.result-card, .result-translated').appendChild(timelineWrap);
   }
 
-  // Build word spans
+  // Build word spans from the TRANSLATED text
   const words = translatedText.trim().split(/\s+/);
   const wordsEl = document.getElementById('words_' + containerId);
   if (wordsEl) {
@@ -71,7 +67,6 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     ).join(' ');
   }
 
-  // Scrubber input
   const scrubber = document.getElementById('scrubber_' + containerId);
   if (scrubber) {
     scrubber.addEventListener('input', () => {
@@ -79,7 +74,6 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     });
   }
 
-  // Time update
   audio.addEventListener('timeupdate', () => {
     if (!audio.duration) return;
     const pct = (audio.currentTime / audio.duration) * 100;
@@ -90,7 +84,6 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     if (scr) scr.value = pct;
     if (cur) cur.textContent = formatTime(audio.currentTime);
 
-    // Highlight current word
     const wIdx = Math.floor((audio.currentTime / audio.duration) * words.length);
     document.querySelectorAll(`#words_${containerId} .audio-word`).forEach((w, i) => {
       w.classList.toggle('active-word', i === wIdx);
@@ -125,7 +118,6 @@ window.seekToWord = function(idx, total, containerId) {
 
 function toggleAudio(blob, btnEl, translatedText, containerId) {
   if (currentAudio && currentPlayBtn === btnEl) {
-    // Same button — toggle pause/resume
     if (currentAudio.paused) {
       currentAudio.play();
       btnEl.dataset.playing = 'true';
@@ -136,7 +128,6 @@ function toggleAudio(blob, btnEl, translatedText, containerId) {
       btnEl.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     }
   } else {
-    // Different button or no audio — start new
     createAudioPlayer(blob, btnEl, translatedText, containerId);
   }
 }
@@ -145,6 +136,50 @@ function formatTime(s) {
   if (isNaN(s)) return '0:00';
   const m = Math.floor(s / 60), sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+// ── TRANSLATION (MyMemory API — free, no key needed) ──────────────────────
+const LANG_CODE_MAP = {
+  te: "te", ta: "ta", hi: "hi", kn: "kn",
+  ml: "ml", mr: "mr", bn: "bn", gu: "gu",
+  pa: "pa", ur: "ur", en: "en"
+};
+
+async function translateText(text, fromLang, toLang) {
+  // Split large text into chunks of max 500 chars to stay within MyMemory limits
+  const MAX_CHUNK = 480;
+  const chunks = [];
+  
+  // Split by sentence boundaries first
+  const sentences = text.split(/(?<=[।.!?])\s+/);
+  let current = "";
+  for (const sentence of sentences) {
+    if ((current + " " + sentence).trim().length > MAX_CHUNK && current.length > 0) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else {
+      current = current ? current + " " + sentence : sentence;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  
+  const src = LANG_CODE_MAP[fromLang] || fromLang;
+  const tgt = LANG_CODE_MAP[toLang] || toLang;
+  const langPair = `${src}|${tgt}`;
+  
+  const translatedChunks = [];
+  for (const chunk of chunks) {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langPair}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.responseStatus === 200) {
+      translatedChunks.push(data.responseData.translatedText);
+    } else {
+      throw new Error("Translation failed: " + (data.responseDetails || data.responseStatus));
+    }
+  }
+  
+  return translatedChunks.join(" ");
 }
 
 // ── THEME ──────────────────────────────────────────────
@@ -225,7 +260,6 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 let recognition;
 try { recognition = new SpeechRecognition(); recognition.continuous = false; recognition.interimResults = false; } catch(e) {}
 
-// Auto-retranslate on language change
 document.getElementById("toLang").addEventListener("change", async () => {
   if (lastSpokenText) {
     stopAllAudio();
@@ -242,7 +276,6 @@ document.getElementById("fromLang").addEventListener("change", async () => {
   }
 });
 
-// Auto-retranslate image on language change
 document.getElementById("imgToLang").addEventListener("change", async () => {
   const extracted = document.getElementById('imgExtractedText').textContent;
   if (extracted && extracted !== "—" && document.getElementById('imgResults').style.display !== 'none') {
@@ -251,15 +284,19 @@ document.getElementById("imgToLang").addEventListener("change", async () => {
     const fromLang = document.getElementById('imgFromLang').value;
     const toLang = document.getElementById('imgToLang').value;
     try {
-      const { translated } = await fetch(`${API_URL}/translate`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: extracted, from_lang: fromLang, to_lang: toLang })
-      }).then(r => r.json());
+      const translated = await translateText(extracted, fromLang, toLang);
       document.getElementById('imgTranslatedText').textContent = translated;
+      window._imgTranslatedText = translated;
       imgAudioBlob = await fetch(`${API_URL}/speak`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: translated, lang: toLang })
       }).then(r => r.blob());
+      const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
+      if (playBtn) {
+        const old = document.getElementById('timeline_img');
+        if (old) old.remove();
+        createAudioPlayer(imgAudioBlob, playBtn, translated, 'img');
+      }
     } catch { document.getElementById('imgTranslatedText').textContent = "Translation error"; }
   }
 });
@@ -325,41 +362,32 @@ if (recognition) {
 async function translateAndSpeak(text, fromLang) {
   const toLang = document.getElementById("toLang").value;
   try {
-    const { translated } = await fetch(`${API_URL}/translate`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
-    }).then(r => r.json());
+    const translated = await translateText(text, fromLang, toLang);
     document.getElementById("translatedText").textContent = translated;
     const blob = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translated, lang: toLang })
     }).then(r => r.blob());
-    // Store blob for play button
     document.getElementById("actionBtns").style.display = "flex";
-    document.getElementById("actionBtns").dataset.blob = ''; // clear old
     window._singleAudioBlob = blob;
     window._singleTranslatedText = translated;
     document.getElementById("micStatus").textContent = "Tap to speak";
-    // Remove old timeline
     const old = document.getElementById('timeline_single');
     if (old) old.remove();
-    // Auto play
     const btn = document.getElementById('playBtn');
     createAudioPlayer(blob, btn, translated, 'single');
     if (window.getCurrentUser && window.getCurrentUser()) saveToHistory(text, translated, fromLang, toLang);
-  } catch {
+  } catch(err) {
     document.getElementById("translatedText").textContent = "—";
-    document.getElementById("micStatus").textContent = "Server error. Is backend running?";
+    document.getElementById("micStatus").textContent = "Translation error. Check connection.";
   }
 }
 
-// ── PLAY AUDIO (Single) ───────────────────────────────
 function playAudio() {
   const blob = window._singleAudioBlob;
   const text = window._singleTranslatedText || document.getElementById("translatedText").textContent;
   const btn = document.getElementById('playBtn');
   if (!blob) return;
-  // Remove old timeline if switching
   const old = document.getElementById('timeline_single');
   if (old && currentPlayBtn !== btn) old.remove();
   toggleAudio(blob, btn, text, 'single');
@@ -368,10 +396,7 @@ function playAudio() {
 // ── TRANSLATE + SPEAK (Conversation) ─────────────────
 async function translateAndSpeakConv(text, fromLang, toLang, person) {
   try {
-    const { translated } = await fetch(`${API_URL}/translate`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
-    }).then(r => r.json());
+    const translated = await translateText(text, fromLang, toLang);
     document.getElementById(`translatedText${person}`).textContent = translated;
     const blob = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -449,11 +474,11 @@ async function loadTravelPhrases() {
   try {
     const results = [];
     for (const phrase of PHRASES[currentCategory]) {
-      const [fr, tr] = await Promise.all([
-        fetch(`${API_URL}/translate`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:fromLang}) }).then(r=>r.json()),
-        fetch(`${API_URL}/translate`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text:phrase.en,from_lang:"en",to_lang:toLang}) }).then(r=>r.json())
+      const [frTranslated, toTranslated] = await Promise.all([
+        translateText(phrase.en, "en", fromLang),
+        translateText(phrase.en, "en", toLang)
       ]);
-      results.push({ en:phrase.en, from:fr.translated, to:tr.translated, toLang });
+      results.push({ en: phrase.en, from: frTranslated, to: toTranslated, toLang });
     }
     travelPhrasesCache[key] = results;
     document.getElementById("travelLoading").style.display = "none";
@@ -542,7 +567,7 @@ async function translateImage() {
   const btn = document.getElementById('imgTranslateBtn');
   const statusEl = document.getElementById('imgStatus');
   btn.disabled = true;
-  btn.textContent = '⏳ Reading image...';
+  btn.textContent = 'Reading image...';
   statusEl.textContent = 'Extracting text from image...';
   document.getElementById('imgResults').style.display = 'none';
   stopAllAudio();
@@ -552,38 +577,34 @@ async function translateImage() {
   try {
     const tessLangs = { en:'eng', hi:'hin', te:'tel', ta:'tam', kn:'kan', ml:'mal', bn:'ben', mr:'mar', gu:'guj', pa:'pan', ur:'urd' };
     const ocrLang = tessLangs[fromLang] || 'eng';
-    statusEl.textContent = 'Reading text... (may take 10–30 seconds)';
+    statusEl.textContent = 'Reading text from image...';
     const { createWorker } = Tesseract;
     const worker = await createWorker(ocrLang);
     const { data: { text } } = await worker.recognize(currentImageFile);
     await worker.terminate();
     const extracted = text.trim();
     if (!extracted || extracted.length < 2) {
-      statusEl.textContent = '❌ No text found. Try a clearer image.';
+      statusEl.textContent = 'No text found. Try a clearer image.';
       btn.disabled = false; btn.innerHTML = BTN_READY_HTML; return;
     }
     document.getElementById('imgExtractedText').textContent = extracted;
     statusEl.textContent = 'Translating...';
-    btn.textContent = '⏳ Translating...';
-    const { translated } = await fetch(`${API_URL}/translate`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:extracted, from_lang:fromLang, to_lang:toLang})
-    }).then(r=>r.json());
+    btn.textContent = 'Translating...';
+    const translated = await translateText(extracted, fromLang, toLang);
     document.getElementById('imgTranslatedText').textContent = translated;
-    btn.textContent = '⏳ Generating audio...';
+    window._imgTranslatedText = translated;
+    btn.textContent = 'Generating audio...';
     imgAudioBlob = await fetch(`${API_URL}/speak`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:translated, lang:toLang})
+      body:JSON.stringify({text: translated, lang: toLang})
     }).then(r=>r.blob());
-    window._imgTranslatedText = translated;
     document.getElementById('imgResults').style.display = 'block';
-    statusEl.textContent = '✅ Done!';
-    // Auto-play with timeline
+    statusEl.textContent = 'Done';
     const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
     if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img');
   } catch(err) {
     console.error(err);
-    statusEl.textContent = '❌ Error: ' + (err.message || 'Something went wrong. Try again.');
+    statusEl.textContent = 'Error: ' + (err.message || 'Something went wrong. Try again.');
   }
   btn.disabled = false; btn.innerHTML = BTN_READY_HTML;
 }
