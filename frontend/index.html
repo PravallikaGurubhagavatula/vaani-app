@@ -5,45 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Vaani — Indian Language Translator</title>
   <link rel="stylesheet" href="style.css">
+
+  <!-- ── PWA ── -->
   <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#7c3aed">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Vaani">
-<link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vaani">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <!-- ── FONTS ── -->
+  <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
   <!-- ── NAV BAR ── -->
   <nav class="navbar">
-  <div class="nav-brand">🎙 Vaani</div>
-  <div class="nav-actions">
-    <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
+    <div class="nav-brand">🎙 Vaani</div>
+    <div class="nav-actions">
+      <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
 
-    <!-- INSTALL BUTTON -->
-<button class="install-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install App">
-  📲 Install
-</button>
+      <!-- INSTALL BUTTON -->
+      <button class="install-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install App">
+        📲 Install
+      </button>
 
-    <!-- LOGIN BUTTON -->
-    <button class="login-btn" id="loginBtn" onclick="signInWithGoogle()">
-      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"> Sign in
-    </button>
+      <!-- LOGIN BUTTON -->
+      <button class="login-btn" id="loginBtn" onclick="signInWithGoogle()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"> Sign in
+      </button>
 
-    <!-- USER PROFILE (shown after login) -->
-    <div class="user-profile" id="userProfile" style="display:none">
-      <img class="user-avatar" id="userAvatar" src="" onclick="toggleProfileMenu()">
-      <span class="user-name" id="userName"></span>
-      <div class="profile-menu" id="profileMenu" style="display:none">
-        <button onclick="navigateTo('History')">📜 History</button>
-        <button onclick="navigateTo('Favourites')">⭐ Favourites</button>
-        <button onclick="signOutUser()">🚪 Sign Out</button>
+      <!-- USER PROFILE (shown after login) -->
+      <div class="user-profile" id="userProfile" style="display:none">
+        <img class="user-avatar" id="userAvatar" src="" onclick="toggleProfileMenu()">
+        <span class="user-name" id="userName"></span>
+        <div class="profile-menu" id="profileMenu" style="display:none">
+          <button onclick="navigateTo('History')">📜 History</button>
+          <button onclick="navigateTo('Favourites')">⭐ Favourites</button>
+          <button onclick="signOutUser()">🚪 Sign Out</button>
+        </div>
       </div>
-    </div>
 
-    <button class="hamburger" onclick="toggleMenu()">☰</button>
-  </div>
-</nav>
+      <button class="hamburger" onclick="toggleMenu()">☰</button>
+    </div>
+  </nav>
 
   <!-- ── SIDE MENU ── -->
   <div class="menu-overlay" id="menuOverlay" onclick="closeMenu()"></div>
@@ -67,12 +72,12 @@
         <span class="menu-icon">📸</span><span>Image Translation</span>
       </li>
       <li class="menu-divider"></li>
-<li class="menu-item" id="menuHistory" onclick="navigateTo('History')">
-  <span class="menu-icon">📜</span><span>History</span>
-</li>
-<li class="menu-item" id="menuFavourites" onclick="navigateTo('Favourites')">
-  <span class="menu-icon">⭐</span><span>Favourites</span>
-</li>
+      <li class="menu-item" id="menuHistory" onclick="navigateTo('History')">
+        <span class="menu-icon">📜</span><span>History</span>
+      </li>
+      <li class="menu-item" id="menuFavourites" onclick="navigateTo('Favourites')">
+        <span class="menu-icon">⭐</span><span>Favourites</span>
+      </li>
     </ul>
   </div>
 
@@ -109,19 +114,16 @@
       </div>
     </div>
 
-    <!-- Input Mode Toggle -->
     <div class="input-mode-toggle">
       <button class="input-mode-btn active" id="voiceModeBtn" onclick="switchInputMode('voice')">🎤 Voice</button>
       <button class="input-mode-btn" id="textModeBtn" onclick="switchInputMode('text')">🖊 Text</button>
     </div>
 
-    <!-- Voice Input -->
     <div id="voiceInput">
       <button class="mic-btn" id="micBtn" onclick="startListening()">🎤</button>
       <p class="mic-status" id="micStatus">Press mic and speak</p>
     </div>
 
-    <!-- Text Input -->
     <div id="textInput" style="display:none">
       <div class="text-input-box">
         <textarea id="textInputArea" placeholder="Type your text here..." rows="3"></textarea>
@@ -143,14 +145,14 @@
       </div>
       <p id="translatedText">—</p>
       <div class="action-btns" id="actionBtns" style="display:none">
-  <button class="play-btn" id="playBtn" onclick="playAudio()">▶ Play</button>
-  <button class="copy-btn-full" onclick="copyTranslation()">📋 Copy</button>
-  <button class="fav-btn" onclick="saveToFavourites(
-    document.getElementById('originalText').textContent,
-    document.getElementById('translatedText').textContent,
-    document.getElementById('fromLang').value,
-    document.getElementById('toLang').value)">⭐ Save</button>
-</div>
+        <button class="play-btn" id="playBtn" onclick="playAudio()">▶ Play</button>
+        <button class="copy-btn-full" onclick="copyTranslation()">📋 Copy</button>
+        <button class="fav-btn" onclick="saveToFavourites(
+          document.getElementById('originalText').textContent,
+          document.getElementById('translatedText').textContent,
+          document.getElementById('fromLang').value,
+          document.getElementById('toLang').value)">⭐ Save</button>
+      </div>
     </div>
   </div>
 
@@ -263,7 +265,6 @@
       <h2>📸 Image Translation</h2>
       <p>Upload an image with text — we'll translate it for you!</p>
     </div>
-
     <div class="lang-row">
       <div class="lang-box">
         <label>Text Language in Image</label>
@@ -289,8 +290,6 @@
         </select>
       </div>
     </div>
-
-    <!-- Upload Area -->
     <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()"
          ondragover="event.preventDefault(); this.classList.add('drag-over')"
          ondragleave="this.classList.remove('drag-over')"
@@ -301,22 +300,14 @@
       <p class="upload-hint">Supports JPG, PNG, WEBP</p>
       <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
     </div>
-
-    <!-- Preview -->
     <div id="imgPreviewBox" style="display:none" class="img-preview-box">
       <img id="imgPreview" src="" alt="Uploaded image">
       <button class="change-img-btn" onclick="document.getElementById('imageInput').click()">🔄 Change Image</button>
     </div>
-
-    <!-- Translate Button -->
     <button class="img-translate-btn" id="imgTranslateBtn" onclick="translateImage()" style="display:none">
       🔍 Extract & Translate Text
     </button>
-
-    <!-- Status -->
     <p class="img-status" id="imgStatus"></p>
-
-    <!-- Results -->
     <div id="imgResults" style="display:none">
       <div class="result-box">
         <div class="result-header">
@@ -325,7 +316,6 @@
         </div>
         <p id="imgExtractedText">—</p>
       </div>
-
       <div class="result-box translation-box">
         <div class="result-header">
           <span class="result-label">🌐 Translation:</span>
@@ -341,66 +331,63 @@
   </div>
 
   <!-- ── PAGE: HISTORY ── -->
-<div id="pageHistory" class="page">
-  <div class="page-header">
-    <h2>📜 Translation History</h2>
-    <p>Your recent translations</p>
+  <div id="pageHistory" class="page">
+    <div class="page-header">
+      <h2>📜 Translation History</h2>
+      <p>Your recent translations</p>
+    </div>
+    <div id="historyList" class="history-list">
+      <p class="empty-msg">Sign in to see your history</p>
+    </div>
   </div>
-  <div id="historyList" class="history-list">
-    <p class="empty-msg">Sign in to see your history</p>
-  </div>
-</div>
 
-<!-- ── PAGE: FAVOURITES ── -->
-<div id="pageFavourites" class="page">
-  <div class="page-header">
-    <h2>⭐ Favourite Phrases</h2>
-    <p>Your saved translations</p>
+  <!-- ── PAGE: FAVOURITES ── -->
+  <div id="pageFavourites" class="page">
+    <div class="page-header">
+      <h2>⭐ Favourite Phrases</h2>
+      <p>Your saved translations</p>
+    </div>
+    <div id="favouritesList" class="history-list">
+      <p class="empty-msg">Sign in to see your favourites</p>
+    </div>
   </div>
-  <div id="favouritesList" class="history-list">
-    <p class="empty-msg">Sign in to see your favourites</p>
-  </div>
-</div>
-  
-  <!-- ── TOAST NOTIFICATION ── -->
+
+  <!-- ── TOAST ── -->
   <div id="toast" class="toast">📋 Copied!</div>
 
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-<script type="module" src="firebase.js"></script>
-<script src="app.js"></script>
+  <script type="module" src="firebase.js"></script>
+  <script src="app.js"></script>
 
+  <!-- ── PWA: Service Worker + Install Prompt ── -->
   <script>
-  // Register Service Worker
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
-        .then(() => console.log('SW registered'))
-        .catch(err => console.log('SW failed:', err));
-    });
-  }
-
-  // PWA Install Prompt
-  let deferredPrompt;
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    document.getElementById('installBtn').style.display = 'flex';
-  });
-
-  window.addEventListener('appinstalled', () => {
-    document.getElementById('installBtn').style.display = 'none';
-    deferredPrompt = null;
-  });
-
-  window.installApp = function() {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      deferredPrompt.userChoice.then(() => {
-        deferredPrompt = null;
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(() => console.log('SW registered ✅'))
+          .catch(err => console.log('SW failed:', err));
       });
     }
-  }
-</script>
-  
+
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installBtn').style.display = 'flex';
+    });
+
+    window.addEventListener('appinstalled', () => {
+      document.getElementById('installBtn').style.display = 'none';
+      deferredPrompt = null;
+      showToast('🎉 Vaani installed successfully!');
+    });
+
+    window.installApp = function () {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+      }
+    }
+  </script>
 </body>
 </html>
