@@ -13,38 +13,45 @@ pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
 // ── LANGUAGE CONFIG ───────────────────────────────────
-// Grouped for display: 22 Scheduled → Popular Regional → Others
 const LANG_CONFIG = {
-  // ── 22 Scheduled Languages (8th Schedule) ──
-  as:       { name:"Assamese",            nonLatin:true  },
-  bn:       { name:"Bengali (Bangla)",    nonLatin:true  },
-  brx:      { name:"Bodo",               nonLatin:true  },
-  doi:      { name:"Dogri",              nonLatin:true  },
-  gu:       { name:"Gujarati",           nonLatin:true  },
-  hi:       { name:"Hindi",              nonLatin:true  },
-  ks:       { name:"Kashmiri",           nonLatin:true  },
-  kn:       { name:"Kannada",            nonLatin:true  },
-  kok:      { name:"Konkani",            nonLatin:true  },
-  mai:      { name:"Maithili",           nonLatin:true  },
-  ml:       { name:"Malayalam",          nonLatin:true  },
-  "mni-Mtei":{ name:"Manipuri (Meitei)", nonLatin:true  },
-  mr:       { name:"Marathi",            nonLatin:true  },
-  ne:       { name:"Nepali",             nonLatin:true  },
-  or:       { name:"Odia (Oriya)",       nonLatin:true  },
-  pa:       { name:"Punjabi",            nonLatin:true  },
-  ta:       { name:"Tamil",              nonLatin:true  },
-  te:       { name:"Telugu",             nonLatin:true  },
-  sat:      { name:"Santali",            nonLatin:true  },
-  sd:       { name:"Sindhi",             nonLatin:true  },
-  ur:       { name:"Urdu",              nonLatin:true  },
-  sa:       { name:"Sanskrit",           nonLatin:true  },
-  // ── Popular Regional Languages ──
-  bho:      { name:"Bhojpuri",           nonLatin:true  },
-  mwr:      { name:"Marwari",            nonLatin:true  },
-  tcy:      { name:"Tulu",              nonLatin:true  },
-  lus:      { name:"Mizo (Lushai)",      nonLatin:false },
-  // ── English ──
-  en:       { name:"English",            nonLatin:false }
+  // 22 Scheduled Languages
+  as:          { name:"Assamese",            nonLatin:true  },
+  bn:          { name:"Bengali (Bangla)",    nonLatin:true  },
+  brx:         { name:"Bodo",               nonLatin:true  },
+  doi:         { name:"Dogri",              nonLatin:true  },
+  gu:          { name:"Gujarati",           nonLatin:true  },
+  hi:          { name:"Hindi",              nonLatin:true  },
+  ks:          { name:"Kashmiri",           nonLatin:true  },
+  kn:          { name:"Kannada",            nonLatin:true  },
+  kok:         { name:"Konkani",            nonLatin:true  },
+  mai:         { name:"Maithili",           nonLatin:true  },
+  ml:          { name:"Malayalam",          nonLatin:true  },
+  "mni-Mtei":  { name:"Manipuri (Meitei)", nonLatin:true  },
+  mr:          { name:"Marathi",            nonLatin:true  },
+  ne:          { name:"Nepali",             nonLatin:true  },
+  or:          { name:"Odia (Oriya)",       nonLatin:true  },
+  pa:          { name:"Punjabi",            nonLatin:true  },
+  ta:          { name:"Tamil",              nonLatin:true  },
+  te:          { name:"Telugu",             nonLatin:true  },
+  sat:         { name:"Santali",            nonLatin:true  },
+  sd:          { name:"Sindhi",             nonLatin:true  },
+  ur:          { name:"Urdu",              nonLatin:true  },
+  sa:          { name:"Sanskrit",           nonLatin:true  },
+  // Popular Regional
+  bho:         { name:"Bhojpuri",           nonLatin:true  },
+  mwr:         { name:"Marwari",            nonLatin:true  },
+  tcy:         { name:"Tulu",              nonLatin:true  },
+  lus:         { name:"Mizo (Lushai)",      nonLatin:false },
+  en:          { name:"English",            nonLatin:false }
+};
+
+// Languages where gTTS doesn't have native support — audio will use a close fallback
+// Translation text is ALWAYS shown regardless
+const AUDIO_FALLBACK_NOTE = {
+  or: "Odia", as: "Assamese", sa: "Sanskrit", sd: "Sindhi", ks: "Kashmiri",
+  mai: "Maithili", doi: "Dogri", brx: "Bodo", kok: "Konkani",
+  "mni-Mtei": "Manipuri", sat: "Santali", bho: "Bhojpuri",
+  mwr: "Marwari", tcy: "Tulu", lus: "Mizo"
 };
 
 const LANG_NAMES = Object.fromEntries(Object.entries(LANG_CONFIG).map(([k,v])=>[k,v.name]));
@@ -78,55 +85,53 @@ function isLikelyRomanized(text, fromLang) {
 async function transliterateToNative(text, targetLang) {
   const url = `https://inputtools.google.com/request?text=${encodeURIComponent(text)}&itc=${targetLang}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage`;
   try {
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyUrl, { signal:AbortSignal.timeout(6000) });
+    const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, { signal:AbortSignal.timeout(6000) });
     if (res.ok) {
-      const wrapper = await res.json();
-      if (wrapper.contents) {
-        const data = JSON.parse(wrapper.contents);
-        if (data[0]==="SUCCESS" && data[1]) {
+      const w = await res.json();
+      if (w.contents) {
+        const data = JSON.parse(w.contents);
+        if (data[0]==="SUCCESS" && data[1])
           return data[1].map(w=>(w[1]&&w[1][0])?w[1][0]:w[0]).join(" ");
-        }
       }
     }
-  } catch(e) { console.warn("Transliteration failed:", e); }
+  } catch(e) {}
   return text;
 }
 
 async function prepareInputText(text, fromLang) {
   if (!isLikelyRomanized(text, fromLang)) return text;
-  showToast(`Detected romanized ${LANG_NAMES[fromLang]}...`);
+  showToast(`Detecting romanized ${LANG_NAMES[fromLang]}...`);
   const native = await transliterateToNative(text, fromLang);
   console.log(`Romanized "${text}" → "${native}"`);
   return native;
 }
 
-// ── TRANSLATION (FAST — 3 methods) ───────────────────
+// ── TRANSLATION ───────────────────────────────────────
 async function translateText(text, fromLang, toLang) {
   if (!text||!text.trim()) return "";
   const q = text.trim();
   if (fromLang===toLang) return q;
   const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(q)}`;
 
-  // Method 1: Direct (fastest)
+  // Method 1: Direct
   try {
     const res = await fetch(gtUrl, { signal:AbortSignal.timeout(5000) });
     if (res.ok) {
-      const data = await res.json();
-      if (data&&data[0]) { const t=data[0].filter(s=>s&&s[0]).map(s=>s[0]).join(""); if(t) return t; }
+      const d = await res.json();
+      if (d&&d[0]) { const t=d[0].filter(s=>s&&s[0]).map(s=>s[0]).join(""); if(t) return t; }
     }
   } catch(e) {}
 
-  // Method 2: allorigins proxy
+  // Method 2: Proxy
   try {
     const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(gtUrl)}`, { signal:AbortSignal.timeout(8000) });
     if (res.ok) {
       const w = await res.json();
-      if (w.contents) { const data=JSON.parse(w.contents); if(data&&data[0]){ const t=data[0].filter(s=>s&&s[0]).map(s=>s[0]).join(""); if(t) return t; } }
+      if (w.contents) { const d=JSON.parse(w.contents); if(d&&d[0]){ const t=d[0].filter(s=>s&&s[0]).map(s=>s[0]).join(""); if(t) return t; } }
     }
   } catch(e) {}
 
-  // Method 3: Backend fallback
+  // Method 3: Backend
   try {
     const res = await fetch(`${API_URL}/translate`, {
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -139,15 +144,29 @@ async function translateText(text, fromLang, toLang) {
   throw new Error("Translation failed. Please check your connection.");
 }
 
-// ── SPEAK helper (always fetches fresh audio for given text+lang) ─────────
+// ── AUDIO FETCH (never throws — returns null if unavailable) ─────────────
+// KEY FIX: Audio failure NEVER blocks translation display.
+// For languages without gTTS support, backend uses closest fallback language.
 async function fetchAudio(text, lang) {
-  const res = await fetch(`${API_URL}/speak`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({text, lang}),
-    signal:AbortSignal.timeout(25000)
-  });
-  if (!res.ok) throw new Error(`speak ${res.status}`);
-  return res.blob();
+  try {
+    const res = await fetch(`${API_URL}/speak`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text, lang}),
+      signal:AbortSignal.timeout(25000)
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    // Check if response header tells us a fallback was used
+    const usedLang = res.headers.get('X-TTS-Lang-Used');
+    const reqLang  = res.headers.get('X-TTS-Lang-Requested');
+    if (usedLang && reqLang && usedLang !== reqLang) {
+      console.log(`Audio: ${reqLang} not natively supported, used ${usedLang} voice`);
+    }
+    return blob;
+  } catch(e) {
+    console.warn("Audio fetch failed:", e.message);
+    return null;
+  }
 }
 
 // ── GLOBAL AUDIO PLAYER ───────────────────────────────
@@ -282,19 +301,15 @@ const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition
 let recognition;
 try{ recognition=new SpeechRecognition(); recognition.continuous=false; recognition.interimResults=false; }catch(e){}
 
-// ── BUG FIX: toLang change — clear old audio blob, fetch fresh audio for NEW language ──
-document.getElementById("toLang").addEventListener("change", async()=>{
+document.getElementById("toLang").addEventListener("change",async()=>{
   if (lastSpokenText) {
     stopAllAudio();
-    // Clear old audio blobs so Play doesn't use stale Tamil/other language audio
-    window._singleAudioBlob = null;
-    window._singleTranslatedText = null;
+    window._singleAudioBlob=null; window._singleTranslatedText=null;
     document.getElementById("translatedText").textContent="Translating...";
     document.getElementById("actionBtns").style.display="none";
-    await translateAndSpeak(lastSpokenText, lastFromLang);
+    await translateAndSpeak(lastSpokenText,lastFromLang);
   }
 });
-
 document.getElementById("fromLang").addEventListener("change",async()=>{
   if(lastSpokenText){
     stopAllAudio();
@@ -305,25 +320,20 @@ document.getElementById("fromLang").addEventListener("change",async()=>{
     await translateAndSpeak(lastSpokenText,lastFromLang);
   }
 });
-
 document.getElementById("imgToLang").addEventListener("change",async()=>{
   const el=document.getElementById('imgExtractedText');
   const extracted=el.dataset.originalText||el.textContent;
   if(extracted&&extracted!=="—"&&document.getElementById('imgResults').style.display!=='none'){
-    stopAllAudio();
-    // BUG FIX: Clear old imgAudioBlob so it doesn't play old language
-    imgAudioBlob=null;
+    stopAllAudio(); imgAudioBlob=null;
     document.getElementById('imgTranslatedText').textContent="Translating...";
     const fromLang=document.getElementById('imgFromLang').value, toLang=document.getElementById('imgToLang').value;
     try{
       const translated=await translateText(extracted,fromLang,toLang);
-      const translatedEl=document.getElementById('imgTranslatedText');
-      translatedEl.textContent=translated; delete translatedEl.dataset.originalText;
+      const tEl=document.getElementById('imgTranslatedText'); tEl.textContent=translated; delete tEl.dataset.originalText;
       window._imgTranslatedText=translated;
-      // Fetch fresh audio for the new toLang
       imgAudioBlob=await fetchAudio(translated,toLang);
       const playBtn=document.querySelector('#imgActionBtns .ac-btn.ac-primary');
-      if(playBtn){ const old=document.getElementById('timeline_img'); if(old) old.remove(); createAudioPlayer(imgAudioBlob,playBtn,translated,'img','imgTranslatedText'); }
+      if(playBtn&&imgAudioBlob){ const old=document.getElementById('timeline_img'); if(old) old.remove(); createAudioPlayer(imgAudioBlob,playBtn,translated,'img','imgTranslatedText'); }
     }catch{ document.getElementById('imgTranslatedText').textContent="Translation error"; }
   }
 });
@@ -381,45 +391,72 @@ if(recognition){
 }
 
 // ── TRANSLATE + SPEAK (Single) ────────────────────────
+// KEY FIX: Translation and audio are fully independent.
+// Translation text is shown IMMEDIATELY when it arrives.
+// Audio is fetched in parallel — if it fails, text still shows perfectly.
 async function translateAndSpeak(text,fromLang){
   const toLang=document.getElementById("toLang").value;
-  try{
-    const translated=await translateText(text,fromLang,toLang);
+  let translated = null;
+  try {
+    // STEP 1: Translate — show text as soon as it arrives
+    translated = await translateText(text,fromLang,toLang);
     window._singleTranslatedText=translated;
     const textEl=document.getElementById("translatedText");
     textEl.textContent=translated; delete textEl.dataset.originalText;
-
-    // BUG FIX: Always fetch audio for the CURRENT toLang (not cached from previous lang)
-    const blob=await fetchAudio(translated, toLang);
+    // Show action buttons immediately — user can Copy/Save even before audio loads
     document.getElementById("actionBtns").style.display="flex";
+    document.getElementById("micStatus").textContent="Loading audio...";
+
+    // STEP 2: Fetch audio (non-blocking — never hides the translation)
+    const blob=await fetchAudio(translated,toLang);
     window._singleAudioBlob=blob;
     document.getElementById("micStatus").textContent="Tap to speak";
     const old=document.getElementById('timeline_single'); if(old) old.remove();
-    const btn=document.getElementById('playBtn'); if(btn) createAudioPlayer(blob,btn,translated,'single','translatedText');
+    const btn=document.getElementById('playBtn');
+    if(btn&&blob) {
+      createAudioPlayer(blob,btn,translated,'single','translatedText');
+    } else if(btn&&!blob) {
+      // Audio unavailable but show a note if this language has known limited TTS
+      if(AUDIO_FALLBACK_NOTE[toLang]) {
+        document.getElementById("micStatus").textContent=`Audio: closest voice used for ${AUDIO_FALLBACK_NOTE[toLang]}`;
+      } else {
+        document.getElementById("micStatus").textContent="Tap to speak";
+      }
+    }
     if(window.getCurrentUser&&window.getCurrentUser()) saveToHistory(text,translated,fromLang,toLang);
-  }catch(err){
-    document.getElementById("translatedText").textContent="—";
-    document.getElementById("micStatus").textContent="Translation error. Check connection.";
+  } catch(err) {
+    // Only show error if translation itself failed (not audio)
+    if (!translated) {
+      document.getElementById("translatedText").textContent="Translation error — check connection.";
+      document.getElementById("micStatus").textContent="Error. Try again.";
+    }
   }
 }
+
 function playAudio(){ const blob=window._singleAudioBlob; const text=window._singleTranslatedText; const btn=document.getElementById('playBtn'); if(!blob||!btn) return; toggleAudio(blob,btn,text,'single','translatedText'); }
 
 // ── TRANSLATE + SPEAK (Conversation) ─────────────────
 async function translateAndSpeakConv(text,fromLang,toLang,person){
+  let translated = null;
   try{
-    const translated=await translateText(text,fromLang,toLang);
+    // STEP 1: Translate and show text immediately
+    translated=await translateText(text,fromLang,toLang);
     const textEl=document.getElementById(`translatedText${person}`);
     textEl.textContent=translated; delete textEl.dataset.originalText;
-    // BUG FIX: Use fetchAudio helper — always fetches for the correct toLang
-    const blob=await fetchAudio(translated, toLang);
+    document.getElementById(`micStatus${person}`).textContent="Loading audio...";
+    document.getElementById(`playBtn${person}`).style.display="flex";
+
+    // STEP 2: Audio — non-blocking
+    const blob=await fetchAudio(translated,toLang);
     if(person==='A') audioBlobA=blob; else audioBlobB=blob;
     window[`_convText${person}`]=translated;
-    document.getElementById(`playBtn${person}`).style.display="flex";
     document.getElementById(`micStatus${person}`).textContent="Tap to speak";
     const btn=document.getElementById(`playBtn${person}`);
     const old=document.getElementById(`timeline_conv${person}`); if(old) old.remove();
-    createAudioPlayer(blob,btn,translated,`conv${person}`,`translatedText${person}`);
-  }catch{ document.getElementById(`micStatus${person}`).textContent="Error. Try again."; }
+    if(btn&&blob) createAudioPlayer(blob,btn,translated,`conv${person}`,`translatedText${person}`);
+  }catch{
+    if(!translated) document.getElementById(`micStatus${person}`).textContent="Error. Try again.";
+  }
 }
 function playAudioA(){ const el=document.getElementById("translatedTextA"); const text=window._convTextA||el.dataset.originalText||el.textContent; const btn=document.getElementById('playBtnA'); if(!audioBlobA) return; toggleAudio(audioBlobA,btn,text,'convA','translatedTextA'); }
 function playAudioB(){ const el=document.getElementById("translatedTextB"); const text=window._convTextB||el.dataset.originalText||el.textContent; const btn=document.getElementById('playBtnB'); if(!audioBlobB) return; toggleAudio(audioBlobB,btn,text,'convB','translatedTextB'); }
@@ -466,7 +503,7 @@ function renderPhrases(results,fromLang,toLang){
   window._phraseResults=results;
 }
 function copyPhraseText(i){ const p=window._phraseResults[i]; if(p) navigator.clipboard.writeText(p.to).then(()=>showToast("Copied")); }
-async function playPhrase(i){ const p=window._phraseResults[i]; if(!p) return; try{ const blob=await fetchAudio(p.to,p.toLang); stopAllAudio(); new Audio(URL.createObjectURL(blob)).play(); }catch{ showToast("Could not play audio"); } }
+async function playPhrase(i){ const p=window._phraseResults[i]; if(!p) return; const blob=await fetchAudio(p.to,p.toLang); if(blob){ stopAllAudio(); new Audio(URL.createObjectURL(blob)).play(); } else { showToast("Audio unavailable for this language"); } }
 
 // ── IMAGE TRANSLATION ─────────────────────────────────
 let currentImageFile=null;
@@ -486,6 +523,7 @@ async function translateImage(){
   btn.disabled=true; btn.textContent='Reading image...'; statusEl.textContent='Extracting text from image...';
   document.getElementById('imgResults').style.display='none'; stopAllAudio();
   const old=document.getElementById('timeline_img'); if(old) old.remove(); imgAudioBlob=null;
+  let translated=null;
   try{
     const tessLangs={en:'eng',hi:'hin',te:'tel',ta:'tam',kn:'kan',ml:'mal',bn:'ben',mr:'mar',gu:'guj',pa:'pan',ur:'urd',or:'ori',as:'asm',ne:'nep',sa:'san',sd:'snd',ks:'kas',mai:'mai',doi:'doi',brx:'brx'};
     const ocrLang=tessLangs[fromLang]||'eng';
@@ -496,16 +534,24 @@ async function translateImage(){
     const{data:{text}}=await worker.recognize(currentImageFile); await worker.terminate();
     const extracted=text.trim();
     if(!extracted||extracted.length<2){ statusEl.textContent='No text found. Try a clearer image.'; btn.disabled=false; btn.innerHTML=BTN_READY_HTML; return; }
-    const extractedEl=document.getElementById('imgExtractedText'); extractedEl.textContent=extracted; delete extractedEl.dataset.originalText;
+    document.getElementById('imgExtractedText').textContent=extracted; delete document.getElementById('imgExtractedText').dataset.originalText;
+
+    // STEP 1: Show translation immediately
     statusEl.textContent='Translating...'; btn.textContent='Translating...';
-    const translated=await translateText(extracted,fromLang,toLang);
-    const translatedEl=document.getElementById('imgTranslatedText'); translatedEl.textContent=translated; delete translatedEl.dataset.originalText; window._imgTranslatedText=translated;
-    btn.textContent='Generating audio...'; statusEl.textContent='Generating audio...';
-    try{ imgAudioBlob=await fetchAudio(translated,toLang); }
-    catch{ imgAudioBlob=null; statusEl.textContent='Done (audio unavailable — try Play in a moment)'; }
+    translated=await translateText(extracted,fromLang,toLang);
+    const tEl=document.getElementById('imgTranslatedText'); tEl.textContent=translated; delete tEl.dataset.originalText;
+    window._imgTranslatedText=translated;
     document.getElementById('imgResults').style.display='block';
+    statusEl.textContent='Loading audio...';
+
+    // STEP 2: Audio (non-blocking)
+    imgAudioBlob=await fetchAudio(translated,toLang);
     if(imgAudioBlob){ statusEl.textContent='Done ✓'; const playBtn=document.querySelector('#imgActionBtns .ac-btn.ac-primary'); if(playBtn) createAudioPlayer(imgAudioBlob,playBtn,translated,'img','imgTranslatedText'); }
-  }catch(err){ console.error(err); statusEl.textContent='Error: '+(err.message||'Something went wrong. Try again.'); }
+    else{ statusEl.textContent='Done ✓ (audio uses closest available voice)'; }
+  }catch(err){
+    if(!translated){ console.error(err); statusEl.textContent='Error: '+(err.message||'Something went wrong.'); }
+    else{ document.getElementById('imgResults').style.display='block'; statusEl.textContent='Done ✓ (audio unavailable)'; }
+  }
   btn.disabled=false; btn.innerHTML=BTN_READY_HTML;
 }
 function playImgAudio(){
@@ -513,19 +559,19 @@ function playImgAudio(){
   const text=window._imgTranslatedText||el.dataset.originalText||el.textContent;
   const btn=document.querySelector('#imgActionBtns .ac-btn.ac-primary');
   if(!blob||!btn){
-    if(window._imgTranslatedText){ const toLang=document.getElementById('imgToLang').value; showToast("Generating audio..."); fetchAudio(window._imgTranslatedText,toLang).then(b=>{ imgAudioBlob=b; if(btn) toggleAudio(b,btn,window._imgTranslatedText,'img','imgTranslatedText'); }).catch(()=>showToast("Audio unavailable.")); }
+    if(window._imgTranslatedText){ const toLang=document.getElementById('imgToLang').value; showToast("Generating audio..."); fetchAudio(window._imgTranslatedText,toLang).then(b=>{ if(b){ imgAudioBlob=b; if(btn) toggleAudio(b,btn,window._imgTranslatedText,'img','imgTranslatedText'); } else showToast("Audio unavailable for this language."); }); }
     return;
   }
   toggleAudio(blob,btn,text,'img','imgTranslatedText');
 }
 
-// ── SAVE TO FAVOURITES (safe) ─────────────────────────
+// ── SAVE TO FAVOURITES ────────────────────────────────
 window.saveSingleToFavourites=function(){
   const original=document.getElementById('originalText').textContent;
   const translated=window._singleTranslatedText||document.getElementById('translatedText').dataset.originalText||document.getElementById('translatedText').textContent;
   const fromLang=document.getElementById('fromLang').value, toLang=document.getElementById('toLang').value;
   if(!original||original==='—'){ showToast("Nothing to save"); return; }
-  if(!translated||translated==='—'||translated==='Translating...'){ showToast("Wait for translation to complete"); return; }
+  if(!translated||translated==='—'||translated==='Translating...'||translated.includes('error')){ showToast("Wait for translation to complete"); return; }
   if(window.saveToFavourites) window.saveToFavourites(original,translated,fromLang,toLang);
 };
 
