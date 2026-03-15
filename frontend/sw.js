@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vaani-v1';
+const CACHE_NAME = 'vaani-v3';
 const ASSETS = [
   '/',
   '/index.html',
