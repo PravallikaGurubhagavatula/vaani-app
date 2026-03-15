@@ -8,67 +8,56 @@ let lastFromLang = "";
 let currentConvSpeaker = null;
 let currentCategory = "food";
 let travelPhrasesCache = {};
+let isDarkMode = true;
 
-// ── Travel Phrases (English source) ──────────────────
-const PHRASES = {
-  food: [
-    { en: "I am hungry", key: "food1" },
-    { en: "Give me a menu please", key: "food2" },
-    { en: "How much is this?", key: "food3" },
-    { en: "This is delicious!", key: "food4" },
-    { en: "I am vegetarian", key: "food5" },
-    { en: "Water please", key: "food6" },
-    { en: "The bill please", key: "food7" },
-    { en: "No spicy food please", key: "food8" },
-  ],
-  transport: [
-    { en: "Where is the bus stop?", key: "tr1" },
-    { en: "How much is the ticket?", key: "tr2" },
-    { en: "Take me to this address", key: "tr3" },
-    { en: "Stop here please", key: "tr4" },
-    { en: "Is this the right train?", key: "tr5" },
-    { en: "Where is the airport?", key: "tr6" },
-    { en: "How far is it?", key: "tr7" },
-    { en: "Call a taxi please", key: "tr8" },
-  ],
-  hotel: [
-    { en: "I have a reservation", key: "h1" },
-    { en: "What time is checkout?", key: "h2" },
-    { en: "Can I get extra towels?", key: "h3" },
-    { en: "The AC is not working", key: "h4" },
-    { en: "Is breakfast included?", key: "h5" },
-    { en: "I need a wake up call", key: "h6" },
-    { en: "Where is the lift?", key: "h7" },
-    { en: "Can I extend my stay?", key: "h8" },
-  ],
-  emergency: [
-    { en: "Help me please!", key: "em1" },
-    { en: "Call the police", key: "em2" },
-    { en: "I need a doctor", key: "em3" },
-    { en: "I am lost", key: "em4" },
-    { en: "Call an ambulance", key: "em5" },
-    { en: "I have been robbed", key: "em6" },
-    { en: "Where is the hospital?", key: "em7" },
-    { en: "I am allergic to this", key: "em8" },
-  ],
-  shopping: [
-    { en: "How much does this cost?", key: "sh1" },
-    { en: "Can you give a discount?", key: "sh2" },
-    { en: "Do you have a smaller size?", key: "sh3" },
-    { en: "I am just looking", key: "sh4" },
-    { en: "I will take this one", key: "sh5" },
-    { en: "Do you accept cards?", key: "sh6" },
-    { en: "Can I return this?", key: "sh7" },
-    { en: "Where is the trial room?", key: "sh8" },
-  ]
-};
+// ── THEME TOGGLE ─────────────────────────────────────
+function toggleTheme() {
+  isDarkMode = !isDarkMode;
+  document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
+  document.getElementById('themeBtn').textContent = isDarkMode ? '🌙' : '☀️';
+}
 
-// ── Language names map ────────────────────────────────
-const LANG_NAMES = {
-  te: "Telugu", ta: "Tamil", hi: "Hindi", kn: "Kannada",
-  ml: "Malayalam", mr: "Marathi", bn: "Bengali",
-  gu: "Gujarati", pa: "Punjabi", ur: "Urdu", en: "English"
-};
+// ── INPUT MODE TOGGLE ─────────────────────────────────
+function switchInputMode(mode) {
+  document.getElementById('voiceModeBtn').classList.toggle('active', mode === 'voice');
+  document.getElementById('textModeBtn').classList.toggle('active', mode === 'text');
+  document.getElementById('voiceInput').style.display = mode === 'voice' ? 'block' : 'none';
+  document.getElementById('textInput').style.display = mode === 'text' ? 'block' : 'none';
+}
+
+// ── TEXT INPUT TRANSLATION ────────────────────────────
+async function translateTypedText() {
+  const text = document.getElementById('textInputArea').value.trim();
+  if (!text) return;
+  const fromLang = document.getElementById("fromLang").value;
+  lastSpokenText = text;
+  lastFromLang = fromLang;
+  document.getElementById("originalText").textContent = text;
+  document.getElementById("micStatus").textContent = "Translating...";
+  await translateAndSpeak(text, fromLang);
+}
+
+// ── COPY FUNCTIONS ────────────────────────────────────
+function copyTranslation() {
+  const text = document.getElementById("translatedText").textContent;
+  if (text && text !== "—") {
+    navigator.clipboard.writeText(text).then(() => showToast("📋 Copied!"));
+  }
+}
+
+function copyText(elementId) {
+  const text = document.getElementById(elementId).textContent;
+  if (text && text !== "—") {
+    navigator.clipboard.writeText(text).then(() => showToast("📋 Copied!"));
+  }
+}
+
+function showToast(msg) {
+  const toast = document.getElementById("toast");
+  toast.textContent = msg;
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 2000);
+}
 
 // ── MENU ─────────────────────────────────────────────
 function toggleMenu() {
@@ -94,7 +83,6 @@ const recognition = new SpeechRecognition();
 recognition.continuous = false;
 recognition.interimResults = false;
 
-// Language change listeners
 document.getElementById("toLang").addEventListener("change", async () => {
   if (lastSpokenText) {
     document.getElementById("micStatus").textContent = "Translating...";
@@ -117,7 +105,8 @@ function startListening() {
   document.getElementById("micStatus").textContent = "Listening...";
   document.getElementById("originalText").textContent = "—";
   document.getElementById("translatedText").textContent = "—";
-  document.getElementById("playBtn").style.display = "none";
+  document.getElementById("actionBtns").style.display = "none";
+  document.getElementById("copyBtn").style.display = "none";
   recognition.start();
 }
 
@@ -164,9 +153,7 @@ recognition.onerror = (e) => {
   }
 };
 
-function stopMic() {
-  document.getElementById("micBtn").classList.remove("listening");
-}
+function stopMic() { document.getElementById("micBtn").classList.remove("listening"); }
 
 // ── TRANSLATE + SPEAK (Single) ────────────────────────
 async function translateAndSpeak(text, fromLang) {
@@ -179,12 +166,14 @@ async function translateAndSpeak(text, fromLang) {
     const transData = await transRes.json();
     const translatedText = transData.translated;
     document.getElementById("translatedText").textContent = translatedText;
+    document.getElementById("copyBtn").style.display = "block";
+
     const audioRes = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translatedText, lang: toLang })
     });
     audioBlob = await audioRes.blob();
-    document.getElementById("playBtn").style.display = "block";
+    document.getElementById("actionBtns").style.display = "flex";
     document.getElementById("micStatus").textContent = "Press mic and speak";
     playAudio();
   } catch (err) {
@@ -229,11 +218,51 @@ function swapLanguages() {
   lastSpokenText = ""; lastFromLang = ""; audioBlob = null;
   document.getElementById("originalText").textContent = "—";
   document.getElementById("translatedText").textContent = "—";
-  document.getElementById("playBtn").style.display = "none";
+  document.getElementById("actionBtns").style.display = "none";
+  document.getElementById("copyBtn").style.display = "none";
   document.getElementById("micStatus").textContent = "Languages swapped! Press mic and speak again.";
 }
 
 // ── TRAVEL HELPER ─────────────────────────────────────
+const LANG_NAMES = {
+  te: "Telugu", ta: "Tamil", hi: "Hindi", kn: "Kannada",
+  ml: "Malayalam", mr: "Marathi", bn: "Bengali",
+  gu: "Gujarati", pa: "Punjabi", ur: "Urdu", en: "English"
+};
+
+const PHRASES = {
+  food: [
+    { en: "I am hungry" }, { en: "Give me a menu please" },
+    { en: "How much is this?" }, { en: "This is delicious!" },
+    { en: "I am vegetarian" }, { en: "Water please" },
+    { en: "The bill please" }, { en: "No spicy food please" },
+  ],
+  transport: [
+    { en: "Where is the bus stop?" }, { en: "How much is the ticket?" },
+    { en: "Take me to this address" }, { en: "Stop here please" },
+    { en: "Is this the right train?" }, { en: "Where is the airport?" },
+    { en: "How far is it?" }, { en: "Call a taxi please" },
+  ],
+  hotel: [
+    { en: "I have a reservation" }, { en: "What time is checkout?" },
+    { en: "Can I get extra towels?" }, { en: "The AC is not working" },
+    { en: "Is breakfast included?" }, { en: "I need a wake up call" },
+    { en: "Where is the lift?" }, { en: "Can I extend my stay?" },
+  ],
+  emergency: [
+    { en: "Help me please!" }, { en: "Call the police" },
+    { en: "I need a doctor" }, { en: "I am lost" },
+    { en: "Call an ambulance" }, { en: "I have been robbed" },
+    { en: "Where is the hospital?" }, { en: "I am allergic to this" },
+  ],
+  shopping: [
+    { en: "How much does this cost?" }, { en: "Can you give a discount?" },
+    { en: "Do you have a smaller size?" }, { en: "I am just looking" },
+    { en: "I will take this one" }, { en: "Do you accept cards?" },
+    { en: "Can I return this?" }, { en: "Where is the trial room?" },
+  ]
+};
+
 function selectCategory(cat, btn) {
   currentCategory = cat;
   document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
@@ -250,7 +279,6 @@ async function loadTravelPhrases() {
   document.getElementById("phrasesList").innerHTML = "";
   document.getElementById("travelLoading").style.display = "block";
 
-  // Check cache
   if (travelPhrasesCache[cacheKey]) {
     document.getElementById("travelLoading").style.display = "none";
     renderPhrases(travelPhrasesCache[cacheKey], fromLang, toLang);
@@ -258,7 +286,6 @@ async function loadTravelPhrases() {
   }
 
   try {
-    // Translate all phrases
     const results = [];
     for (const phrase of phrases) {
       const fromRes = await fetch(`${API_URL}/translate`, {
@@ -266,29 +293,20 @@ async function loadTravelPhrases() {
         body: JSON.stringify({ text: phrase.en, from_lang: "en", to_lang: fromLang })
       });
       const fromData = await fromRes.json();
-
       const toRes = await fetch(`${API_URL}/translate`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: phrase.en, from_lang: "en", to_lang: toLang })
       });
       const toData = await toRes.json();
-
-      results.push({
-        en: phrase.en,
-        from: fromData.translated,
-        to: toData.translated,
-        toLang: toLang
-      });
+      results.push({ en: phrase.en, from: fromData.translated, to: toData.translated, toLang });
     }
-
     travelPhrasesCache[cacheKey] = results;
     document.getElementById("travelLoading").style.display = "none";
     renderPhrases(results, fromLang, toLang);
-
   } catch (err) {
     document.getElementById("travelLoading").style.display = "none";
     document.getElementById("phrasesList").innerHTML =
-      `<p style="text-align:center; color:#888; padding:20px;">Could not load phrases. Is backend running?</p>`;
+      `<p style="text-align:center; color:var(--text-muted); padding:20px;">Could not load phrases. Is backend running?</p>`;
   }
 }
 
@@ -304,11 +322,21 @@ function renderPhrases(results, fromLang, toLang) {
         <div class="phrase-translated">${LANG_NAMES[toLang]}: ${r.to}</div>
         <div class="phrase-english">${r.en}</div>
       </div>
-      <button class="phrase-play-btn" onclick="playPhrase(${i})" data-index="${i}">🔊</button>
+      <div class="phrase-actions">
+        <button class="phrase-copy-btn" onclick="copyPhraseText(${i})" title="Copy">📋</button>
+        <button class="phrase-play-btn" onclick="playPhrase(${i})" title="Play">🔊</button>
+      </div>
     `;
     list.appendChild(card);
   });
   window._currentPhraseResults = results;
+}
+
+function copyPhraseText(index) {
+  const phrase = window._currentPhraseResults[index];
+  if (phrase) {
+    navigator.clipboard.writeText(phrase.to).then(() => showToast("📋 Copied!"));
+  }
 }
 
 async function playPhrase(index) {
@@ -322,6 +350,6 @@ async function playPhrase(index) {
     const blob = await res.blob();
     new Audio(URL.createObjectURL(blob)).play();
   } catch (err) {
-    alert("Could not play audio. Is backend running?");
+    showToast("❌ Could not play audio");
   }
 }
