@@ -21,15 +21,14 @@ document.getElementById("toLang").addEventListener("change", async () => {
   }
 });
 
-// When "I Speak" language changes → clear everything, ask to speak again
-document.getElementById("fromLang").addEventListener("change", () => {
-  lastSpokenText = "";
-  lastFromLang = "";
-  audioBlob = null;
-  document.getElementById("originalText").textContent = "—";
-  document.getElementById("translatedText").textContent = "—";
-  document.getElementById("playBtn").style.display = "none";
-  document.getElementById("micStatus").textContent = "Language changed! Press mic and speak again.";
+// When "I Speak" language changes → re-translate same text using NEW from language
+document.getElementById("fromLang").addEventListener("change", async () => {
+  if (lastSpokenText) {
+    const newFromLang = document.getElementById("fromLang").value;
+    lastFromLang = newFromLang;  // update source language
+    document.getElementById("micStatus").textContent = "Translating...";
+    await translateAndSpeak(lastSpokenText, newFromLang);
+  }
 });
 
 // ── Start Listening ───────────────────────────────────
