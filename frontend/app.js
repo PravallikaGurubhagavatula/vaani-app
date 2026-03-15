@@ -183,9 +183,14 @@ function formatTime(s) {
 }
 
 // ── TRANSLATION ───────────────────────────────────────
+// Uses Google Translate's free public endpoint — no API key, supports ALL language pairs
+// including Indian language to Indian language (te→ta, te→hi, ta→kn, etc.)
+
 async function translateText(text, fromLang, toLang) {
-  // Split long text into sentence chunks
-  const MAX_CHUNK = 480;
+  if (!text || !text.trim()) return "";
+
+  // Split into chunks of max 4000 chars (Google's limit is much higher than MyMemory)
+  const MAX_CHUNK = 3000;
   const chunks = [];
   const sentences = text.split(/(?<=[।.!?\n])\s*/);
   let current = "";
@@ -210,52 +215,41 @@ async function translateText(text, fromLang, toLang) {
 }
 
 async function translateChunk(text, fromLang, toLang) {
-  const langPair = `${fromLang}|${toLang}`;
-
-  // Primary: MyMemory via POST (more reliable for Unicode scripts)
+  // Primary: Google Translate free endpoint (works for ALL language pairs)
   try {
-    const formData = new FormData();
-    formData.append("q", text);
-    formData.append("langpair", langPair);
-
-    const res = await fetch("https://api.mymemory.translated.net/get", {
-      method: "POST",
-      body: formData
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.responseStatus === 200 && data.responseData?.translatedText) {
-        return data.responseData.translatedText;
-      }
-    }
-  } catch(e) {
-    console.warn("MyMemory POST failed, trying GET...", e);
-  }
-
-  // Fallback 1: MyMemory GET (standard)
-  try {
-    const url = "https://api.mymemory.translated.net/get?q=" +
-      encodeURIComponent(text) + "&langpair=" + encodeURIComponent(langPair);
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(text)}`;
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      if (data.responseStatus === 200 && data.responseData?.translatedText) {
-        return data.responseData.translatedText;
+      // Response is nested arrays: data[0] contains translation segments
+      if (data && data[0]) {
+        const translated = data[0]
+          .filter(seg => seg && seg[0])
+          .map(seg => seg[0])
+          .join("");
+        if (translated) return translated;
       }
     }
   } catch(e) {
-    console.warn("MyMemory GET failed, trying backend...", e);
+    console.warn("Google Translate failed, trying backend...", e);
   }
 
-  // Fallback 2: Your backend /translate endpoint
-  const res = await fetch(`${API_URL}/translate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
-  });
-  if (!res.ok) throw new Error("All translation methods failed");
-  const data = await res.json();
-  return data.translated;
+  // Fallback: Your backend /translate endpoint
+  try {
+    const res = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.translated) return data.translated;
+    }
+  } catch(e) {
+    console.warn("Backend translate failed", e);
+  }
+
+  throw new Error("Translation failed. Please check your connection.");
 }
 
 // ── THEME ──────────────────────────────────────────────
