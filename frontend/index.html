@@ -10,12 +10,29 @@
 
   <!-- ── NAV BAR ── -->
   <nav class="navbar">
-    <div class="nav-brand">🎙 Vaani</div>
-    <div class="nav-actions">
-      <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
-      <button class="hamburger" onclick="toggleMenu()">☰</button>
+  <div class="nav-brand">🎙 Vaani</div>
+  <div class="nav-actions">
+    <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
+
+    <!-- LOGIN BUTTON -->
+    <button class="login-btn" id="loginBtn" onclick="signInWithGoogle()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"> Sign in
+    </button>
+
+    <!-- USER PROFILE (shown after login) -->
+    <div class="user-profile" id="userProfile" style="display:none">
+      <img class="user-avatar" id="userAvatar" src="" onclick="toggleProfileMenu()">
+      <span class="user-name" id="userName"></span>
+      <div class="profile-menu" id="profileMenu" style="display:none">
+        <button onclick="navigateTo('History')">📜 History</button>
+        <button onclick="navigateTo('Favourites')">⭐ Favourites</button>
+        <button onclick="signOutUser()">🚪 Sign Out</button>
+      </div>
     </div>
-  </nav>
+
+    <button class="hamburger" onclick="toggleMenu()">☰</button>
+  </div>
+</nav>
 
   <!-- ── SIDE MENU ── -->
   <div class="menu-overlay" id="menuOverlay" onclick="closeMenu()"></div>
