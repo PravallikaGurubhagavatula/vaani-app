@@ -643,3 +643,44 @@ select { font-family: 'Outfit', sans-serif; }
   color: white;
   border-color: var(--accent);
 }
+
+/* ── ADD THIS TO THE BOTTOM OF style.css ── */
+
+/* Upload source buttons (Upload / Take Photo) */
+.img-source-btns {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.img-src-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all var(--transition);
+  cursor: pointer;
+}
+.img-src-btn svg { width: 16px; height: 16px; }
+.img-src-btn:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent-light);
+}
+.img-src-camera {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent-light);
+}
+.img-src-camera:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
