@@ -353,3 +353,112 @@ async function playPhrase(index) {
     showToast("❌ Could not play audio");
   }
 }
+
+// ── IMAGE TRANSLATION ─────────────────────────────────
+let imgAudioBlob = null;
+
+function handleDrop(event) {
+  event.preventDefault();
+  document.getElementById('uploadArea').classList.remove('drag-over');
+  const file = event.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) {
+    processImageFile(file);
+  }
+}
+
+function handleImageUpload(event) {
+  const file = event.target.files[0];
+  if (file) processImageFile(file);
+}
+
+function processImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('imgPreview').src = e.target.result;
+    document.getElementById('uploadArea').style.display = 'none';
+    document.getElementById('imgPreviewBox').style.display = 'block';
+    document.getElementById('imgTranslateBtn').style.display = 'block';
+    document.getElementById('imgResults').style.display = 'none';
+    document.getElementById('imgStatus').textContent = '';
+    imgAudioBlob = null;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function translateImage() {
+  const fileInput = document.getElementById('imageInput');
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const fromLang = document.getElementById('imgFromLang').value;
+  const toLang = document.getElementById('imgToLang').value;
+  const btn = document.getElementById('imgTranslateBtn');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Processing...';
+  document.getElementById('imgStatus').textContent = 'Reading text from image...';
+  document.getElementById('imgResults').style.display = 'none';
+
+  try {
+    // Use Tesseract.js for OCR directly in browser
+    const { createWorker } = Tesseract;
+    const imgSrc = document.getElementById('imgPreview').src;
+
+    // Map language codes to Tesseract language codes
+    const tesseractLangs = {
+      en: 'eng', hi: 'hin', te: 'tel', ta: 'tam',
+      kn: 'kan', ml: 'mal', bn: 'ben', mr: 'mar',
+      gu: 'guj', pa: 'pan', ur: 'urd'
+    };
+    const ocrLang = tesseractLangs[fromLang] || 'eng';
+
+    document.getElementById('imgStatus').textContent = 'Reading text from image... (this may take a moment)';
+
+    const worker = await createWorker(ocrLang);
+    const { data: { text } } = await worker.recognize(imgSrc);
+    await worker.terminate();
+
+    const extractedText = text.trim();
+
+    if (!extractedText) {
+      document.getElementById('imgStatus').textContent = '❌ No text found in image. Try a clearer image!';
+      btn.disabled = false;
+      btn.textContent = '🔍 Extract & Translate Text';
+      return;
+    }
+
+    document.getElementById('imgExtractedText').textContent = extractedText;
+    document.getElementById('imgStatus').textContent = 'Translating...';
+
+    // Translate extracted text
+    const transRes = await fetch(`${API_URL}/translate`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: extractedText, from_lang: fromLang, to_lang: toLang })
+    });
+    const transData = await transRes.json();
+    const translatedText = transData.translated;
+    document.getElementById('imgTranslatedText').textContent = translatedText;
+
+    // Get audio
+    const audioRes = await fetch(`${API_URL}/speak`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: translatedText, lang: toLang })
+    });
+    imgAudioBlob = await audioRes.blob();
+
+    document.getElementById('imgResults').style.display = 'block';
+    document.getElementById('imgStatus').textContent = '✅ Done!';
+    playImgAudio();
+
+  } catch (err) {
+    document.getElementById('imgStatus').textContent = '❌ Error processing image. Try again!';
+    console.error(err);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔍 Extract & Translate Text';
+}
+
+function playImgAudio() {
+  if (imgAudioBlob) new Audio(URL.createObjectURL(imgAudioBlob)).play();
+}
