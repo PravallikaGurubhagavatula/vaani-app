@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Vaani — Indian Language Translator</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#7c3aed">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vaani">
+<link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
 
@@ -13,6 +19,11 @@
   <div class="nav-brand">🎙 Vaani</div>
   <div class="nav-actions">
     <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
+
+    <!-- INSTALL BUTTON -->
+<button class="install-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install App">
+  📲 Install
+</button>
 
     <!-- LOGIN BUTTON -->
     <button class="login-btn" id="loginBtn" onclick="signInWithGoogle()">
@@ -357,5 +368,39 @@
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 <script type="module" src="firebase.js"></script>
 <script src="app.js"></script>
+
+  <script>
+  // Register Service Worker
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(() => console.log('SW registered'))
+        .catch(err => console.log('SW failed:', err));
+    });
+  }
+
+  // PWA Install Prompt
+  let deferredPrompt;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    document.getElementById('installBtn').style.display = 'flex';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    document.getElementById('installBtn').style.display = 'none';
+    deferredPrompt = null;
+  });
+
+  window.installApp = function() {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(() => {
+        deferredPrompt = null;
+      });
+    }
+  }
+</script>
+  
 </body>
 </html>
