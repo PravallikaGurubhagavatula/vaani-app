@@ -644,3 +644,25 @@ body {
   background: var(--accent);
   color: white;
 }
+
+/* ── FONTS ── */
+body { font-family: 'Outfit', sans-serif; }
+.nav-brand { font-family: 'ADLaM Display', sans-serif; }
+.side-menu .menu-header span { font-family: 'ADLaM Display', sans-serif; }
+
+/* ── INSTALL BUTTON ── */
+.install-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.install-btn:hover { background: var(--accent); color: white; }
