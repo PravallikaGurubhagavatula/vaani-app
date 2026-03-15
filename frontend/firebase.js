@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy }
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -29,8 +29,6 @@ onAuthStateChanged(auth, (user) => {
     document.getElementById('userProfile').style.display = 'flex';
     document.getElementById('userAvatar').src = user.photoURL || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.displayName);
     document.getElementById('userName').textContent = user.displayName;
-
-    // If already on History or Favourites page, refresh it now
     if (document.getElementById('pageHistory').classList.contains('active')) loadHistory();
     if (document.getElementById('pageFavourites').classList.contains('active')) loadFavourites();
   } else {
@@ -66,7 +64,7 @@ window.saveToHistory = async function (original, translated, fromLang, toLang) {
     await addDoc(collection(db, "history"), {
       uid: currentUser.uid,
       original, translated, fromLang, toLang,
-      timestamp: new Date()
+      timestamp: Date.now()
     });
   } catch (err) {
     console.error("Error saving history:", err);
@@ -83,7 +81,7 @@ window.saveToFavourites = async function (original, translated, fromLang, toLang
     await addDoc(collection(db, "favourites"), {
       uid: currentUser.uid,
       original, translated, fromLang, toLang,
-      timestamp: new Date()
+      timestamp: Date.now()
     });
     showToast("⭐ Saved to Favourites!");
   } catch (err) {
@@ -100,19 +98,23 @@ window.loadHistory = async function () {
   }
   list.innerHTML = '<p class="empty-msg">⏳ Loading...</p>';
   try {
+    // No orderBy — avoids needing a Firestore index
     const q = query(
       collection(db, "history"),
-      where("uid", "==", currentUser.uid),
-      orderBy("timestamp", "desc")
+      where("uid", "==", currentUser.uid)
     );
     const snapshot = await getDocs(q);
     if (snapshot.empty) {
       list.innerHTML = '<p class="empty-msg">No history yet. Start translating!</p>';
       return;
     }
+    // Sort by timestamp descending in JS
+    const items = [];
+    snapshot.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+    items.sort((a, b) => b.timestamp - a.timestamp);
+
     list.innerHTML = '';
-    snapshot.forEach(docSnap => {
-      const d = docSnap.data();
+    items.forEach(d => {
       const orig = (d.original || '').replace(/'/g, "&#39;");
       const trans = (d.translated || '').replace(/'/g, "&#39;");
       list.innerHTML += `
@@ -122,7 +124,7 @@ window.loadHistory = async function () {
           <div class="history-translated">${d.translated}</div>
           <div class="history-actions">
             <button onclick="saveToFavourites('${orig}','${trans}','${d.fromLang}','${d.toLang}')">⭐ Favourite</button>
-            <button onclick="deleteHistoryItem('${docSnap.id}')">🗑 Delete</button>
+            <button onclick="deleteHistoryItem('${d.id}')">🗑 Delete</button>
           </div>
         </div>`;
     });
@@ -141,26 +143,30 @@ window.loadFavourites = async function () {
   }
   list.innerHTML = '<p class="empty-msg">⏳ Loading...</p>';
   try {
+    // No orderBy — avoids needing a Firestore index
     const q = query(
       collection(db, "favourites"),
-      where("uid", "==", currentUser.uid),
-      orderBy("timestamp", "desc")
+      where("uid", "==", currentUser.uid)
     );
     const snapshot = await getDocs(q);
     if (snapshot.empty) {
       list.innerHTML = '<p class="empty-msg">No favourites yet. Star a translation!</p>';
       return;
     }
+    // Sort by timestamp descending in JS
+    const items = [];
+    snapshot.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+    items.sort((a, b) => b.timestamp - a.timestamp);
+
     list.innerHTML = '';
-    snapshot.forEach(docSnap => {
-      const d = docSnap.data();
+    items.forEach(d => {
       list.innerHTML += `
         <div class="history-item favourite-item">
           <div class="history-langs">⭐ ${d.fromLang} → ${d.toLang}</div>
           <div class="history-original">${d.original}</div>
           <div class="history-translated">${d.translated}</div>
           <div class="history-actions">
-            <button onclick="deleteFavouriteItem('${docSnap.id}')">🗑 Remove</button>
+            <button onclick="deleteFavouriteItem('${d.id}')">🗑 Remove</button>
           </div>
         </div>`;
     });
