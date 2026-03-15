@@ -182,45 +182,80 @@ function formatTime(s) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-// ── TRANSLATION (MyMemory API — free, no key needed) ───────────────────────
-const LANG_CODE_MAP = {
-  te: "te", ta: "ta", hi: "hi", kn: "kn",
-  ml: "ml", mr: "mr", bn: "bn", gu: "gu",
-  pa: "pa", ur: "ur", en: "en"
-};
-
+// ── TRANSLATION ───────────────────────────────────────
 async function translateText(text, fromLang, toLang) {
+  // Split long text into sentence chunks
   const MAX_CHUNK = 480;
   const chunks = [];
-  const sentences = text.split(/(?<=[।.!?])\s+/);
+  const sentences = text.split(/(?<=[।.!?\n])\s*/);
   let current = "";
   for (const sentence of sentences) {
-    if ((current + " " + sentence).trim().length > MAX_CHUNK && current.length > 0) {
+    const s = sentence.trim();
+    if (!s) continue;
+    if ((current + " " + s).trim().length > MAX_CHUNK && current.length > 0) {
       chunks.push(current.trim());
-      current = sentence;
+      current = s;
     } else {
-      current = current ? current + " " + sentence : sentence;
+      current = current ? current + " " + s : s;
     }
   }
   if (current.trim()) chunks.push(current.trim());
 
-  const src = LANG_CODE_MAP[fromLang] || fromLang;
-  const tgt = LANG_CODE_MAP[toLang] || toLang;
-  const langPair = `${src}|${tgt}`;
-
   const translatedChunks = [];
   for (const chunk of chunks) {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langPair}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.responseStatus === 200) {
-      translatedChunks.push(data.responseData.translatedText);
-    } else {
-      throw new Error("Translation failed: " + (data.responseDetails || data.responseStatus));
+    const result = await translateChunk(chunk, fromLang, toLang);
+    translatedChunks.push(result);
+  }
+  return translatedChunks.join(" ");
+}
+
+async function translateChunk(text, fromLang, toLang) {
+  const langPair = `${fromLang}|${toLang}`;
+
+  // Primary: MyMemory via POST (more reliable for Unicode scripts)
+  try {
+    const formData = new FormData();
+    formData.append("q", text);
+    formData.append("langpair", langPair);
+
+    const res = await fetch("https://api.mymemory.translated.net/get", {
+      method: "POST",
+      body: formData
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.responseStatus === 200 && data.responseData?.translatedText) {
+        return data.responseData.translatedText;
+      }
     }
+  } catch(e) {
+    console.warn("MyMemory POST failed, trying GET...", e);
   }
 
-  return translatedChunks.join(" ");
+  // Fallback 1: MyMemory GET (standard)
+  try {
+    const url = "https://api.mymemory.translated.net/get?q=" +
+      encodeURIComponent(text) + "&langpair=" + encodeURIComponent(langPair);
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.responseStatus === 200 && data.responseData?.translatedText) {
+        return data.responseData.translatedText;
+      }
+    }
+  } catch(e) {
+    console.warn("MyMemory GET failed, trying backend...", e);
+  }
+
+  // Fallback 2: Your backend /translate endpoint
+  const res = await fetch(`${API_URL}/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang })
+  });
+  if (!res.ok) throw new Error("All translation methods failed");
+  const data = await res.json();
+  return data.translated;
 }
 
 // ── THEME ──────────────────────────────────────────────
