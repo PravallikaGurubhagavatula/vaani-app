@@ -572,7 +572,6 @@ select { font-family: 'Outfit', sans-serif; }
   .rc-actions { flex-wrap: wrap; }
   .lang-row { flex-wrap: nowrap; }
 }
-
 /* ── AUDIO PLAYER TIMELINE ── */
 .audio-timeline-wrap {
   margin-top: 14px;
@@ -644,4 +643,3 @@ select { font-family: 'Outfit', sans-serif; }
   color: white;
   border-color: var(--accent);
 }
-
