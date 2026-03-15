@@ -43,11 +43,22 @@ const LANG_CONFIG = {
   en:          { name:"English",            nonLatin:false }
 };
 
-// Languages that MUST skip the direct Google gtx API and use backend only
-// These codes are rejected or broken by the gtx free endpoint
-const BACKEND_ONLY_LANGS = new Set(["ks", "brx", "mni-Mtei", "sat", "doi", "kok", "tcy", "mwr", "bho", "lus"]);
+// Languages confirmed to FAIL on direct gtx API from browser —
+// must go to backend. Based on actual console errors observed.
+// ks, brx, sat, mwr, tcy = not in deep_translator but backend handles via direct requests
+const BACKEND_ONLY_LANGS = new Set([
+  "ks",        // Kashmiri — not in deep_translator, backend uses gtx directly
+  "brx",       // Bodo — not in deep_translator
+  "sat",       // Santali — not in deep_translator
+  "mwr",       // Marwari — not in deep_translator
+  "tcy",       // Tulu — not in deep_translator
+  "mni-Mtei",  // Manipuri — hyphen in code causes gtx URL issues in browser
+]);
 
-// Languages where audio uses a closest-voice fallback (no native gTTS support)
+// Note: Konkani uses 'gom' internally in backend but 'kok' in frontend/display
+// The backend maps kok→gom automatically
+
+// Languages where audio uses closest-voice fallback
 const AUDIO_FALLBACK_LANGS = {
   or:"Odia", as:"Assamese", sa:"Sanskrit", sd:"Sindhi", ks:"Kashmiri",
   mai:"Maithili", doi:"Dogri", brx:"Bodo", kok:"Konkani",
@@ -100,23 +111,22 @@ async function transliterateToNative(text, targetLang) {
 async function prepareInputText(text, fromLang) {
   if (!isLikelyRomanized(text, fromLang)) return text;
   showToast(`Detecting romanized ${LANG_NAMES[fromLang]}...`);
-  const native = await transliterateToNative(text, fromLang);
-  return native;
+  return await transliterateToNative(text, fromLang);
 }
 
-// ── TRANSLATION (smart routing) ───────────────────────
-// Routes problematic language codes directly to backend to avoid gtx failures
+// ── TRANSLATION ───────────────────────────────────────
 async function translateText(text, fromLang, toLang) {
   if (!text||!text.trim()) return "";
   const q = text.trim();
   if (fromLang===toLang) return q;
 
-  // If either language code is known to fail on gtx, skip to backend immediately
   const needsBackend = BACKEND_ONLY_LANGS.has(fromLang) || BACKEND_ONLY_LANGS.has(toLang);
 
+  // Try direct gtx only for languages that work with it
   if (!needsBackend) {
-    // Method 1: Direct gtx (fastest, works for most common languages)
     const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(q)}`;
+
+    // Method 1: Direct fetch
     try {
       const res = await fetch(gtUrl, { signal:AbortSignal.timeout(5000) });
       if (res.ok) {
@@ -135,12 +145,14 @@ async function translateText(text, fromLang, toLang) {
     } catch(e) {}
   }
 
-  // Method 3: Backend (handles all language codes including problematic ones)
+  // Method 3: Backend (handles ALL languages including ks, brx, sat, mwr, tcy)
+  // Backend uses requests lib directly for unsupported deep_translator codes
   try {
     const res = await fetch(`${API_URL}/translate`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
       body:JSON.stringify({text:q, from_lang:fromLang, to_lang:toLang}),
-      signal:AbortSignal.timeout(25000)
+      signal:AbortSignal.timeout(30000)
     });
     if (res.ok) {
       const d = await res.json();
@@ -148,13 +160,13 @@ async function translateText(text, fromLang, toLang) {
       if (d.error) throw new Error(d.error);
     }
   } catch(e) {
-    console.warn("Backend translate failed:", e.message);
+    console.warn(`Backend translate failed (${fromLang}→${toLang}):`, e.message);
   }
 
-  throw new Error(`Translation failed for ${LANG_NAMES[fromLang]||fromLang} → ${LANG_NAMES[toLang]||toLang}. Please try again.`);
+  throw new Error(`Translation failed for ${LANG_NAMES[fromLang]||fromLang} → ${LANG_NAMES[toLang]||toLang}.`);
 }
 
-// ── AUDIO (never throws — returns null on failure) ────
+// ── AUDIO ─────────────────────────────────────────────
 async function fetchAudio(text, lang) {
   try {
     const res = await fetch(`${API_URL}/speak`, {
@@ -276,7 +288,7 @@ async function translateTypedText(){
 }
 
 // ── COPY ─────────────────────────────────────────────
-function copyTranslation(){ const text=window._singleTranslatedText||document.getElementById("translatedText").dataset.originalText||document.getElementById("translatedText").textContent; if(text&&text!=="—"&&!text.startsWith("Translat")) navigator.clipboard.writeText(text).then(()=>showToast("Copied to clipboard")); }
+function copyTranslation(){ const text=window._singleTranslatedText||document.getElementById("translatedText").dataset.originalText||document.getElementById("translatedText").textContent; if(text&&text!=="—"&&!text.startsWith("Translat")&&!text.startsWith("error")) navigator.clipboard.writeText(text).then(()=>showToast("Copied to clipboard")); }
 function copyText(id){ const el=document.getElementById(id); const text=el.dataset.originalText||el.textContent; if(text&&text!=="—") navigator.clipboard.writeText(text).then(()=>showToast("Copied to clipboard")); }
 function showToast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2500); }
 
@@ -391,31 +403,23 @@ async function translateAndSpeak(text,fromLang){
   const toLang=document.getElementById("toLang").value;
   let translated=null;
   try{
-    // Step 1: Get translation (always shows, never blocked by audio)
     translated=await translateText(text,fromLang,toLang);
     window._singleTranslatedText=translated;
     const textEl=document.getElementById("translatedText");
     textEl.textContent=translated; delete textEl.dataset.originalText;
     document.getElementById("actionBtns").style.display="flex";
+    document.getElementById("micStatus").textContent=AUDIO_FALLBACK_LANGS[toLang]
+      ? `Loading audio (closest voice for ${AUDIO_FALLBACK_LANGS[toLang]})...`
+      : "Loading audio...";
 
-    // Show audio fallback note if applicable
-    if(AUDIO_FALLBACK_LANGS[toLang]){
-      document.getElementById("micStatus").textContent=`Loading audio (closest voice for ${AUDIO_FALLBACK_LANGS[toLang]})...`;
-    } else {
-      document.getElementById("micStatus").textContent="Loading audio...";
-    }
-
-    // Step 2: Audio (non-blocking, never hides translation)
     const blob=await fetchAudio(translated,toLang);
     window._singleAudioBlob=blob;
     document.getElementById("micStatus").textContent="Tap to speak";
     const old=document.getElementById('timeline_single'); if(old) old.remove();
     const btn=document.getElementById('playBtn');
     if(btn&&blob) createAudioPlayer(blob,btn,translated,'single','translatedText');
-
     if(window.getCurrentUser&&window.getCurrentUser()) saveToHistory(text,translated,fromLang,toLang);
   }catch(err){
-    // Only show error if translation itself failed
     if(!translated){
       document.getElementById("translatedText").textContent="Translation error — try again.";
       document.getElementById("micStatus").textContent="Error. Try again.";
@@ -521,16 +525,14 @@ async function translateImage(){
     document.getElementById('imgExtractedText').textContent=extracted; delete document.getElementById('imgExtractedText').dataset.originalText;
     statusEl.textContent='Translating...'; btn.textContent='Translating...';
     translated=await translateText(extracted,fromLang,toLang);
-    const tEl=document.getElementById('imgTranslatedText'); tEl.textContent=translated; delete tEl.dataset.originalText;
-    window._imgTranslatedText=translated;
-    document.getElementById('imgResults').style.display='block';
-    statusEl.textContent='Loading audio...';
+    const tEl=document.getElementById('imgTranslatedText'); tEl.textContent=translated; delete tEl.dataset.originalText; window._imgTranslatedText=translated;
+    document.getElementById('imgResults').style.display='block'; statusEl.textContent='Loading audio...';
     imgAudioBlob=await fetchAudio(translated,toLang);
     if(imgAudioBlob){ statusEl.textContent='Done ✓'; const playBtn=document.querySelector('#imgActionBtns .ac-btn.ac-primary'); if(playBtn) createAudioPlayer(imgAudioBlob,playBtn,translated,'img','imgTranslatedText'); }
     else statusEl.textContent='Done ✓';
   }catch(err){
     if(!translated){ statusEl.textContent='Error: '+(err.message||'Something went wrong.'); }
-    else{ document.getElementById('imgResults').style.display='block'; statusEl.textContent='Done ✓ (audio unavailable)'; }
+    else{ document.getElementById('imgResults').style.display='block'; statusEl.textContent='Done ✓'; }
   }
   btn.disabled=false; btn.innerHTML=BTN_READY_HTML;
 }
