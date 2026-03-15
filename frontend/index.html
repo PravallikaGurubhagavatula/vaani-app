@@ -1,6 +1,5 @@
-
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,7 +11,10 @@
   <!-- ── NAV BAR ── -->
   <nav class="navbar">
     <div class="nav-brand">🎙 Vaani</div>
-    <button class="hamburger" onclick="toggleMenu()">☰</button>
+    <div class="nav-actions">
+      <button class="theme-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle Dark/Light mode">🌙</button>
+      <button class="hamburger" onclick="toggleMenu()">☰</button>
+    </div>
   </nav>
 
   <!-- ── SIDE MENU ── -->
@@ -24,17 +26,14 @@
     </div>
     <ul class="menu-list">
       <li class="menu-item active" id="menuSingle" onclick="navigateTo('Single')">
-        <span class="menu-icon">🎤</span>
-        <span>Single Mode</span>
+        <span class="menu-icon">🎤</span><span>Single Mode</span>
       </li>
       <li class="menu-item" id="menuConversation" onclick="navigateTo('Conversation')">
-        <span class="menu-icon">👥</span>
-        <span>Conversation Mode</span>
+        <span class="menu-icon">👥</span><span>Conversation Mode</span>
       </li>
       <li class="menu-divider"></li>
       <li class="menu-item" id="menuTravel" onclick="navigateTo('Travel')">
-        <span class="menu-icon">✈</span>
-        <span>Travel Helper</span>
+        <span class="menu-icon">✈</span><span>Travel Helper</span>
       </li>
     </ul>
   </div>
@@ -43,8 +42,9 @@
   <div id="pageSingle" class="page active">
     <div class="page-header">
       <h2>🎤 Single Mode</h2>
-      <p>Translate your speech to any language</p>
+      <p>Translate your speech or text to any language</p>
     </div>
+
     <div class="lang-row">
       <div class="lang-box">
         <label>I Speak</label>
@@ -70,16 +70,44 @@
         </select>
       </div>
     </div>
-    <button class="mic-btn" id="micBtn" onclick="startListening()">🎤</button>
-    <p class="mic-status" id="micStatus">Press mic and speak</p>
+
+    <!-- Input Mode Toggle -->
+    <div class="input-mode-toggle">
+      <button class="input-mode-btn active" id="voiceModeBtn" onclick="switchInputMode('voice')">🎤 Voice</button>
+      <button class="input-mode-btn" id="textModeBtn" onclick="switchInputMode('text')">🖊 Text</button>
+    </div>
+
+    <!-- Voice Input -->
+    <div id="voiceInput">
+      <button class="mic-btn" id="micBtn" onclick="startListening()">🎤</button>
+      <p class="mic-status" id="micStatus">Press mic and speak</p>
+    </div>
+
+    <!-- Text Input -->
+    <div id="textInput" style="display:none">
+      <div class="text-input-box">
+        <textarea id="textInputArea" placeholder="Type your text here..." rows="3"></textarea>
+        <button class="translate-text-btn" onclick="translateTypedText()">Translate →</button>
+      </div>
+    </div>
+
     <div class="result-box">
-      <span class="result-label">You said:</span>
+      <div class="result-header">
+        <span class="result-label">You said:</span>
+      </div>
       <p id="originalText">—</p>
     </div>
+
     <div class="result-box translation-box">
-      <span class="result-label">Translation:</span>
+      <div class="result-header">
+        <span class="result-label">Translation:</span>
+        <button class="copy-btn" id="copyBtn" onclick="copyTranslation()" style="display:none" title="Copy translation">📋</button>
+      </div>
       <p id="translatedText">—</p>
-      <button class="play-btn" id="playBtn" onclick="playAudio()" style="display:none">▶ Play Translation</button>
+      <div class="action-btns" id="actionBtns" style="display:none">
+        <button class="play-btn" id="playBtn" onclick="playAudio()">▶ Play</button>
+        <button class="copy-btn-full" onclick="copyTranslation()">📋 Copy</button>
+      </div>
     </div>
   </div>
 
@@ -106,7 +134,11 @@
         <p class="mic-status" id="micStatusA">Press mic and speak</p>
         <div class="result-box"><span class="result-label">Said:</span><p id="originalTextA">—</p></div>
         <div class="result-box translation-box">
-          <span class="result-label">Translation:</span><p id="translatedTextA">—</p>
+          <div class="result-header">
+            <span class="result-label">Translation:</span>
+            <button class="copy-btn" onclick="copyText('translatedTextA')" title="Copy">📋</button>
+          </div>
+          <p id="translatedTextA">—</p>
           <button class="play-btn" id="playBtnA" onclick="playAudioA()" style="display:none">▶ Play</button>
         </div>
       </div>
@@ -127,7 +159,11 @@
         <p class="mic-status" id="micStatusB">Press mic and speak</p>
         <div class="result-box"><span class="result-label">Said:</span><p id="originalTextB">—</p></div>
         <div class="result-box translation-box">
-          <span class="result-label">Translation:</span><p id="translatedTextB">—</p>
+          <div class="result-header">
+            <span class="result-label">Translation:</span>
+            <button class="copy-btn" onclick="copyText('translatedTextB')" title="Copy">📋</button>
+          </div>
+          <p id="translatedTextB">—</p>
           <button class="play-btn" id="playBtnB" onclick="playAudioB()" style="display:none">▶ Play</button>
         </div>
       </div>
@@ -140,7 +176,6 @@
       <h2>✈ Travel Helper</h2>
       <p>Common phrases for travellers — tap 🔊 to hear!</p>
     </div>
-
     <div class="travel-lang-row">
       <div class="lang-box">
         <label>My Language</label>
@@ -166,7 +201,6 @@
         </select>
       </div>
     </div>
-
     <div class="category-tabs">
       <button class="cat-btn active" onclick="selectCategory('food', this)">🍽 Food</button>
       <button class="cat-btn" onclick="selectCategory('transport', this)">🚗 Transport</button>
@@ -174,13 +208,14 @@
       <button class="cat-btn" onclick="selectCategory('emergency', this)">🆘 Emergency</button>
       <button class="cat-btn" onclick="selectCategory('shopping', this)">🛍 Shopping</button>
     </div>
-
-    <div id="travelLoading" style="display:none; text-align:center; padding:30px; color:#888; font-size:0.9rem;">
+    <div id="travelLoading" style="display:none; text-align:center; padding:30px; color:var(--text-muted); font-size:0.9rem;">
       ⏳ Translating phrases...
     </div>
-
     <div id="phrasesList" class="phrases-list"></div>
   </div>
+
+  <!-- ── TOAST NOTIFICATION ── -->
+  <div id="toast" class="toast">📋 Copied!</div>
 
   <script src="app.js"></script>
 </body>
