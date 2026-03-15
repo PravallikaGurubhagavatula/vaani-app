@@ -4,6 +4,16 @@ let lastSpokenText = "", lastFromLang = "";
 let currentConvSpeaker = null, currentCategory = "food";
 let travelPhrasesCache = {}, isDarkMode = true;
 
+// ── KEEP-ALIVE PING (prevents Render free tier from sleeping) ─────────────
+function pingBackend() {
+  fetch(`${API_URL}/ping`, { method: "GET", signal: AbortSignal.timeout(10000) })
+    .then(() => console.log("Backend pinged ✓"))
+    .catch(() => console.log("Backend ping failed (may be waking up)"));
+}
+// Ping immediately on load, then every 10 minutes
+pingBackend();
+setInterval(pingBackend, 10 * 60 * 1000);
+
 // ── GLOBAL AUDIO PLAYER ───────────────────────────────
 let currentAudio = null;
 let currentAudioBlob = null;
@@ -24,7 +34,6 @@ function stopAllAudio() {
     }
   });
   document.querySelectorAll('.audio-timeline-wrap').forEach(el => el.remove());
-  // Unwrap word spans back to plain text, preserving the correct translated text
   document.querySelectorAll('.rc-text.rc-accent').forEach(el => {
     if (el.dataset.originalText) {
       const plain = el.dataset.originalText;
@@ -36,9 +45,7 @@ function stopAllAudio() {
 }
 
 function wrapTextIntoWords(textEl, containerId) {
-  // Always use the most up-to-date plain text
   const text = textEl.dataset.originalText || textEl.textContent.trim();
-  // Store original so we can restore it on stopAllAudio
   textEl.dataset.originalText = text;
   const words = text.split(/\s+/);
   textEl.innerHTML = words.map((w, i) =>
@@ -48,7 +55,6 @@ function wrapTextIntoWords(textEl, containerId) {
 }
 
 function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
-  // Stop previous audio but do NOT wipe the text element we're about to use
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
@@ -62,7 +68,6 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
   document.querySelectorAll('.audio-timeline-wrap').forEach(el => {
     if (el.id !== 'timeline_' + containerId) el.remove();
   });
-  // Unwrap word spans in OTHER text elements, leave ours alone
   document.querySelectorAll('.rc-text.rc-accent').forEach(el => {
     if (el.id !== textElId && el.dataset.originalText) {
       el.textContent = el.dataset.originalText;
@@ -81,15 +86,12 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
   btnEl.dataset.playing = 'true';
   btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
 
-  // Wrap THIS text element's words for inline karaoke
   const textEl = document.getElementById(textElId);
-  // Make sure the element has the correct translated text before wrapping
   if (textEl && !textEl.dataset.originalText) {
     textEl.textContent = translatedText;
   }
   const words = textEl ? wrapTextIntoWords(textEl, containerId) : translatedText.trim().split(/\s+/);
 
-  // Build timeline bar (scrubber + timestamps only — no duplicate word list)
   let timelineWrap = document.getElementById('timeline_' + containerId);
   if (!timelineWrap) {
     timelineWrap = document.createElement('div');
@@ -125,7 +127,6 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
     if (scr) scr.value = pct;
     if (cur) cur.textContent = formatTime(audio.currentTime);
 
-    // Highlight the current word inline inside the translated text
     const wIdx = Math.floor((audio.currentTime / audio.duration) * words.length);
     if (textEl) {
       textEl.querySelectorAll('.audio-word').forEach((w, i) => {
@@ -183,17 +184,12 @@ function formatTime(s) {
 }
 
 // ── TRANSLATION ───────────────────────────────────────
-// Uses translate.googleapis.com via a CORS proxy (allorigins.win).
-// This works for ALL Indian language pairs (te→ta, hi→kn, etc.) with no API key.
-// Falls back to your backend if the proxy fails.
-
 async function translateText(text, fromLang, toLang) {
   if (!text || !text.trim()) return "";
 
-  // Build the Google Translate URL
   const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(text.trim())}`;
 
-  // Primary: use allorigins CORS proxy — adds CORS headers to any URL
+  // Primary: allorigins CORS proxy
   try {
     const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(gtUrl)}`;
     const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
@@ -214,7 +210,7 @@ async function translateText(text, fromLang, toLang) {
     console.warn("Proxy translate failed, trying backend...", e);
   }
 
-  // Fallback: your own backend /translate endpoint
+  // Fallback: backend /translate
   try {
     const res = await fetch(`${API_URL}/translate`, {
       method: "POST",
@@ -267,9 +263,13 @@ async function translateTypedText() {
 
 // ── COPY ──────────────────────────────────────────────
 function copyTranslation() {
-  const el = document.getElementById("translatedText");
-  const text = el.dataset.originalText || el.textContent;
-  if (text && text !== "—" && text !== "Translating...") navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
+  // BUG FIX: Always use window._singleTranslatedText which holds the clean translated string
+  const text = window._singleTranslatedText ||
+    document.getElementById("translatedText").dataset.originalText ||
+    document.getElementById("translatedText").textContent;
+  if (text && text !== "—" && text !== "Translating...") {
+    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
+  }
 }
 function copyText(id) {
   const el = document.getElementById(id);
@@ -417,10 +417,13 @@ async function translateAndSpeak(text, fromLang) {
   const toLang = document.getElementById("toLang").value;
   try {
     const translated = await translateText(text, fromLang, toLang);
-    // Set the text FIRST, then start the audio player
+
+    // Store clean translation string globally FIRST — used by Save button
+    window._singleTranslatedText = translated;
+
     const textEl = document.getElementById("translatedText");
     textEl.textContent = translated;
-    delete textEl.dataset.originalText; // clear any stale wrap state
+    delete textEl.dataset.originalText;
 
     const blob = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -429,15 +432,19 @@ async function translateAndSpeak(text, fromLang) {
 
     document.getElementById("actionBtns").style.display = "flex";
     window._singleAudioBlob = blob;
-    window._singleTranslatedText = translated;
     document.getElementById("micStatus").textContent = "Tap to speak";
 
     const old = document.getElementById('timeline_single');
     if (old) old.remove();
-    const btn = document.getElementById('playBtn');
-    createAudioPlayer(blob, btn, translated, 'single', 'translatedText');
 
-    if (window.getCurrentUser && window.getCurrentUser()) saveToHistory(text, translated, fromLang, toLang);
+    // BUG FIX: Get the playBtn by ID (added id="playBtn" in index.html fix)
+    const btn = document.getElementById('playBtn');
+    if (btn) createAudioPlayer(blob, btn, translated, 'single', 'translatedText');
+
+    // BUG FIX: Save to history AFTER translation is confirmed — pass clean string
+    if (window.getCurrentUser && window.getCurrentUser()) {
+      saveToHistory(text, translated, fromLang, toLang);
+    }
   } catch(err) {
     document.getElementById("translatedText").textContent = "—";
     document.getElementById("micStatus").textContent = "Translation error. Check connection.";
@@ -446,10 +453,9 @@ async function translateAndSpeak(text, fromLang) {
 
 function playAudio() {
   const blob = window._singleAudioBlob;
-  const el = document.getElementById("translatedText");
-  const text = window._singleTranslatedText || el.dataset.originalText || el.textContent;
+  const text = window._singleTranslatedText;
   const btn = document.getElementById('playBtn');
-  if (!blob) return;
+  if (!blob || !btn) return;
   toggleAudio(blob, btn, text, 'single', 'translatedText');
 }
 
@@ -457,7 +463,7 @@ function playAudio() {
 async function translateAndSpeakConv(text, fromLang, toLang, person) {
   try {
     const translated = await translateText(text, fromLang, toLang);
-    // Set text FIRST before audio player
+
     const textEl = document.getElementById(`translatedText${person}`);
     textEl.textContent = translated;
     delete textEl.dataset.originalText;
@@ -502,6 +508,7 @@ function swapLanguages() {
   [f.value, t.value] = [t.value, f.value];
   lastSpokenText = ""; lastFromLang = ""; stopAllAudio();
   window._singleAudioBlob = null;
+  window._singleTranslatedText = null;
   document.getElementById("originalText").textContent = "—";
   document.getElementById("translatedText").textContent = "—";
   document.getElementById("resultsSection").style.display = "none";
@@ -594,6 +601,8 @@ async function playPhrase(i) {
 }
 
 // ── IMAGE TRANSLATION ─────────────────────────────────
+// Uses Tesseract.js (runs fully in browser — no backend needed for OCR)
+// Only needs backend for /speak (text-to-speech)
 let currentImageFile = null;
 
 function handleDrop(e) {
@@ -632,6 +641,7 @@ async function translateImage() {
   const toLang = document.getElementById('imgToLang').value;
   const btn = document.getElementById('imgTranslateBtn');
   const statusEl = document.getElementById('imgStatus');
+
   btn.disabled = true;
   btn.textContent = 'Reading image...';
   statusEl.textContent = 'Extracting text from image...';
@@ -640,49 +650,94 @@ async function translateImage() {
   const old = document.getElementById('timeline_img');
   if (old) old.remove();
   imgAudioBlob = null;
+
   try {
-    const tessLangs = { en:'eng', hi:'hin', te:'tel', ta:'tam', kn:'kan', ml:'mal', bn:'ben', mr:'mar', gu:'guj', pa:'pan', ur:'urd' };
+    // ── STEP 1: OCR with Tesseract.js (runs in browser, no backend needed) ──
+    const tessLangs = {
+      en:'eng', hi:'hin', te:'tel', ta:'tam',
+      kn:'kan', ml:'mal', bn:'ben', mr:'mar',
+      gu:'guj', pa:'pan', ur:'urd'
+    };
     const ocrLang = tessLangs[fromLang] || 'eng';
-    statusEl.textContent = 'Reading text from image...';
+
+    statusEl.textContent = 'Loading OCR engine... (first time may take 30s)';
+    btn.textContent = 'Loading OCR...';
+
     const { createWorker } = Tesseract;
-    const worker = await createWorker(ocrLang);
+    const worker = await createWorker(ocrLang, 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          const pct = Math.round((m.progress || 0) * 100);
+          statusEl.textContent = `Reading text... ${pct}%`;
+        } else if (m.status) {
+          statusEl.textContent = m.status.charAt(0).toUpperCase() + m.status.slice(1) + '...';
+        }
+      }
+    });
+
+    btn.textContent = 'Extracting text...';
     const { data: { text } } = await worker.recognize(currentImageFile);
     await worker.terminate();
+
     const extracted = text.trim();
     if (!extracted || extracted.length < 2) {
-      statusEl.textContent = 'No text found. Try a clearer image.';
-      btn.disabled = false; btn.innerHTML = BTN_READY_HTML; return;
+      statusEl.textContent = 'No text found in this image. Try a clearer photo.';
+      btn.disabled = false;
+      btn.innerHTML = BTN_READY_HTML;
+      return;
     }
+
     // Set extracted text cleanly
     const extractedEl = document.getElementById('imgExtractedText');
     extractedEl.textContent = extracted;
     delete extractedEl.dataset.originalText;
 
+    // ── STEP 2: Translate the extracted text ──
     statusEl.textContent = 'Translating...';
     btn.textContent = 'Translating...';
     const translated = await translateText(extracted, fromLang, toLang);
 
-    // Set translated text cleanly BEFORE audio player
+    // Set translated text BEFORE audio player
     const translatedEl = document.getElementById('imgTranslatedText');
     translatedEl.textContent = translated;
     delete translatedEl.dataset.originalText;
     window._imgTranslatedText = translated;
 
+    // ── STEP 3: Generate audio via backend /speak ──
     btn.textContent = 'Generating audio...';
-    imgAudioBlob = await fetch(`${API_URL}/speak`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text: translated, lang: toLang})
-    }).then(r=>r.blob());
+    statusEl.textContent = 'Generating audio...';
+
+    try {
+      imgAudioBlob = await fetch(`${API_URL}/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: translated, lang: toLang }),
+        signal: AbortSignal.timeout(25000)
+      }).then(r => {
+        if (!r.ok) throw new Error(`speak failed: ${r.status}`);
+        return r.blob();
+      });
+    } catch (speakErr) {
+      // Audio failed but translation succeeded — show results without audio
+      console.warn("Audio generation failed:", speakErr);
+      imgAudioBlob = null;
+      statusEl.textContent = 'Done (audio unavailable — backend may be starting up, try Play in a moment)';
+    }
 
     document.getElementById('imgResults').style.display = 'block';
-    statusEl.textContent = 'Done';
-    const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
-    if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
+    if (imgAudioBlob) {
+      statusEl.textContent = 'Done ✓';
+      const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
+      if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
+    }
+
   } catch(err) {
-    console.error(err);
+    console.error('translateImage error:', err);
     statusEl.textContent = 'Error: ' + (err.message || 'Something went wrong. Try again.');
   }
-  btn.disabled = false; btn.innerHTML = BTN_READY_HTML;
+
+  btn.disabled = false;
+  btn.innerHTML = BTN_READY_HTML;
 }
 
 function playImgAudio() {
@@ -690,6 +745,41 @@ function playImgAudio() {
   const el = document.getElementById('imgTranslatedText');
   const text = window._imgTranslatedText || el.dataset.originalText || el.textContent;
   const btn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
-  if (!blob || !btn) return;
+  if (!blob || !btn) {
+    // Try to re-generate audio if blob is missing
+    if (window._imgTranslatedText) {
+      const toLang = document.getElementById('imgToLang').value;
+      showToast("Generating audio...");
+      fetch(`${API_URL}/speak`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: window._imgTranslatedText, lang: toLang }),
+        signal: AbortSignal.timeout(25000)
+      }).then(r => r.blob()).then(b => {
+        imgAudioBlob = b;
+        if (btn) toggleAudio(b, btn, window._imgTranslatedText, 'img', 'imgTranslatedText');
+      }).catch(() => showToast("Audio unavailable. Backend may be starting up."));
+    }
+    return;
+  }
   toggleAudio(blob, btn, text, 'img', 'imgTranslatedText');
 }
+
+// ── SAVE TO FAVOURITES (fixed: always uses clean translation string) ──────
+// This overrides the inline onclick in index.html with a safer version
+window.saveSingleToFavourites = function() {
+  const original = document.getElementById('originalText').textContent;
+  // BUG FIX: Use the stored clean string, not DOM text which may have karaoke spans
+  const translated = window._singleTranslatedText ||
+    document.getElementById('translatedText').dataset.originalText ||
+    document.getElementById('translatedText').textContent;
+  const fromLang = document.getElementById('fromLang').value;
+  const toLang = document.getElementById('toLang').value;
+
+  if (!original || original === '—') { showToast("Nothing to save"); return; }
+  if (!translated || translated === '—' || translated === 'Translating...') {
+    showToast("Wait for translation to complete"); return;
+  }
+  if (window.saveToFavourites) {
+    window.saveToFavourites(original, translated, fromLang, toLang);
+  }
+};
