@@ -23,10 +23,29 @@ function stopAllAudio() {
       btn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     }
   });
+  // Remove timelines but restore original text in all translated text elements
   document.querySelectorAll('.audio-timeline-wrap').forEach(el => el.remove());
+  // Restore any wrapped word spans back to plain text
+  document.querySelectorAll('.rc-text.rc-accent').forEach(el => {
+    if (el.dataset.originalText) {
+      el.textContent = el.dataset.originalText;
+      delete el.dataset.originalText;
+    }
+  });
 }
 
-function createAudioPlayer(blob, btnEl, translatedText, containerId) {
+// Wrap translated text element's words into clickable spans for karaoke
+function wrapTextIntoWords(textEl, containerId) {
+  const text = textEl.dataset.originalText || textEl.textContent;
+  textEl.dataset.originalText = text;
+  const words = text.trim().split(/\s+/);
+  textEl.innerHTML = words.map((w, i) =>
+    `<span class="audio-word" data-idx="${i}" onclick="seekToWord(${i}, ${words.length}, '${containerId}')">${w}</span>`
+  ).join(' ');
+  return words;
+}
+
+function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
   stopAllAudio();
   if (!blob) return;
 
@@ -39,6 +58,11 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
   btnEl.dataset.playing = 'true';
   btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
 
+  // Wrap the translated text into clickable words
+  const textEl = document.getElementById(textElId);
+  const words = textEl ? wrapTextIntoWords(textEl, containerId) : translatedText.trim().split(/\s+/);
+
+  // Build timeline (just scrubber + time, NO word list below)
   let timelineWrap = document.getElementById('timeline_' + containerId);
   if (!timelineWrap) {
     timelineWrap = document.createElement('div');
@@ -53,18 +77,8 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
         <span class="audio-time" id="curTime_${containerId}">0:00</span>
         <span class="audio-time" id="durTime_${containerId}">0:00</span>
       </div>
-      <div class="audio-words" id="words_${containerId}"></div>
     `;
     btnEl.closest('.result-card, .result-translated').appendChild(timelineWrap);
-  }
-
-  // Build word spans from the TRANSLATED text
-  const words = translatedText.trim().split(/\s+/);
-  const wordsEl = document.getElementById('words_' + containerId);
-  if (wordsEl) {
-    wordsEl.innerHTML = words.map((w, i) =>
-      `<span class="audio-word" data-idx="${i}" onclick="seekToWord(${i}, ${words.length}, '${containerId}')">${w}</span>`
-    ).join(' ');
   }
 
   const scrubber = document.getElementById('scrubber_' + containerId);
@@ -84,10 +98,13 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     if (scr) scr.value = pct;
     if (cur) cur.textContent = formatTime(audio.currentTime);
 
+    // Highlight word directly inside the translated text element
     const wIdx = Math.floor((audio.currentTime / audio.duration) * words.length);
-    document.querySelectorAll(`#words_${containerId} .audio-word`).forEach((w, i) => {
-      w.classList.toggle('active-word', i === wIdx);
-    });
+    if (textEl) {
+      textEl.querySelectorAll('.audio-word').forEach((w, i) => {
+        w.classList.toggle('active-word', i === wIdx);
+      });
+    }
   });
 
   audio.addEventListener('loadedmetadata', () => {
@@ -102,7 +119,7 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId) {
     const scr = document.getElementById('scrubber_' + containerId);
     if (prog) prog.style.width = '0%';
     if (scr) scr.value = 0;
-    document.querySelectorAll(`#words_${containerId} .audio-word`).forEach(w => w.classList.remove('active-word'));
+    if (textEl) textEl.querySelectorAll('.audio-word').forEach(w => w.classList.remove('active-word'));
     currentAudio = null;
   });
 
@@ -116,7 +133,7 @@ window.seekToWord = function(idx, total, containerId) {
   }
 };
 
-function toggleAudio(blob, btnEl, translatedText, containerId) {
+function toggleAudio(blob, btnEl, translatedText, containerId, textElId) {
   if (currentAudio && currentPlayBtn === btnEl) {
     if (currentAudio.paused) {
       currentAudio.play();
@@ -128,7 +145,7 @@ function toggleAudio(blob, btnEl, translatedText, containerId) {
       btnEl.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     }
   } else {
-    createAudioPlayer(blob, btnEl, translatedText, containerId);
+    createAudioPlayer(blob, btnEl, translatedText, containerId, textElId);
   }
 }
 
@@ -146,11 +163,8 @@ const LANG_CODE_MAP = {
 };
 
 async function translateText(text, fromLang, toLang) {
-  // Split large text into chunks of max 500 chars to stay within MyMemory limits
   const MAX_CHUNK = 480;
   const chunks = [];
-  
-  // Split by sentence boundaries first
   const sentences = text.split(/(?<=[।.!?])\s+/);
   let current = "";
   for (const sentence of sentences) {
@@ -162,11 +176,11 @@ async function translateText(text, fromLang, toLang) {
     }
   }
   if (current.trim()) chunks.push(current.trim());
-  
+
   const src = LANG_CODE_MAP[fromLang] || fromLang;
   const tgt = LANG_CODE_MAP[toLang] || toLang;
   const langPair = `${src}|${tgt}`;
-  
+
   const translatedChunks = [];
   for (const chunk of chunks) {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${langPair}`;
@@ -178,7 +192,7 @@ async function translateText(text, fromLang, toLang) {
       throw new Error("Translation failed: " + (data.responseDetails || data.responseStatus));
     }
   }
-  
+
   return translatedChunks.join(" ");
 }
 
@@ -216,11 +230,13 @@ async function translateTypedText() {
 
 // ── COPY ──────────────────────────────────────────────
 function copyTranslation() {
-  const text = document.getElementById("translatedText").textContent;
+  const el = document.getElementById("translatedText");
+  const text = el.dataset.originalText || el.textContent;
   if (text && text !== "—" && text !== "Translating...") navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
 }
 function copyText(id) {
-  const text = document.getElementById(id).textContent;
+  const el = document.getElementById(id);
+  const text = el.dataset.originalText || el.textContent;
   if (text && text !== "—") navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
 }
 function showToast(msg) {
@@ -295,7 +311,7 @@ document.getElementById("imgToLang").addEventListener("change", async () => {
       if (playBtn) {
         const old = document.getElementById('timeline_img');
         if (old) old.remove();
-        createAudioPlayer(imgAudioBlob, playBtn, translated, 'img');
+        createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
       }
     } catch { document.getElementById('imgTranslatedText').textContent = "Translation error"; }
   }
@@ -375,7 +391,7 @@ async function translateAndSpeak(text, fromLang) {
     const old = document.getElementById('timeline_single');
     if (old) old.remove();
     const btn = document.getElementById('playBtn');
-    createAudioPlayer(blob, btn, translated, 'single');
+    createAudioPlayer(blob, btn, translated, 'single', 'translatedText');
     if (window.getCurrentUser && window.getCurrentUser()) saveToHistory(text, translated, fromLang, toLang);
   } catch(err) {
     document.getElementById("translatedText").textContent = "—";
@@ -390,7 +406,7 @@ function playAudio() {
   if (!blob) return;
   const old = document.getElementById('timeline_single');
   if (old && currentPlayBtn !== btn) old.remove();
-  toggleAudio(blob, btn, text, 'single');
+  toggleAudio(blob, btn, text, 'single', 'translatedText');
 }
 
 // ── TRANSLATE + SPEAK (Conversation) ─────────────────
@@ -409,7 +425,7 @@ async function translateAndSpeakConv(text, fromLang, toLang, person) {
     const btn = document.getElementById(`playBtn${person}`);
     const old = document.getElementById(`timeline_conv${person}`);
     if (old) old.remove();
-    createAudioPlayer(blob, btn, translated, `conv${person}`);
+    createAudioPlayer(blob, btn, translated, `conv${person}`, `translatedText${person}`);
   } catch {
     document.getElementById(`micStatus${person}`).textContent = "Error. Try again.";
   }
@@ -420,14 +436,14 @@ function playAudioA() {
   const text = window._convTextA || document.getElementById("translatedTextA").textContent;
   const btn = document.getElementById('playBtnA');
   if (!blob) return;
-  toggleAudio(blob, btn, text, 'convA');
+  toggleAudio(blob, btn, text, 'convA', 'translatedTextA');
 }
 function playAudioB() {
   const blob = audioBlobB;
   const text = window._convTextB || document.getElementById("translatedTextB").textContent;
   const btn = document.getElementById('playBtnB');
   if (!blob) return;
-  toggleAudio(blob, btn, text, 'convB');
+  toggleAudio(blob, btn, text, 'convB', 'translatedTextB');
 }
 
 // ── SWAP ──────────────────────────────────────────────
@@ -601,7 +617,7 @@ async function translateImage() {
     document.getElementById('imgResults').style.display = 'block';
     statusEl.textContent = 'Done';
     const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
-    if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img');
+    if (playBtn) createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
   } catch(err) {
     console.error(err);
     statusEl.textContent = 'Error: ' + (err.message || 'Something went wrong. Try again.');
@@ -614,5 +630,5 @@ function playImgAudio() {
   const text = window._imgTranslatedText || document.getElementById('imgTranslatedText').textContent;
   const btn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
   if (!blob || !btn) return;
-  toggleAudio(blob, btn, text, 'img');
+  toggleAudio(blob, btn, text, 'img', 'imgTranslatedText');
 }
