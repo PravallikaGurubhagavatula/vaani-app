@@ -23,22 +23,24 @@ function stopAllAudio() {
       btn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     }
   });
-  // Remove timelines but restore original text in all translated text elements
   document.querySelectorAll('.audio-timeline-wrap').forEach(el => el.remove());
-  // Restore any wrapped word spans back to plain text
+  // Unwrap word spans back to plain text, preserving the correct translated text
   document.querySelectorAll('.rc-text.rc-accent').forEach(el => {
     if (el.dataset.originalText) {
-      el.textContent = el.dataset.originalText;
+      const plain = el.dataset.originalText;
+      el.innerHTML = '';
+      el.textContent = plain;
       delete el.dataset.originalText;
     }
   });
 }
 
-// Wrap translated text element's words into clickable spans for karaoke
 function wrapTextIntoWords(textEl, containerId) {
-  const text = textEl.dataset.originalText || textEl.textContent;
+  // Always use the most up-to-date plain text
+  const text = textEl.dataset.originalText || textEl.textContent.trim();
+  // Store original so we can restore it on stopAllAudio
   textEl.dataset.originalText = text;
-  const words = text.trim().split(/\s+/);
+  const words = text.split(/\s+/);
   textEl.innerHTML = words.map((w, i) =>
     `<span class="audio-word" data-idx="${i}" onclick="seekToWord(${i}, ${words.length}, '${containerId}')">${w}</span>`
   ).join(' ');
@@ -46,7 +48,28 @@ function wrapTextIntoWords(textEl, containerId) {
 }
 
 function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
-  stopAllAudio();
+  // Stop previous audio but do NOT wipe the text element we're about to use
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  document.querySelectorAll('.ac-btn.ac-primary').forEach(btn => {
+    if (btn !== btnEl && btn.dataset.playing === 'true') {
+      btn.dataset.playing = 'false';
+      btn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
+    }
+  });
+  document.querySelectorAll('.audio-timeline-wrap').forEach(el => {
+    if (el.id !== 'timeline_' + containerId) el.remove();
+  });
+  // Unwrap word spans in OTHER text elements, leave ours alone
+  document.querySelectorAll('.rc-text.rc-accent').forEach(el => {
+    if (el.id !== textElId && el.dataset.originalText) {
+      el.textContent = el.dataset.originalText;
+      delete el.dataset.originalText;
+    }
+  });
+
   if (!blob) return;
 
   const audio = new Audio(URL.createObjectURL(blob));
@@ -58,11 +81,15 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
   btnEl.dataset.playing = 'true';
   btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
 
-  // Wrap the translated text into clickable words
+  // Wrap THIS text element's words for inline karaoke
   const textEl = document.getElementById(textElId);
+  // Make sure the element has the correct translated text before wrapping
+  if (textEl && !textEl.dataset.originalText) {
+    textEl.textContent = translatedText;
+  }
   const words = textEl ? wrapTextIntoWords(textEl, containerId) : translatedText.trim().split(/\s+/);
 
-  // Build timeline (just scrubber + time, NO word list below)
+  // Build timeline bar (scrubber + timestamps only — no duplicate word list)
   let timelineWrap = document.getElementById('timeline_' + containerId);
   if (!timelineWrap) {
     timelineWrap = document.createElement('div');
@@ -98,7 +125,7 @@ function createAudioPlayer(blob, btnEl, translatedText, containerId, textElId) {
     if (scr) scr.value = pct;
     if (cur) cur.textContent = formatTime(audio.currentTime);
 
-    // Highlight word directly inside the translated text element
+    // Highlight the current word inline inside the translated text
     const wIdx = Math.floor((audio.currentTime / audio.duration) * words.length);
     if (textEl) {
       textEl.querySelectorAll('.audio-word').forEach((w, i) => {
@@ -155,7 +182,7 @@ function formatTime(s) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-// ── TRANSLATION (MyMemory API — free, no key needed) ──────────────────────
+// ── TRANSLATION (MyMemory API — free, no key needed) ───────────────────────
 const LANG_CODE_MAP = {
   te: "te", ta: "ta", hi: "hi", kn: "kn",
   ml: "ml", mr: "mr", bn: "bn", gu: "gu",
@@ -293,7 +320,8 @@ document.getElementById("fromLang").addEventListener("change", async () => {
 });
 
 document.getElementById("imgToLang").addEventListener("change", async () => {
-  const extracted = document.getElementById('imgExtractedText').textContent;
+  const el = document.getElementById('imgExtractedText');
+  const extracted = el.dataset.originalText || el.textContent;
   if (extracted && extracted !== "—" && document.getElementById('imgResults').style.display !== 'none') {
     stopAllAudio();
     document.getElementById('imgTranslatedText').textContent = "Translating...";
@@ -374,24 +402,31 @@ if (recognition) {
   };
 }
 
-// ── TRANSLATE + SPEAK (Single) ───────────────────────
+// ── TRANSLATE + SPEAK (Single) ────────────────────────
 async function translateAndSpeak(text, fromLang) {
   const toLang = document.getElementById("toLang").value;
   try {
     const translated = await translateText(text, fromLang, toLang);
-    document.getElementById("translatedText").textContent = translated;
+    // Set the text FIRST, then start the audio player
+    const textEl = document.getElementById("translatedText");
+    textEl.textContent = translated;
+    delete textEl.dataset.originalText; // clear any stale wrap state
+
     const blob = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translated, lang: toLang })
     }).then(r => r.blob());
+
     document.getElementById("actionBtns").style.display = "flex";
     window._singleAudioBlob = blob;
     window._singleTranslatedText = translated;
     document.getElementById("micStatus").textContent = "Tap to speak";
+
     const old = document.getElementById('timeline_single');
     if (old) old.remove();
     const btn = document.getElementById('playBtn');
     createAudioPlayer(blob, btn, translated, 'single', 'translatedText');
+
     if (window.getCurrentUser && window.getCurrentUser()) saveToHistory(text, translated, fromLang, toLang);
   } catch(err) {
     document.getElementById("translatedText").textContent = "—";
@@ -401,11 +436,10 @@ async function translateAndSpeak(text, fromLang) {
 
 function playAudio() {
   const blob = window._singleAudioBlob;
-  const text = window._singleTranslatedText || document.getElementById("translatedText").textContent;
+  const el = document.getElementById("translatedText");
+  const text = window._singleTranslatedText || el.dataset.originalText || el.textContent;
   const btn = document.getElementById('playBtn');
   if (!blob) return;
-  const old = document.getElementById('timeline_single');
-  if (old && currentPlayBtn !== btn) old.remove();
   toggleAudio(blob, btn, text, 'single', 'translatedText');
 }
 
@@ -413,15 +447,21 @@ function playAudio() {
 async function translateAndSpeakConv(text, fromLang, toLang, person) {
   try {
     const translated = await translateText(text, fromLang, toLang);
-    document.getElementById(`translatedText${person}`).textContent = translated;
+    // Set text FIRST before audio player
+    const textEl = document.getElementById(`translatedText${person}`);
+    textEl.textContent = translated;
+    delete textEl.dataset.originalText;
+
     const blob = await fetch(`${API_URL}/speak`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: translated, lang: toLang })
     }).then(r => r.blob());
+
     if (person === 'A') audioBlobA = blob; else audioBlobB = blob;
     window[`_convText${person}`] = translated;
     document.getElementById(`playBtn${person}`).style.display = "flex";
     document.getElementById(`micStatus${person}`).textContent = "Tap to speak";
+
     const btn = document.getElementById(`playBtn${person}`);
     const old = document.getElementById(`timeline_conv${person}`);
     if (old) old.remove();
@@ -432,18 +472,18 @@ async function translateAndSpeakConv(text, fromLang, toLang, person) {
 }
 
 function playAudioA() {
-  const blob = audioBlobA;
-  const text = window._convTextA || document.getElementById("translatedTextA").textContent;
+  const el = document.getElementById("translatedTextA");
+  const text = window._convTextA || el.dataset.originalText || el.textContent;
   const btn = document.getElementById('playBtnA');
-  if (!blob) return;
-  toggleAudio(blob, btn, text, 'convA', 'translatedTextA');
+  if (!audioBlobA) return;
+  toggleAudio(audioBlobA, btn, text, 'convA', 'translatedTextA');
 }
 function playAudioB() {
-  const blob = audioBlobB;
-  const text = window._convTextB || document.getElementById("translatedTextB").textContent;
+  const el = document.getElementById("translatedTextB");
+  const text = window._convTextB || el.dataset.originalText || el.textContent;
   const btn = document.getElementById('playBtnB');
-  if (!blob) return;
-  toggleAudio(blob, btn, text, 'convB', 'translatedTextB');
+  if (!audioBlobB) return;
+  toggleAudio(audioBlobB, btn, text, 'convB', 'translatedTextB');
 }
 
 // ── SWAP ──────────────────────────────────────────────
@@ -603,17 +643,27 @@ async function translateImage() {
       statusEl.textContent = 'No text found. Try a clearer image.';
       btn.disabled = false; btn.innerHTML = BTN_READY_HTML; return;
     }
-    document.getElementById('imgExtractedText').textContent = extracted;
+    // Set extracted text cleanly
+    const extractedEl = document.getElementById('imgExtractedText');
+    extractedEl.textContent = extracted;
+    delete extractedEl.dataset.originalText;
+
     statusEl.textContent = 'Translating...';
     btn.textContent = 'Translating...';
     const translated = await translateText(extracted, fromLang, toLang);
-    document.getElementById('imgTranslatedText').textContent = translated;
+
+    // Set translated text cleanly BEFORE audio player
+    const translatedEl = document.getElementById('imgTranslatedText');
+    translatedEl.textContent = translated;
+    delete translatedEl.dataset.originalText;
     window._imgTranslatedText = translated;
+
     btn.textContent = 'Generating audio...';
     imgAudioBlob = await fetch(`${API_URL}/speak`, {
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({text: translated, lang: toLang})
     }).then(r=>r.blob());
+
     document.getElementById('imgResults').style.display = 'block';
     statusEl.textContent = 'Done';
     const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
@@ -627,7 +677,8 @@ async function translateImage() {
 
 function playImgAudio() {
   const blob = imgAudioBlob;
-  const text = window._imgTranslatedText || document.getElementById('imgTranslatedText').textContent;
+  const el = document.getElementById('imgTranslatedText');
+  const text = window._imgTranslatedText || el.dataset.originalText || el.textContent;
   const btn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
   if (!blob || !btn) return;
   toggleAudio(blob, btn, text, 'img', 'imgTranslatedText');
