@@ -183,22 +183,54 @@ function formatTime(s) {
 }
 
 // ── TRANSLATION ───────────────────────────────────────
-// Frontend calls YOUR backend only. Backend calls Google Translate server-side.
-// This avoids all CORS issues and supports every Indian language pair.
+// Uses translate.googleapis.com via a CORS proxy (allorigins.win).
+// This works for ALL Indian language pairs (te→ta, hi→kn, etc.) with no API key.
+// Falls back to your backend if the proxy fails.
 
 async function translateText(text, fromLang, toLang) {
   if (!text || !text.trim()) return "";
 
-  const res = await fetch(`${API_URL}/translate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: text.trim(), from_lang: fromLang, to_lang: toLang })
-  });
+  // Build the Google Translate URL
+  const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(text.trim())}`;
 
-  if (!res.ok) throw new Error(`Translation failed (status ${res.status})`);
-  const data = await res.json();
-  if (!data.translated) throw new Error("Empty translation response");
-  return data.translated;
+  // Primary: use allorigins CORS proxy — adds CORS headers to any URL
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(gtUrl)}`;
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const wrapper = await res.json();
+      if (wrapper.contents) {
+        const data = JSON.parse(wrapper.contents);
+        if (data && data[0]) {
+          const translated = data[0]
+            .filter(seg => seg && seg[0])
+            .map(seg => seg[0])
+            .join("");
+          if (translated) return translated;
+        }
+      }
+    }
+  } catch(e) {
+    console.warn("Proxy translate failed, trying backend...", e);
+  }
+
+  // Fallback: your own backend /translate endpoint
+  try {
+    const res = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.trim(), from_lang: fromLang, to_lang: toLang }),
+      signal: AbortSignal.timeout(20000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.translated) return data.translated;
+    }
+  } catch(e) {
+    console.warn("Backend translate failed", e);
+  }
+
+  throw new Error("Translation failed. Please check your connection.");
 }
 
 // ── THEME ──────────────────────────────────────────────
