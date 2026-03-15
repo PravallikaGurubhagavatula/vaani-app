@@ -370,6 +370,78 @@ body {
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
+/* ── IMAGE TRANSLATION ── */
+.upload-area {
+  border: 2px dashed var(--border-accent);
+  border-radius: 16px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--bg-card);
+  margin-bottom: 16px;
+}
+.upload-area:hover, .upload-area.drag-over {
+  border-color: var(--accent);
+  background: var(--bg-main);
+}
+.upload-icon { font-size: 3rem; margin-bottom: 12px; }
+.upload-text { font-size: 1.1rem; color: var(--text); margin-bottom: 6px; font-weight: 500; }
+.upload-hint { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 3px; }
+
+.img-preview-box {
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  position: relative;
+  text-align: center;
+  background: var(--bg-card);
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+.img-preview-box img {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.change-img-btn {
+  display: block;
+  margin: 10px auto 0;
+  padding: 8px 20px;
+  background: var(--bg-main);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+.change-img-btn:hover { color: var(--text); background: var(--bg-card); }
+
+.img-translate-btn {
+  width: 100%;
+  padding: 14px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-bottom: 12px;
+}
+.img-translate-btn:hover { background: var(--accent-hover); }
+.img-translate-btn:disabled { background: #555; cursor: not-allowed; }
+
+.img-status {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  min-height: 20px;
+  margin-bottom: 10px;
+}
+
 /* ── RESPONSIVE MOBILE ── */
 @media (max-width: 600px) {
   .page { padding: 12px; }
