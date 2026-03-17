@@ -1,5 +1,12 @@
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
+let mediaRecorder;
+let audioChunks = [];
+
+let currentStream = null;
+
+let isProcessingSpeech = false;
+
 let lastSpokenText = "", lastFromLang = "";
 let currentConvSpeaker = null, currentCategory = "food";
 let travelPhrasesCache = {}, isDarkMode = true;
@@ -373,21 +380,34 @@ document.getElementById("imgToLang").addEventListener("change",async()=>{
 });
 
 let isListening=false;
+let isProcessingSpeech = false;
 
 function startListening(){
-  if(!recognition){ showToast("Speech recognition not supported"); return; }
-
-  if(isListening){
-    recognition.stop();
-    document.getElementById("micBtn").classList.remove("listening");
-    document.getElementById("micStatus").textContent="Tap to speak";
-    isListening=false;
+  if(!navigator.mediaDevices){
+    showToast("Microphone not supported");
     return;
   }
 
-  currentConvSpeaker=null;
-  const lang=document.getElementById("fromLang").value;
-  recognition.lang=SPEECH_LANG_MAP[lang]||lang;
+  // ── STOP ──
+  if(isListening){
+    if(mediaRecorder && mediaRecorder.state !== "inactive"){
+      mediaRecorder.stop();
+    }
+
+    if(currentStream){
+      currentStream.getTracks().forEach(track => track.stop());
+      currentStream = null;
+    }
+
+    document.getElementById("micBtn").classList.remove("listening");
+    document.getElementById("micStatus").textContent="Tap to speak";
+
+    isListening = false;
+    return;
+  }
+
+  // ── START ──
+  currentConvSpeaker = null;
 
   document.getElementById("micBtn").classList.add("listening");
   document.getElementById("micStatus").textContent="Listening...";
@@ -396,55 +416,192 @@ function startListening(){
   document.getElementById("resultsSection").style.display="none";
 
   stopAllAudio();
-  recognition.start();
 
-  isListening=true;
+  navigator.mediaDevices.getUserMedia({ audio: true })
+  .then(stream => {
+
+    currentStream = stream;
+
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = async (event) => {
+      if(event.data.size > 0){
+
+        const formData = new FormData();
+        formData.append("file", event.data);
+
+        try{
+          const res = await fetch(`${API_URL}/speech-to-text`, {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await res.json();
+
+          // ✅ MAIN FIXED BLOCK
+          if(data.text && data.text.trim().length > 2){
+
+            if(isProcessingSpeech) return;
+            isProcessingSpeech = true;
+
+            const fromLang = document.getElementById("fromLang").value;
+            const text = await prepareInputText(data.text, fromLang);
+
+            // prevent duplicate same speech
+            if(text === lastSpokenText){
+              isProcessingSpeech = false;
+              return;
+            }
+
+            lastSpokenText = text;
+            lastFromLang = fromLang;
+
+            document.getElementById("originalText").textContent = text;
+
+            await translateAndSpeak(text, fromLang);
+
+            isProcessingSpeech = false;
+          }
+
+        }catch(e){
+          console.warn("Speech error:", e);
+          isProcessingSpeech = false;
+        }
+      }
+    };
+
+    // ⏱️ record in chunks (better stability)
+    mediaRecorder.start(4000);
+
+  })
+  .catch(err => {
+    // ✅ permission error fix
+    showToast("Microphone permission denied");
+    document.getElementById("micBtn").classList.remove("listening");
+    document.getElementById("micStatus").textContent="Tap to speak";
+    isListening = false;
+  });
+
+  isListening = true;
 }
+
+//--------------------------------------------------------------------------------------------------
+
 function startConvListening(person){
-  if(!recognition) return;
-  currentConvSpeaker=person;
-  recognition.lang=document.getElementById(`convLang${person}`).value;
+  if(!navigator.mediaDevices){
+    showToast("Microphone not supported");
+    return;
+  }
+
+  // prevent double click issue
+  if(mediaRecorder && mediaRecorder.state !== "inactive"){
+    return;
+  }
+
+  currentConvSpeaker = person;
+
   document.getElementById(`micBtn${person}`).classList.add("listening");
-  document.getElementById(`micStatus${person}`).textContent="Listening...";
-  document.getElementById(`originalText${person}`).textContent="—";
-  document.getElementById(`translatedText${person}`).textContent="—";
-  document.getElementById(`playBtn${person}`).style.display="none";
-  recognition.start();
+  document.getElementById(`micStatus${person}`).textContent = "Listening...";
+  document.getElementById(`originalText${person}`).textContent = "—";
+  document.getElementById(`translatedText${person}`).textContent = "—";
+  document.getElementById(`playBtn${person}`).style.display = "none";
+
+  navigator.mediaDevices.getUserMedia({ audio: true })
+  .then(stream => {
+
+    currentStream = stream;
+
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = event => {
+      if(event.data.size > 0){
+        audioChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = async () => {
+
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+
+      const formData = new FormData();
+      formData.append("file", blob);
+
+      document.getElementById(`micStatus${person}`).textContent = "Processing speech...";
+
+      try {
+        const res = await fetch(`${API_URL}/speech-to-text`, {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (data.text && data.text.trim().length > 1) {
+
+          const fromLang = document.getElementById(`convLang${person}`).value;
+          const toLang = document.getElementById(`convLang${person==='A'?'B':'A'}`).value;
+
+          const text = await prepareInputText(data.text, fromLang);
+
+          document.getElementById(`originalText${person}`).textContent = text;
+
+          await translateAndSpeakConv(text, fromLang, toLang, person);
+
+        } else {
+          document.getElementById(`micStatus${person}`).textContent = "No speech detected";
+        }
+
+      } catch (e) {
+        console.warn("Conversation speech error:", e);
+        document.getElementById(`micStatus${person}`).textContent = "Error. Try again.";
+      }
+
+      // ✅ cleanup stream (VERY IMPORTANT)
+      if(currentStream){
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+      }
+
+      document.getElementById(`micBtn${person}`).classList.remove("listening");
+      document.getElementById(`micStatus${person}`).textContent = "Tap to speak";
+    };
+
+    mediaRecorder.start();
+
+    // ⏱️ auto stop after 6 sec
+    setTimeout(() => {
+      if(mediaRecorder && mediaRecorder.state !== "inactive"){
+        mediaRecorder.stop();
+      }
+    }, 6000);
+
+  })
+  .catch(err => {
+    // ✅ permission error fix
+    showToast("Microphone permission denied");
+    document.getElementById(`micBtn${person}`).classList.remove("listening");
+    document.getElementById(`micStatus${person}`).textContent = "Tap to speak";
+  });
 }
 
-if(recognition){
-  recognition.onresult=async(event)=>{
-    let spokenText="";
-for(let i=event.resultIndex;i<event.results.length;i++){
-  if(event.results[i].isFinal){
-    spokenText+=event.results[i][0].transcript;
-  }
-}
-    if(currentConvSpeaker){
-      const person=currentConvSpeaker, other=person==='A'?'B':'A';
-      const fromLang=document.getElementById(`convLang${person}`).value;
-      const toLang=document.getElementById(`convLang${other}`).value;
-      document.getElementById(`originalText${person}`).textContent=spokenText;
-      document.getElementById(`micStatus${person}`).textContent="Translating...";
-      document.getElementById(`micBtn${person}`).classList.remove("listening");
-      await translateAndSpeakConv(spokenText,fromLang,toLang,person);
-    } else {
-      const fromLang=document.getElementById("fromLang").value;
-      const text=await prepareInputText(spokenText,fromLang);
-      lastSpokenText=text; lastFromLang=fromLang;
-      document.getElementById("originalText").textContent=text;
-      document.getElementById("micStatus").textContent="Translating...";
-      document.getElementById("micBtn").classList.remove("listening");
-      document.getElementById("resultsSection").style.display="block";
-      document.getElementById("translatedText").textContent="Translating...";
-      await translateAndSpeak(text,fromLang);
-    }
-  };
-  recognition.onerror=()=>{
-    if(currentConvSpeaker){ document.getElementById(`micStatus${currentConvSpeaker}`).textContent="Error. Try again."; document.getElementById(`micBtn${currentConvSpeaker}`).classList.remove("listening"); }
-    else{ document.getElementById("micStatus").textContent="Error. Try again."; document.getElementById("micBtn").classList.remove("listening"); }
-  };
-}
+//--------------------------------------------------------------------------------------------------
+
+// if(recognition){
+//  recognition.onresult=async(event)=>{
+//    let spokenText="";
+// for(let i=event.resultIndex;i<event.results.length;i++){
+//  if(event.results[i].isFinal){
+//    spokenText+=event.results[i][0].transcript;
+//  }
+//}
+
+  //recognition.onerror=()=>{
+  //  if(currentConvSpeaker){ document.getElementById(`micStatus${currentConvSpeaker}`).textContent="Error. Try again."; document.getElementById(`micBtn${currentConvSpeaker}`).classList.remove("listening"); }
+  //  else{ document.getElementById("micStatus").textContent="Error. Try again."; document.getElementById("micBtn").classList.remove("listening"); }
+ // };
+//}
 
 // ── TRANSLATE + SPEAK ─────────────────────────────────
 async function translateAndSpeak(text,fromLang){
