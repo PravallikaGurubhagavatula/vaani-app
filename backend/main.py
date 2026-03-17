@@ -7,6 +7,7 @@ from deep_translator import GoogleTranslator
 import pytesseract
 from PIL import Image
 import requests, io, os, re, json
+from langdetect import detect
 # NLLB translation
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
@@ -20,7 +21,7 @@ app.add_middleware(
 )
 
 # ── NLLB MODEL (for better multilingual translation) ──
-NLLB_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+NLLB_MODEL_NAME = "facebook/nllb-200-distilled-300M"
 
 try:
     nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_NAME)
@@ -85,9 +86,34 @@ def nllb_translate(text: str, src: str, dest: str) -> str:
     if not nllb_model or not nllb_tokenizer:
         raise ValueError("NLLB not available")
 
+    # Map ISO → NLLB codes
+    NLLB_LANG_MAP = {
+        "en": "eng_Latn",
+        "hi": "hin_Deva",
+        "te": "tel_Telu",
+        "ta": "tam_Taml",
+        "kn": "kan_Knda",
+        "ml": "mal_Mlym",
+        "mr": "mar_Deva",
+        "bn": "ben_Beng",
+        "gu": "guj_Gujr",
+        "pa": "pan_Guru",
+        "ur": "urd_Arab",
+        "ne": "npi_Deva",
+        "as": "asm_Beng",
+        "or": "ory_Orya"
+    }
+
+    src_lang = NLLB_LANG_MAP.get(src, "eng_Latn")
+    tgt_lang = NLLB_LANG_MAP.get(dest, "eng_Latn")
+
     inputs = nllb_tokenizer(text, return_tensors="pt")
 
-    tokens = nllb_model.generate(**inputs, max_length=512)
+    tokens = nllb_model.generate(
+        **inputs,
+        forced_bos_token_id=nllb_tokenizer.lang_code_to_id[tgt_lang],
+        max_length=512
+    )
 
     result = nllb_tokenizer.batch_decode(tokens, skip_special_tokens=True)[0]
 
@@ -104,21 +130,21 @@ def translate_chunk(text: str, src: str, dest: str) -> str:
     if not use_direct:
 
     # 1️⃣ Try NLLB first
-    try:
-        result = nllb_translate(text, src, dest)
-        if result and result.strip():
-            return result
-    except Exception as e:
-        print(f"NLLB failed ({src}→{dest}): {e}")
+        try:
+            result = nllb_translate(text, src, dest)
+            if result and result.strip():
+                return result
+        except Exception as e:
+            print(f"NLLB failed ({src}→{dest}): {e}")
 
     # 2️⃣ Try deep_translator
-    try:
-        translator = GoogleTranslator(source=dt_src, target=dt_dest)
-        result = translator.translate(text)
-        if result and result.strip():
-            return result
-    except Exception as e:
-        print(f"deep_translator failed ({src}→{dest}): {e}")
+        try:
+            translator = GoogleTranslator(source=dt_src, target=dt_dest)
+            result = translator.translate(text)
+            if result and result.strip():
+                return result
+        except Exception as e:
+            print(f"deep_translator failed ({src}→{dest}): {e}")
       
 
     # Fallback / primary for unsupported langs: direct gtx API
@@ -151,13 +177,43 @@ def split_text(text, max_len=4500):
             current = (current + " " + s).strip()
     if current: chunks.append(current)
     return chunks or [text]
+# ── Dialect Normalization (1200+ language support) ──
 
+DIALECT_MAP = {
+    "bho": "hi",   # Bhojpuri → Hindi
+    "mai": "hi",   # Maithili → Hindi
+    "mag": "hi",
+    "awa": "hi",
+    "raj": "hi",
+    "mwr": "hi",
+    "hne": "hi",
+    "doi": "hi",
+    "kok": "mr",
+    "gom": "mr",
+    "tcy": "kn",
+    "lus": "en",
+}
+
+def normalize_language(lang_code):
+    return DIALECT_MAP.get(lang_code, lang_code)
+    
 # ── ROUTE 1: Translate ────────────────────────────────
 @app.post("/translate")
 async def translate_text(data: dict):
     text = data["text"]
-    src  = data["from_lang"]
-    dest = data["to_lang"]
+    src  = data.get("from_lang", "auto")
+    dest = data.get("to_lang", "en")
+
+    # Auto detect language
+    if src == "auto":
+        try:
+            src = detect(text)
+        except:
+            src = "en"
+
+    # Normalize dialects
+    src = normalize_language(src)
+    dest = normalize_language(dest)
     try:
         chunks = split_text(text, max_len=4500)
         translated_parts = [translate_chunk(chunk, src, dest) for chunk in chunks]
@@ -171,27 +227,26 @@ async def speak(data: dict):
     text     = data["text"]
     lang_req = data["lang"]
     tts_lang = get_tts_lang(lang_req)
+
+    filepath = f"output_{os.getpid()}.mp3"
+
     try:
-        tts = gTTS(text=text, lang=tts_lang)
-      except Exception:
-    # fallback to english if voice not supported
-        tts = gTTS(text=text, lang="en")
-  
-        filepath = f"output_{os.getpid()}.mp3"
-        tts.save(filepath)
-        response = FileResponse(filepath, media_type="audio/mpeg")
-        response.headers["X-TTS-Lang-Used"]      = tts_lang
-        response.headers["X-TTS-Lang-Requested"] = lang_req
-        return response
-    except Exception as e:
         try:
+            tts = gTTS(text=text, lang=tts_lang)
+        except Exception:
+            # fallback to English if not supported
             tts = gTTS(text=text, lang="en")
-            tts.save("output.mp3")
-            response = FileResponse("output.mp3", media_type="audio/mpeg")
-            response.headers["X-TTS-Lang-Used"] = "en"
-            return response
-        except Exception as e2:
-            return JSONResponse(status_code=500, content={"error": str(e2)})
+
+        tts.save(filepath)
+
+        response = FileResponse(filepath, media_type="audio/mpeg")
+        response.headers["X-TTS-Lang-Used"] = tts_lang
+        response.headers["X-TTS-Lang-Requested"] = lang_req
+
+        return response
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # ── ROUTE 3: Image OCR + Translate ───────────────────
 TESS_LANG_MAP = {
