@@ -11,6 +11,8 @@ from langdetect import detect
 # NLLB translation
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
+import whisper
+import tempfile
 
 app = FastAPI()
 app.add_middleware(
@@ -22,7 +24,13 @@ app.add_middleware(
 
 # ── NLLB MODEL (for better multilingual translation) ──
 NLLB_MODEL_NAME = "facebook/nllb-200-distilled-300M"
-
+# ── Whisper Model (Speech-to-Text) ──
+try:
+    whisper_model = whisper.load_model("tiny")  # small & fast
+except Exception as e:
+    print("Whisper model load failed:", e)
+    whisper_model = None
+    
 try:
     nllb_tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_NAME)
     nllb_model = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL_NAME)
@@ -31,6 +39,28 @@ except Exception as e:
     nllb_tokenizer = None
     nllb_model = None
 
+@app.post("/speech-to-text")
+async def speech_to_text(file: UploadFile = File(...)):
+    if not whisper_model:
+        return {"text": "", "error": "Whisper not available"}
+        
+#──────────────────────────────────
+    try:
+        # Save temp audio file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_audio:
+            temp_audio.write(await file.read())
+            temp_audio_path = temp_audio.name
+
+        # Transcribe
+        result = whisper_model.transcribe(temp_audio_path)
+
+        os.remove(temp_audio_path)
+
+        return {"text": result["text"]}
+
+    except Exception as e:
+        return {"text": "", "error": str(e)}
+        
 # ── gTTS supported codes ──────────────────────────────
 GTTS_SUPPORTED = set(tts_langs().keys())
 
