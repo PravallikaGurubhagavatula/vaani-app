@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="style.css?v=1773833984">
+  <link rel="stylesheet" href="style.css?v=1773835781">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#7c3aed">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -383,55 +383,67 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="firebase.js?v=1773833984"></script>
+  <script type="module" src="firebase.js?v=1773835781"></script>
   <script>window.VAANI_VERSION="1773833364";</script>
-  <script src="app.js?v=1773833984"></script>
+  <script src="app.js?v=1773835781"></script>
   <script>
-    // ── AUTO-UPDATING SERVICE WORKER ─────────────────────────────────────
+    // ── SERVICE WORKER: auto-updates all devices on every deployment ──────
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
 
-        // Register with updateViaCache:none so browser always fetches fresh sw.js
+        // Register SW — updateViaCache:'none' means browser ALWAYS checks
+        // the server for a new sw.js on every page load, never uses cached copy
         navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
           .then(reg => {
-            console.log('[Vaani] SW registered:', reg.scope);
+            console.log('[Vaani] SW registered ✓');
 
-            // Poll for updates every 30 seconds (catches new deployments quickly)
+            // Check for a new SW every 30 seconds while page is open
             setInterval(() => reg.update(), 30000);
 
-            // When a new SW finishes installing, tell it to skip waiting
+            // Also check immediately when tab becomes visible (user switches back)
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') reg.update();
+            });
+
+            // When a new SW is found installing, force it to skip waiting
             reg.addEventListener('updatefound', () => {
               const newSW = reg.installing;
               if (!newSW) return;
               newSW.addEventListener('statechange', () => {
                 if (newSW.state === 'installed') {
-                  // New SW is ready — activate it immediately
+                  console.log('[Vaani] New SW installed — activating now');
                   newSW.postMessage('SKIP_WAITING');
                 }
               });
             });
           })
-          .catch(err => console.warn('[Vaani] SW failed:', err));
+          .catch(err => console.warn('[Vaani] SW error:', err));
 
-        // When SW sends SW_UPDATED message OR when controller changes → reload page
+        // SW sends SW_UPDATED after wiping old caches → reload this tab
         navigator.serviceWorker.addEventListener('message', event => {
-          if (event.data?.type === 'SW_UPDATED') {
-            console.log('[Vaani] New version', event.data.version, '— reloading');
+          if (event.data && event.data.type === 'SW_UPDATED') {
+            console.log('[Vaani] Reloading for version', event.data.version);
             window.location.reload(true);
           }
         });
 
+        // Backup: when controller changes (new SW took over) → reload
         let reloading = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (!reloading) { reloading = true; window.location.reload(true); }
+          if (!reloading) {
+            reloading = true;
+            console.log('[Vaani] Controller changed — reloading');
+            window.location.reload(true);
+          }
         });
       });
     }
 
-    // ── PWA INSTALL ───────────────────────────────────────────────────────
+    // ── PWA install prompt ─────────────────────────────────────────────────
     let deferredPrompt;
     window.addEventListener('beforeinstallprompt', e => {
-      e.preventDefault(); deferredPrompt = e;
+      e.preventDefault();
+      deferredPrompt = e;
       const btn = document.getElementById('installBtn');
       if (btn) btn.style.display = 'flex';
     });
