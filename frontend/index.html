@@ -133,14 +133,25 @@
       </div>
     </div>
     <div class="home-langs">
-      <div class="section-label">Supported Languages</div>
+      <div class="section-label">Supported Languages (All States of India)</div>
       <div class="langs-wrap">
         <span class="lang-pill">Telugu</span><span class="lang-pill">Tamil</span>
         <span class="lang-pill">Hindi</span><span class="lang-pill">Kannada</span>
         <span class="lang-pill">Malayalam</span><span class="lang-pill">Marathi</span>
         <span class="lang-pill">Bengali</span><span class="lang-pill">Gujarati</span>
         <span class="lang-pill">Punjabi</span><span class="lang-pill">Urdu</span>
+        <span class="lang-pill">Odia</span><span class="lang-pill">Assamese</span>
+        <span class="lang-pill">Nepali</span><span class="lang-pill">Maithili</span>
+        <span class="lang-pill">Santali</span><span class="lang-pill">Kashmiri</span>
+        <span class="lang-pill">Dogri</span><span class="lang-pill">Sindhi</span>
+        <span class="lang-pill">Konkani</span><span class="lang-pill">Bodo</span>
+        <span class="lang-pill">Manipuri</span><span class="lang-pill">Sanskrit</span>
+        <span class="lang-pill">Bhojpuri</span><span class="lang-pill">Tulu</span>
+        <span class="lang-pill">Marwari</span><span class="lang-pill">Mizo</span>
+        <span class="lang-pill">Awadhi</span><span class="lang-pill">Chhattisgarhi</span>
+        <span class="lang-pill">Haryanvi</span><span class="lang-pill">Khasi</span>
         <span class="lang-pill">English</span>
+        <span class="lang-pill">+ more</span>
       </div>
     </div>
   </div>
@@ -155,28 +166,15 @@
       <div class="lang-row">
         <div class="lang-box">
           <label class="lang-label">I Speak</label>
-          <select id="fromLang" class="lang-select">
-            <option value="te">Telugu</option><option value="ta">Tamil</option>
-            <option value="hi">Hindi</option><option value="kn">Kannada</option>
-            <option value="ml">Malayalam</option><option value="mr">Marathi</option>
-            <option value="bn">Bengali</option><option value="gu">Gujarati</option>
-            <option value="pa">Punjabi</option><option value="ur">Urdu</option>
-            <option value="en">English</option>
-          </select>
+          <!-- Populated dynamically by initLanguageSelects() -->
+          <select id="fromLang" class="lang-select"></select>
         </div>
         <button class="swap-btn" onclick="swapLanguages()">
           <svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         </button>
         <div class="lang-box">
           <label class="lang-label">Translate To</label>
-          <select id="toLang" class="lang-select">
-            <option value="ta">Tamil</option><option value="te">Telugu</option>
-            <option value="hi">Hindi</option><option value="kn">Kannada</option>
-            <option value="ml">Malayalam</option><option value="mr">Marathi</option>
-            <option value="bn">Bengali</option><option value="gu">Gujarati</option>
-            <option value="pa">Punjabi</option><option value="ur">Urdu</option>
-            <option value="en">English</option>
-          </select>
+          <select id="toLang" class="lang-select"></select>
         </div>
       </div>
       <div class="mode-toggle">
@@ -212,11 +210,9 @@
           <button class="sm-btn" onclick="copyTranslation()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <p class="rc-text rc-accent" id="translatedText">—</p>
-        <div class="rc-actions" id="actionBtns">
-          <!-- FIX 1: Added id="playBtn" so app.js can find this button -->
+        <div class="rc-actions" id="actionBtns" style="display:none">
           <button class="ac-btn ac-primary" id="playBtn" onclick="playAudio()"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play</button>
           <button class="ac-btn" onclick="copyTranslation()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
-          <!-- FIX 2: Use saveSingleToFavourites() which reads from window._singleTranslatedText (clean string, no karaoke spans) -->
           <button class="ac-btn ac-star" onclick="saveSingleToFavourites()"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Save</button>
         </div>
       </div>
@@ -233,7 +229,7 @@
       <div class="conv-panel">
         <div class="conv-top">
           <span class="conv-label conv-label-a">Person A</span>
-          <select id="convLangA" class="lang-select lang-select-sm"><option value="te">Telugu</option><option value="ta">Tamil</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select>
+          <select id="convLangA" class="lang-select lang-select-sm"></select>
         </div>
         <div class="mic-wrap mic-wrap-sm">
           <button class="mic-btn mic-btn-sm mic-a" id="micBtnA" onclick="startConvListening('A')"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
@@ -250,7 +246,7 @@
       <div class="conv-panel">
         <div class="conv-top">
           <span class="conv-label conv-label-b">Person B</span>
-          <select id="convLangB" class="lang-select lang-select-sm"><option value="ta">Tamil</option><option value="te">Telugu</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select>
+          <select id="convLangB" class="lang-select lang-select-sm"></select>
         </div>
         <div class="mic-wrap mic-wrap-sm">
           <button class="mic-btn mic-btn-sm mic-b" id="micBtnB" onclick="startConvListening('B')"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
@@ -274,9 +270,9 @@
     </div>
     <div class="glass-card">
       <div class="lang-row">
-        <div class="lang-box"><label class="lang-label">My Language</label><select id="travelFromLang" class="lang-select" onchange="loadTravelPhrases()"><option value="te">Telugu</option><option value="ta">Tamil</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select></div>
+        <div class="lang-box"><label class="lang-label">My Language</label><select id="travelFromLang" class="lang-select" onchange="loadTravelPhrases()"></select></div>
         <div class="arrow-sep"><svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
-        <div class="lang-box"><label class="lang-label">Translate To</label><select id="travelToLang" class="lang-select" onchange="loadTravelPhrases()"><option value="ta">Tamil</option><option value="te">Telugu</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select></div>
+        <div class="lang-box"><label class="lang-label">Translate To</label><select id="travelToLang" class="lang-select" onchange="loadTravelPhrases()"></select></div>
       </div>
     </div>
     <div class="cat-tabs">
@@ -298,9 +294,9 @@
     </div>
     <div class="glass-card">
       <div class="lang-row">
-        <div class="lang-box"><label class="lang-label">Text Language in Image</label><select id="imgFromLang" class="lang-select"><option value="te">Telugu</option><option value="ta">Tamil</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select></div>
+        <div class="lang-box"><label class="lang-label">Text Language in Image</label><select id="imgFromLang" class="lang-select"></select></div>
         <div class="arrow-sep"><svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
-        <div class="lang-box"><label class="lang-label">Translate To</label><select id="imgToLang" class="lang-select"><option value="ta">Tamil</option><option value="te">Telugu</option><option value="hi">Hindi</option><option value="kn">Kannada</option><option value="ml">Malayalam</option><option value="mr">Marathi</option><option value="bn">Bengali</option><option value="gu">Gujarati</option><option value="pa">Punjabi</option><option value="ur">Urdu</option><option value="en">English</option></select></div>
+        <div class="lang-box"><label class="lang-label">Translate To</label><select id="imgToLang" class="lang-select"></select></div>
       </div>
     </div>
     <div class="upload-zone" id="uploadArea" onclick="document.getElementById('imageInput').click()"
