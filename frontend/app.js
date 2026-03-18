@@ -283,11 +283,7 @@ function _stopAudio() {
   });
   // Remove all timelines
   document.querySelectorAll(".audio-timeline-wrap").forEach(el => el.remove());
-  // Restore word-wrapped text to plain text
-  document.querySelectorAll(".rc-text.rc-accent[data-original-text]").forEach(el => {
-    el.textContent = el.dataset.originalText;
-    delete el.dataset.originalText;
-  });
+  // Nothing to restore — text is always plain (no word spans)
 }
 
 // Alias for legacy calls
@@ -353,12 +349,11 @@ function playBlob(blob, btnEl, translatedText, cid, textElId) {
   btnEl.dataset.playing = "true";
   btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
 
-  // Wrap words
+  // Plain text — no word spans, no hover highlighting
   const textEl = document.getElementById(textElId);
-  if (textEl && !textEl.dataset.originalText) textEl.textContent = translatedText;
-  const words = textEl ? wrapWords(textEl, cid) : translatedText.trim().split(/\s+/).filter(Boolean);
+  if (textEl) { textEl.textContent = translatedText; delete textEl.dataset.originalText; }
 
-  // Build timeline
+  // Build timeline progress bar
   buildTimeline(cid, btnEl);
   const scrubber = document.getElementById("scrubber_" + cid);
   if (scrubber) {
@@ -367,17 +362,11 @@ function playBlob(blob, btnEl, translatedText, cid, textElId) {
     });
   }
 
-  // ── 60fps RAF loop for smooth word tracking ──
+  // 60fps RAF — updates progress bar only
   function rafLoop() {
-    if (!_audio || _audio !== audio) return;  // guard: this player was stopped
+    if (!_audio || _audio !== audio) return;
     if (audio.paused || audio.ended) return;
-    const dur = audio.duration;
-    if (dur > 0) {
-      const pct = (audio.currentTime / dur) * 100;
-      setProgress(cid, pct, audio.currentTime);
-      const wIdx = Math.min(Math.floor((audio.currentTime / dur) * words.length), words.length - 1);
-      textEl?.querySelectorAll(".audio-word").forEach((w,i) => w.classList.toggle("active-word", i === wIdx));
-    }
+    if (audio.duration > 0) setProgress(cid, (audio.currentTime / audio.duration) * 100, audio.currentTime);
     _rafId = requestAnimationFrame(rafLoop);
   }
 
@@ -391,7 +380,6 @@ function playBlob(blob, btnEl, translatedText, cid, textElId) {
     btnEl.dataset.playing = "false";
     btnEl.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play`;
     setProgress(cid, 0, 0);
-    textEl?.querySelectorAll(".audio-word").forEach(w => w.classList.remove("active-word"));
     URL.revokeObjectURL(url);
     if (_audio === audio) _audio = null;
   });
@@ -422,16 +410,7 @@ function toggleAudioPlayer(blob, btnEl, text, cid, textElId) {
       btnEl.innerHTML = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Pause`;
       _rafId = requestAnimationFrame(function rafLoop() {
         if (!_audio || _audio.paused || _audio.ended) return;
-        const dur = _audio.duration;
-        if (dur > 0) {
-          setProgress(cid, (_audio.currentTime/dur)*100, _audio.currentTime);
-          const textEl = document.getElementById(textElId);
-          const wAll = textEl?.querySelectorAll(".audio-word");
-          if (wAll?.length) {
-            const wIdx = Math.min(Math.floor((_audio.currentTime/dur)*wAll.length), wAll.length-1);
-            wAll.forEach((w,i) => w.classList.toggle("active-word", i===wIdx));
-          }
-        }
+        if (_audio.duration > 0) setProgress(cid, (_audio.currentTime/_audio.duration)*100, _audio.currentTime);
         _rafId = requestAnimationFrame(rafLoop);
       });
     } else {
