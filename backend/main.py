@@ -27,20 +27,14 @@ app.add_middleware(
 )
 
 # ── BHASHINI CONFIG ───────────────────────────────────
-# Set these as environment variables in Render dashboard.
-# The app works without them (falls back to gTTS) but
-# with them you get human-quality voices with male/female choice.
 BHASHINI_USER_ID       = os.environ.get("BHASHINI_USER_ID", "")
 BHASHINI_ULCA_API_KEY  = os.environ.get("BHASHINI_ULCA_API_KEY", "")
 BHASHINI_INFERENCE_KEY = os.environ.get("BHASHINI_INFERENCE_KEY", "")
 
-# Bhashini pipeline search endpoint
 BHASHINI_PIPELINE_URL  = "https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline"
-# Bhashini inference endpoint
 BHASHINI_INFER_URL     = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline"
 
 # ── BHASHINI LANGUAGE CODE MAP ────────────────────────
-# Maps our internal codes → Bhashini's ISO-639 codes
 BHASHINI_LANG_MAP = {
     "as": "as", "bn": "bn", "brx": "brx", "doi": "doi",
     "gu": "gu", "hi": "hi", "kn": "kn",  "ks": "ks",
@@ -53,15 +47,107 @@ BHASHINI_LANG_MAP = {
     "raj": "raj","kha": "kha","lep": "ne",
 }
 
+# Languages that use non-Latin scripts — romanized input must be
+# transliterated to native script before translation
+NON_LATIN_LANGS = {
+    "te","ta","hi","kn","ml","mr","bn","gu","pa","ur","or","as",
+    "ne","sa","sd","mai","doi","kok","gom","bho","mwr","tcy","ks",
+    "sat","mni-Mtei","brx","lus","awa","mag","hne","bgc","raj","kha","lep"
+}
+
+# Maps our internal codes → Google Input Tools language codes
+GOOGLE_INPUT_TOOLS_MAP = {
+    "te": "te-t-i0-und", "ta": "ta-t-i0-und", "hi": "hi-t-i0-und",
+    "kn": "kn-t-i0-und", "ml": "ml-t-i0-und", "mr": "mr-t-i0-und",
+    "bn": "bn-t-i0-und", "gu": "gu-t-i0-und", "pa": "pa-t-i0-und",
+    "ur": "ur-t-i0-und", "or": "or-t-i0-und", "as": "as-t-i0-und",
+    "ne": "ne-t-i0-und", "sa": "sa-t-i0-und", "sd": "sd-t-i0-und",
+    "mai": "hi-t-i0-und",  # fallback to Hindi script
+    "doi": "hi-t-i0-und",
+    "kok": "mr-t-i0-und",  # fallback to Marathi script
+    "gom": "mr-t-i0-und",
+    "bho": "hi-t-i0-und",
+    "mwr": "hi-t-i0-und",
+    "tcy": "kn-t-i0-und",
+    "awa": "hi-t-i0-und",
+    "mag": "hi-t-i0-und",
+    "hne": "hi-t-i0-und",
+    "bgc": "hi-t-i0-und",
+    "raj": "hi-t-i0-und",
+    "lep": "ne-t-i0-und",
+}
+
 def get_bhashini_lang(code: str) -> str:
     return BHASHINI_LANG_MAP.get(code, code)
 
 def bhashini_available() -> bool:
     return bool(BHASHINI_USER_ID and BHASHINI_ULCA_API_KEY and BHASHINI_INFERENCE_KEY)
 
+# ── TRANSLITERATION: Romanized → Native Script ───────
+def google_transliterate_word(word: str, itc_code: str) -> str:
+    """
+    Convert a single romanized word to native script using Google Input Tools.
+    Returns the native script word, or the original word on failure.
+    """
+    url = (
+        f"https://inputtools.google.com/request"
+        f"?text={requests.utils.quote(word)}"
+        f"&itc={itc_code}&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage"
+    )
+    try:
+        resp = requests.get(url, timeout=5, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        if resp.ok:
+            data = resp.json()
+            if data and data[0] == "SUCCESS" and data[1] and data[1][0] and data[1][0][1]:
+                return data[1][0][1][0]
+    except Exception as e:
+        print(f"[Transliterate] word '{word}' failed: {e}")
+    return word
+
+def transliterate_romanized(text: str, lang: str) -> str:
+    """
+    If text is romanized (all ASCII) and lang uses a non-Latin script,
+    convert each word to native script via Google Input Tools.
+    Returns native-script text, or original text if transliteration fails/not needed.
+    """
+    # Only process if the text is entirely ASCII (romanized)
+    if not text or not text.isascii():
+        return text
+    if lang not in NON_LATIN_LANGS:
+        return text
+
+    itc_code = GOOGLE_INPUT_TOOLS_MAP.get(lang)
+    if not itc_code:
+        return text
+
+    words = text.strip().split()
+    result = []
+    for word in words:
+        # Keep punctuation attached words as-is for punctuation part
+        # Strip trailing punctuation, transliterate, re-attach
+        stripped = word.rstrip("?,!.;:")
+        punct = word[len(stripped):]
+        if stripped:
+            native = google_transliterate_word(stripped, itc_code)
+            result.append(native + punct)
+        else:
+            result.append(word)
+
+    native_text = " ".join(result)
+
+    # If we still got back all ASCII (transliteration returned nothing useful),
+    # return original so translation can auto-detect romanized input
+    if native_text.isascii():
+        print(f"[Transliterate] Got back ASCII for lang={lang}, using original")
+        return text
+
+    print(f"[Transliterate] '{text}' → '{native_text}' (lang={lang})")
+    return native_text
+
 # ── BHASHINI: Get pipeline service IDs ───────────────
 def get_bhashini_pipeline(task: str, src_lang: str, tgt_lang: str = None) -> dict | None:
-    """Search Bhashini for a pipeline that supports the given task + language."""
     if not bhashini_available():
         return None
     try:
@@ -110,7 +196,7 @@ def bhashini_tts(text: str, lang: str, gender: str = "female") -> bytes | None:
                 "config": {
                     "language": {"sourceLanguage": bl},
                     "serviceId": pipeline["serviceId"],
-                    "gender": gender,          # "male" or "female"
+                    "gender": gender,
                     "samplingRate": 8000
                 }
             }],
@@ -139,10 +225,6 @@ def bhashini_tts(text: str, lang: str, gender: str = "female") -> bytes | None:
 
 # ── BHASHINI ASR ──────────────────────────────────────
 def bhashini_asr(audio_b64: str, lang: str) -> str | None:
-    """
-    Call Bhashini ASR with base64-encoded audio. Returns transcript or None.
-    audio_b64: base64 WAV audio
-    """
     if not bhashini_available():
         return None
     bl = get_bhashini_lang(lang)
@@ -264,19 +346,30 @@ def split_text(text, max_len=4500):
 # ── ROUTE 1: Translate ────────────────────────────────
 @app.post("/translate")
 async def translate_text(data: dict):
-    text = data["text"]
-    src  = data.get("from_lang", "auto")
-    dest = data["to_lang"]
-    # If text is pure ASCII but src language uses non-Latin script,
-    # the transliteration on the frontend failed — use auto-detect
-    # so Google correctly identifies romanized Telugu/Hindi/Tamil etc.
-    NON_LATIN = {
-        "te","ta","hi","kn","ml","mr","bn","gu","pa","ur","or","as",
-        "ne","sa","sd","mai","doi","kok","gom","bho","mwr","tcy","ks",
-        "sat","mni-Mtei","brx","lus","awa","mag","hne","bgc","raj","kha","lep"
-    }
-    if src in NON_LATIN and text and text.isascii():
-        src = "auto"
+    text     = data["text"]
+    src      = data.get("from_lang", "auto")
+    dest     = data["to_lang"]
+
+    # ── FIX: Transliterate romanized input to native script FIRST ──
+    # e.g. "miku diniki daari thelusa?" (romanized Telugu) →
+    #       "మీకు దినికి దారి తెలుసా?" (Telugu script) → proper translation
+    #
+    # This is the only reliable path. If we pass romanized text directly,
+    # Google sees unknown Latin text and phonetically maps it instead of
+    # translating the actual meaning.
+    if src in NON_LATIN_LANGS and text and text.isascii():
+        native = transliterate_romanized(text, src)
+        # If we got native script back, use it. Otherwise fall through to
+        # auto-detect which at least tries to understand the romanized input.
+        if native and not native.isascii():
+            text = native
+            # Now we have proper native script — translate with explicit src lang
+        else:
+            # Transliteration gave back ASCII (service unavailable or unknown words)
+            # Use auto-detect so Google can handle romanized input better than
+            # a forced language code would
+            src = "auto"
+
     try:
         chunks = split_text(text)
         parts  = [translate_chunk(c, src, dest) for c in chunks]
@@ -289,7 +382,16 @@ async def translate_text(data: dict):
 async def speak(data: dict):
     text   = data["text"]
     lang   = data["lang"]
-    gender = data.get("gender", "female")  # "male" or "female"
+    # ── FIX: gender is now reliably read from the request body.
+    # Frontend must pass gender: getVoiceGender() in every /speak call.
+    # Default is "female" so old callers still work.
+    gender = data.get("gender", "female")
+
+    # Validate — Bhashini only accepts "male" or "female"
+    if gender not in ("male", "female"):
+        gender = "female"
+
+    print(f"[TTS] lang={lang} gender={gender} text[:40]={text[:40]!r}")
 
     # ── Try Bhashini first (human voice, gender-aware) ──
     audio_bytes = bhashini_tts(text, lang, gender)
@@ -305,6 +407,8 @@ async def speak(data: dict):
         )
 
     # ── Fallback: gTTS (works for all languages) ────────
+    # gTTS doesn't support gender — this is a known limitation.
+    # Male voice is only available when Bhashini is configured.
     tts_lang = get_gtts_lang(lang)
     try:
         tts = gTTS(text=text, lang=tts_lang, slow=False)
@@ -325,11 +429,6 @@ async def speak(data: dict):
 # ── ROUTE 3: Bhashini ASR endpoint ───────────────────
 @app.post("/asr")
 async def asr_endpoint(data: dict):
-    """
-    Receive base64 WAV audio + language, return transcript via Bhashini ASR.
-    Frontend sends: { audio_b64: "...", lang: "te" }
-    Returns: { transcript: "..." } or { error: "..." }
-    """
     audio_b64 = data.get("audio_b64", "")
     lang      = data.get("lang", "hi")
     if not audio_b64:
