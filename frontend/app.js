@@ -9,6 +9,22 @@
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
+// ── USER GENDER PREFERENCE ────────────────────────────
+// Determines which voice (male/female) is used for TTS output.
+// Stored in localStorage so it persists across sessions.
+// Default: "female"
+function getVoiceGender() {
+  return localStorage.getItem("vaani_voice_gender") || "female";
+}
+function setVoiceGender(g) {
+  localStorage.setItem("vaani_voice_gender", g);
+  // Update UI buttons
+  document.querySelectorAll(".gender-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.gender === g);
+  });
+  showToast(`Voice set to ${g === "male" ? "👨 Male" : "👩 Female"}`);
+}
+
 let lastSpokenText = "", lastFromLang = "";
 let currentConvSpeaker = null, currentCategory = "food";
 let travelPhrasesCache = {}, isDarkMode = true;
@@ -218,17 +234,18 @@ async function translateText(text, fromLang, toLang) {
 
 async function fetchAudioBlob(text, lang) {
   const ttsLang = LANG_CONFIG[lang]?.ttsCode || lang;
+  const gender  = getVoiceGender(); // "male" or "female"
   try {
     const res = await fetch(`${API_URL}/speak`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ text, lang: ttsLang }),
+      body: JSON.stringify({ text, lang: ttsLang, gender }),
       signal: AbortSignal.timeout(25000)
     });
-    if (!res.ok) { console.warn("gTTS HTTP error:", res.status); return null; }
+    if (!res.ok) { console.warn("TTS HTTP error:", res.status); return null; }
     const blob = await res.blob();
-    if (blob.size < 100) { console.warn("gTTS blob too small"); return null; }
+    if (blob.size < 100) { console.warn("TTS blob too small"); return null; }
     return blob;
-  } catch(e) { console.warn("gTTS fetch error:", e.message); return null; }
+  } catch(e) { console.warn("TTS fetch error:", e.message); return null; }
 }
 
 // ── Web Speech API — ONLY as explicit fallback when user taps Play ─────
@@ -1003,5 +1020,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (icon) icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
   }
   initLanguageSelects();
+  // Set gender button state from saved preference
+  const savedGender = getVoiceGender();
+  document.querySelectorAll(".gender-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.gender === savedGender);
+  });
   restorePageFromHash();
 });
