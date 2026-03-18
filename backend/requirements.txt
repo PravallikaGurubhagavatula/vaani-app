@@ -1,9 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 gtts
 deep-translator
 pytesseract
 Pillow
 python-multipart
-openai-whisper
-ffmpeg-python
+requests
