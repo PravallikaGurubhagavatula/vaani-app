@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="style.css?v=1773835781">
+  <link rel="stylesheet" href="style.css?v=1773837464">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#7c3aed">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -31,6 +31,15 @@
       <button class="icon-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install app">
         <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
+      <!-- Gender voice toggle — saved in localStorage -->
+      <div class="gender-toggle" title="Voice gender preference">
+        <button class="gender-btn active" data-gender="female" onclick="setVoiceGender('female')" title="Female voice">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M12 14v8M8 18h8"/></svg>
+        </button>
+        <button class="gender-btn" data-gender="male" onclick="setVoiceGender('male')" title="Male voice">
+          <svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="4"/><path d="M14 6l6-6M20 6V2h-4"/></svg>
+        </button>
+      </div>
       <button class="icon-btn menu-toggle" onclick="toggleMenu()" title="Menu">
         <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
@@ -383,9 +392,9 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="firebase.js?v=1773835781"></script>
+  <script type="module" src="firebase.js?v=1773837464"></script>
   <script>window.VAANI_VERSION="1773833364";</script>
-  <script src="app.js?v=1773835781"></script>
+  <script src="app.js?v=1773837464"></script>
   <script>
     // ── SERVICE WORKER: auto-updates all devices on every deployment ──────
     if ('serviceWorker' in navigator) {
