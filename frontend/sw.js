@@ -9,7 +9,7 @@
    3. Reload the page automatically — no manual refresh needed
 ================================================================ */
 
-const CACHE_VERSION = "vaani-v11";
+const CACHE_VERSION = "vaani-v12";
 const CACHE_NAME    = CACHE_VERSION;
 
 // ── INSTALL: take over immediately, don't queue ───────────────
