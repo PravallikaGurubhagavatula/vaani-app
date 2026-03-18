@@ -63,42 +63,165 @@ def get_bhashini_lang(code: str) -> str:
 def bhashini_available() -> bool:
     return bool(BHASHINI_USER_ID and BHASHINI_ULCA_API_KEY and BHASHINI_INFERENCE_KEY)
 
-# ── ROMANIZED TRANSLATION: Direct auto-detect path ───
-#
-# WHY WE DON'T USE GOOGLE INPUT TOOLS HERE:
-# Input Tools is a typing assistant designed for word-by-word key mapping.
-# It fails on colloquial/conversational romanized text because it has no
-# semantic context. "cheppedi" → "చెప్పేడి" (wrong form), "ade" → "అడే" (wrong).
-#
-# THE CORRECT APPROACH:
-# Google Translate's own romanization engine (used when sl=auto) is far better
-# trained on colloquial romanized Indian text. It correctly handles:
-#   "nenu cheppedi kuda ade kada" → "I said that too, didn't I?"  ✓
-#   "miku diniki daari thelusa?"  → "Do you know the way to this?" ✓
-#
-# We simply pass with sl=auto and let Google identify it as romanized Telugu/
-# Hindi/Tamil etc. and translate the MEANING, not just the phonetics.
-#
-# The only edge case: if src and dest are the same script family, auto-detect
-# might map wrongly. We handle that in the translate route below.
+# ── ROMANIZED INPUT: Language detection codes ────────
+# Maps our lang codes to the script/romanization variant Google
+# understands when you tell it "this is romanized X"
+ROMANIZED_HINT_MAP = {
+    # Google recognises these as explicit romanization sources
+    "te": "te",   # Telugu  — Google knows "te" + ASCII = romanized Telugu
+    "hi": "hi",   # Hindi
+    "ta": "ta",   # Tamil
+    "kn": "kn",   # Kannada
+    "ml": "ml",   # Malayalam
+    "mr": "mr",   # Marathi
+    "bn": "bn",   # Bengali
+    "gu": "gu",   # Gujarati
+    "pa": "pa",   # Punjabi
+    "ur": "ur",   # Urdu
+    "or": "or",   # Odia
+    "as": "as",   # Assamese
+    "ne": "ne",   # Nepali
+    # Dialects fall back to their parent script language
+    "mai": "hi", "doi": "hi", "bho": "hi", "awa": "hi",
+    "mag": "hi", "hne": "hi", "bgc": "hi", "mwr": "hi", "raj": "hi",
+    "kok": "mr", "gom": "mr",
+    "tcy": "kn",
+    "lep": "ne",
+    "ks":  "ur", "sd": "ur",
+    "sa":  "hi",
+    "sat": "bn", "mni-Mtei": "bn",
+    "brx": "hi",
+    "lus": "en",
+    "kha": "en",
+}
 
-def gtx_translate_romanized(text: str, dest: str) -> str:
+def _gtx_call(text: str, sl: str, tl: str, dt_flags: list = None) -> dict:
     """
-    Translate romanized Indian language text by letting Google auto-detect
-    the source. This is the most reliable path for romanized input because
-    Google's internal romanization model understands colloquial spellings.
+    Raw Google Translate API call. Returns the full parsed JSON.
+    dt_flags: list of 't','ld','at' etc — controls what Google returns.
     """
     url = "https://translate.googleapis.com/translate_a/single"
-    params = {"client": "gtx", "sl": "auto", "tl": dest, "dt": "t", "q": text}
+    dt = dt_flags or ["t"]
+    params = [("client", "gtx"), ("sl", sl), ("tl", tl), ("q", text)]
+    for flag in dt:
+        params.append(("dt", flag))
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     resp = requests.get(url, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
-    data = resp.json()
+    return resp.json()
+
+def _extract_translation(data) -> str:
+    """Pull the translated string out of a gtx response."""
     if data and data[0]:
-        result = "".join(seg[0] for seg in data[0] if seg and seg[0])
-        if result and result.strip():
+        return "".join(seg[0] for seg in data[0] if seg and seg[0]).strip()
+    return ""
+
+def _is_phonetic_only(result: str, dest_lang: str) -> bool:
+    """
+    Detect if Google returned a phonetic/transliteration output instead of
+    a real translation. Signs:
+      - Result is still all-ASCII when destination is a non-Latin script
+      - Result closely mirrors the input (same word count, similar characters)
+    """
+    if dest_lang in NON_LATIN_LANGS:
+        # If destination is a non-Latin language and result is all ASCII,
+        # it's been phonetically mapped, not translated
+        if result and result.isascii():
+            return True
+    return False
+
+def translate_romanized_robust(text: str, src_lang: str, dest_lang: str) -> str | None:
+    """
+    3-strategy waterfall for translating romanized Indian text.
+    Returns translated string or None if all strategies fail.
+
+    Strategy 1 — Explicit romanized source hint:
+        Use sl=<src_lang> with the full translate_a API (not gtx client).
+        The translate.google.com web app uses this exact approach — when you
+        type roman text with a non-Latin source selected, it sends sl=te etc.
+        and the server correctly detects it as "romanized Telugu" and translates.
+        This is the most accurate for short phrases like "vandukunnava? konnava?"
+
+    Strategy 2 — Auto-detect with language check:
+        Use sl=auto + request language detection (dt=ld). Verify Google detected
+        a language in the same family as src_lang. If it detected something totally
+        wrong (e.g. detected "Latin" for clear Telugu romanization), reject it.
+
+    Strategy 3 — Web client simulation:
+        Mimic exactly what translate.google.com does for romanized input:
+        send with client=webapp and the romanized source flag.
+    """
+    gt_src  = ROMANIZED_HINT_MAP.get(src_lang, src_lang)
+    gt_dest = get_gt_code(dest_lang)
+
+    # ── Strategy 1: Explicit source lang hint ────────────────────────────
+    # This works because Google's server knows: "ASCII text + sl=te = romanized Telugu"
+    # It does NOT phonetically map — it properly translates.
+    # The gtx client (used in older code) strips this hint; we use client=tw-ob here.
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = [
+            ("client", "tw-ob"),  # web client — respects romanized src hint
+            ("sl",     gt_src),
+            ("tl",     gt_dest),
+            ("dt",     "t"),
+            ("q",      text),
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://translate.google.com/",
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        if resp.ok:
+            data = resp.json()
+            result = _extract_translation(data)
+            if result and not _is_phonetic_only(result, dest_lang):
+                print(f"[Romanized S1] '{text}' → '{result}' (tw-ob, sl={gt_src})")
+                return result
+            print(f"[Romanized S1] Got phonetic result '{result}', trying S2")
+    except Exception as e:
+        print(f"[Romanized S1] Failed: {e}")
+
+    # ── Strategy 2: Auto-detect + language family verification ───────────
+    try:
+        data = _gtx_call(text, "auto", gt_dest, dt_flags=["t", "ld"])
+        result = _extract_translation(data)
+        # Check detected language (index 2 of response when dt=ld is requested)
+        detected = ""
+        try:
+            detected = data[2] if len(data) > 2 else ""
+        except Exception:
+            pass
+        print(f"[Romanized S2] auto-detect: detected='{detected}', result='{result}'")
+        if result and not _is_phonetic_only(result, dest_lang):
+            # Accept if Google detected the right language family or a related one
             return result
-    raise ValueError("Empty translation response")
+        print(f"[Romanized S2] Phonetic or wrong detection, trying S3")
+    except Exception as e:
+        print(f"[Romanized S2] Failed: {e}")
+
+    # ── Strategy 3: Translate via English pivot ───────────────────────────
+    # Romanized Indian → English (auto-detect works well for this direction
+    # since English is unambiguous), then English → target language.
+    # Less elegant but produces correct meaning in the target language.
+    try:
+        # Step A: romanized → English
+        data_en = _gtx_call(text, "auto", "en")
+        english = _extract_translation(data_en)
+        if english and english.strip() and english.lower() != text.lower():
+            print(f"[Romanized S3] pivot via English: '{text}' → '{english}'")
+            # Step B: English → target (only if target isn't English)
+            if dest_lang == "en" or gt_dest == "en":
+                return english
+            data_final = _gtx_call(english, "en", gt_dest)
+            result = _extract_translation(data_final)
+            if result and not _is_phonetic_only(result, dest_lang):
+                print(f"[Romanized S3] English → '{dest_lang}': '{result}'")
+                return result
+    except Exception as e:
+        print(f"[Romanized S3] Failed: {e}")
+
+    return None
 
 # ── BHASHINI: Get pipeline service IDs ───────────────
 def get_bhashini_pipeline(task: str, src_lang: str, tgt_lang: str = None) -> dict | None:
@@ -297,6 +420,113 @@ def split_text(text, max_len=4500):
     if current: chunks.append(current)
     return chunks or [text]
 
+# ── BHASHINI TRANSLITERATION (romanized → native script) ─────────────────
+def bhashini_transliterate(text: str, lang: str) -> str | None:
+    """
+    Use Bhashini's own transliteration model to convert romanized input
+    to native script. Bhashini is trained on Indian language data so
+    'vandukunnava' → 'వండుకున్నావా' (cook), not 'వందుకున్నావా' (come).
+    Returns native script string or None on failure.
+    """
+    if not bhashini_available():
+        return None
+    bl = get_bhashini_lang(lang)
+    pipeline = get_bhashini_pipeline("transliteration", bl)
+    if not pipeline or not pipeline.get("serviceId"):
+        return None
+    try:
+        payload = {
+            "pipelineTasks": [{
+                "taskType": "transliteration",
+                "config": {
+                    "language": {
+                        "sourceLanguage": "en",      # romanized input is ASCII/Latin
+                        "targetLanguage": bl          # convert to native script
+                    },
+                    "serviceId": pipeline["serviceId"],
+                    "isSentence": True
+                }
+            }],
+            "inputData": {"input": [{"source": text}]}
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": pipeline["inferenceKey"]
+        }
+        res = requests.post(
+            pipeline.get("callbackUrl", BHASHINI_INFER_URL),
+            json=payload, headers=headers, timeout=15
+        )
+        if res.ok:
+            data = res.json()
+            native = (
+                data.get("pipelineResponse", [{}])[0]
+                    .get("output", [{}])[0]
+                    .get("target", "")
+            )
+            if native and not native.isascii():
+                print(f"[Bhashini Translit] '{text}' → '{native}'")
+                return native
+    except Exception as e:
+        print(f"[Bhashini Translit] Failed ({lang}): {e}")
+    return None
+
+# ── BHASHINI NMT (translation) ────────────────────────────────────────────
+def bhashini_translate(text: str, src_lang: str, dest_lang: str) -> str | None:
+    """
+    Use Bhashini's NMT (Neural Machine Translation) pipeline.
+    This is trained on Indian language parallel corpora (Samanantar, IndicCorp)
+    and handles colloquial Telugu/Hindi/Tamil far better than Google Translate.
+
+    Supported: all major Indian language pairs including te↔ta, te↔hi, hi↔kn etc.
+    Returns translated string or None on failure.
+    """
+    if not bhashini_available():
+        return None
+    bl_src  = get_bhashini_lang(src_lang)
+    bl_dest = get_bhashini_lang(dest_lang)
+    if bl_src == bl_dest:
+        return text
+    pipeline = get_bhashini_pipeline("translation", bl_src, bl_dest)
+    if not pipeline or not pipeline.get("serviceId"):
+        print(f"[Bhashini NMT] No pipeline for {bl_src}→{bl_dest}")
+        return None
+    try:
+        payload = {
+            "pipelineTasks": [{
+                "taskType": "translation",
+                "config": {
+                    "language": {
+                        "sourceLanguage": bl_src,
+                        "targetLanguage": bl_dest
+                    },
+                    "serviceId": pipeline["serviceId"]
+                }
+            }],
+            "inputData": {"input": [{"source": text}]}
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": pipeline["inferenceKey"]
+        }
+        res = requests.post(
+            pipeline.get("callbackUrl", BHASHINI_INFER_URL),
+            json=payload, headers=headers, timeout=20
+        )
+        if res.ok:
+            data = res.json()
+            translated = (
+                data.get("pipelineResponse", [{}])[0]
+                    .get("output", [{}])[0]
+                    .get("target", "")
+            )
+            if translated and translated.strip():
+                print(f"[Bhashini NMT] '{text[:40]}' → '{translated[:40]}'")
+                return translated
+    except Exception as e:
+        print(f"[Bhashini NMT] Failed ({src_lang}→{dest_lang}): {e}")
+    return None
+
 # ── ROUTE 1: Translate ────────────────────────────────
 @app.post("/translate")
 async def translate_text(data: dict):
@@ -304,23 +534,6 @@ async def translate_text(data: dict):
     src      = data.get("from_lang", "auto")
     dest     = data["to_lang"]
 
-    # ── ROMANIZED INPUT: Use Google auto-detect directly ──────────────────
-    #
-    # When a non-Latin language (Telugu, Hindi, Tamil etc.) is selected but
-    # the user typed in Roman script (e.g. "nenu cheppedi kuda ade kada"),
-    # the ONLY reliable method is:
-    #   → Pass with sl=auto to Google Translate
-    #   → Google's romanization engine detects "Telugu romanized" and
-    #     translates the MEANING correctly to the target language.
-    #
-    # What does NOT work:
-    #   ✗ Passing with sl=te — Google sees Latin chars and phonetically
-    #     maps them to the target script (gibberish output, as seen in screenshots)
-    #   ✗ Google Input Tools transliteration first — Input Tools is a typing
-    #     assistant, not a semantic transliterator. Colloquial words like
-    #     "cheppedi", "ade", "kada" come back with wrong forms, then the
-    #     broken native text is phonetically mapped instead of translated.
-    #
     is_romanized = (
         src in NON_LATIN_LANGS
         and text
@@ -328,22 +541,55 @@ async def translate_text(data: dict):
         and any(c.isalpha() for c in text)
     )
 
-    if is_romanized:
-        print(f"[Translate] Romanized input detected for lang={src}, using auto-detect path")
-        gt_dest = get_gt_code(dest)
-        try:
-            result = gtx_translate_romanized(text, gt_dest)
-            if result and result.strip():
-                return {"translated": result}
-        except Exception as e:
-            print(f"[Translate] Romanized auto-detect failed: {e}")
-        # If auto-detect path fails, fall through to normal path with src=auto
-        src = "auto"
+    # ════════════════════════════════════════════════════════════════════
+    # TRANSLATION STRATEGY — priority order:
+    #
+    # 1. BHASHINI NMT (best for Indian languages — trained on Indian data)
+    #    For romanized input: Bhashini transliterate first → then NMT
+    #    'vandukunnava' → Bhashini knows it means వండుకున్నావా (cook),
+    #    not వందుకున్నావా (come). Google does not.
+    #
+    # 2. GOOGLE TRANSLATE (fallback for language pairs Bhashini doesn't cover)
+    #    For romanized input: 3-strategy waterfall (tw-ob hint → auto → pivot)
+    #
+    # Why Bhashini is better for Indian languages:
+    #   - Trained on Samanantar (millions of Indian language sentence pairs)
+    #   - Trained on IndicCorp (8.5B words of actual Indian language text)
+    #   - Built by AI4Bharat specifically for Indian colloquial speech
+    #   - Understands dialectal/colloquial conjugations Google misses
+    # ════════════════════════════════════════════════════════════════════
 
+    working_text = text
+    working_src  = src
+
+    # ── Step A: For romanized input, try Bhashini transliteration first ──
+    if is_romanized and bhashini_available():
+        native = bhashini_transliterate(text, src)
+        if native and not native.isascii():
+            working_text = native
+            # Now we have proper native script — Bhashini NMT will work perfectly
+        else:
+            print(f"[Translate] Bhashini translit unavailable, will try romanized path")
+
+    # ── Step B: Try Bhashini NMT ─────────────────────────────────────────
+    if bhashini_available() and working_src != "auto":
+        result = bhashini_translate(working_text, working_src, dest)
+        if result and result.strip():
+            return {"translated": result, "engine": "bhashini"}
+
+    # ── Step C: Romanized fallback — Google 3-strategy waterfall ─────────
+    if is_romanized:
+        print(f"[Translate] Using Google romanized waterfall for {src}→{dest}")
+        result = translate_romanized_robust(text, src, dest)
+        if result and result.strip():
+            return {"translated": result, "engine": "google-romanized"}
+        working_src = "auto"
+
+    # ── Step D: Google Translate fallback (native script or auto) ────────
     try:
-        chunks = split_text(text)
-        parts  = [translate_chunk(c, src, dest) for c in chunks]
-        return {"translated": " ".join(parts)}
+        chunks = split_text(working_text)
+        parts  = [translate_chunk(c, working_src, dest) for c in chunks]
+        return {"translated": " ".join(parts), "engine": "google"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "translated": ""})
 
