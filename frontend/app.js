@@ -12,57 +12,91 @@ function pingBackend() {
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
-// ── LANGUAGE CONFIG ───────────────────────────────────
+// ── COMPREHENSIVE LANGUAGE CONFIG ─────────────────────
+// All Indian languages + English, covering all states/UTs
 const LANG_CONFIG = {
-  as:         { name: "Assamese",           nonLatin: true  },
-  bn:         { name: "Bengali (Bangla)",   nonLatin: true  },
-  brx:        { name: "Bodo",              nonLatin: true  },
-  doi:        { name: "Dogri",             nonLatin: true  },
-  gu:         { name: "Gujarati",          nonLatin: true  },
-  hi:         { name: "Hindi",             nonLatin: true  },
-  ks:         { name: "Kashmiri",          nonLatin: true  },
-  kn:         { name: "Kannada",           nonLatin: true  },
-  kok:        { name: "Konkani",           nonLatin: true  },
-  mai:        { name: "Maithili",          nonLatin: true  },
-  ml:         { name: "Malayalam",         nonLatin: true  },
-  "mni-Mtei": { name: "Manipuri (Meitei)", nonLatin: true  },
-  mr:         { name: "Marathi",           nonLatin: true  },
-  ne:         { name: "Nepali",            nonLatin: true  },
-  or:         { name: "Odia (Oriya)",      nonLatin: true  },
-  pa:         { name: "Punjabi",           nonLatin: true  },
-  ta:         { name: "Tamil",             nonLatin: true  },
-  te:         { name: "Telugu",            nonLatin: true  },
-  sat:        { name: "Santali",           nonLatin: true  },
-  sd:         { name: "Sindhi",            nonLatin: true  },
-  ur:         { name: "Urdu",              nonLatin: true  },
-  sa:         { name: "Sanskrit",          nonLatin: true  },
-  bho:        { name: "Bhojpuri",          nonLatin: true  },
-  mwr:        { name: "Marwari",           nonLatin: true  },
-  tcy:        { name: "Tulu",              nonLatin: true  },
-  lus:        { name: "Mizo (Lushai)",     nonLatin: false },
-  en:         { name: "English",           nonLatin: false }
+  // Major scheduled languages
+  as:         { name: "Assamese",              nonLatin: true,  gtCode: "as",    ttsCode: "bn",   speechCode: "bn-IN"  },
+  bn:         { name: "Bengali",               nonLatin: true,  gtCode: "bn",    ttsCode: "bn",   speechCode: "bn-IN"  },
+  brx:        { name: "Bodo",                  nonLatin: true,  gtCode: "brx",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  doi:        { name: "Dogri",                 nonLatin: true,  gtCode: "doi",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  gu:         { name: "Gujarati",              nonLatin: true,  gtCode: "gu",    ttsCode: "gu",   speechCode: "gu-IN"  },
+  hi:         { name: "Hindi",                 nonLatin: true,  gtCode: "hi",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  kn:         { name: "Kannada",               nonLatin: true,  gtCode: "kn",    ttsCode: "kn",   speechCode: "kn-IN"  },
+  ks:         { name: "Kashmiri",              nonLatin: true,  gtCode: "ks",    ttsCode: "ur",   speechCode: "ur-IN"  },
+  kok:        { name: "Konkani",               nonLatin: true,  gtCode: "kok",   ttsCode: "mr",   speechCode: "mr-IN"  },
+  mai:        { name: "Maithili",              nonLatin: true,  gtCode: "mai",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  ml:         { name: "Malayalam",             nonLatin: true,  gtCode: "ml",    ttsCode: "ml",   speechCode: "ml-IN"  },
+  "mni-Mtei": { name: "Manipuri (Meitei)",     nonLatin: true,  gtCode: "mni-Mtei", ttsCode: "bn", speechCode: "bn-IN" },
+  mr:         { name: "Marathi",               nonLatin: true,  gtCode: "mr",    ttsCode: "mr",   speechCode: "mr-IN"  },
+  ne:         { name: "Nepali",                nonLatin: true,  gtCode: "ne",    ttsCode: "ne",   speechCode: "ne-NP"  },
+  or:         { name: "Odia (Oriya)",          nonLatin: true,  gtCode: "or",    ttsCode: "hi",   speechCode: "or-IN"  },
+  pa:         { name: "Punjabi",               nonLatin: true,  gtCode: "pa",    ttsCode: "pa",   speechCode: "pa-IN"  },
+  sa:         { name: "Sanskrit",              nonLatin: true,  gtCode: "sa",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  sat:        { name: "Santali",               nonLatin: true,  gtCode: "sat",   ttsCode: "bn",   speechCode: "bn-IN"  },
+  sd:         { name: "Sindhi",                nonLatin: true,  gtCode: "sd",    ttsCode: "ur",   speechCode: "ur-IN"  },
+  ta:         { name: "Tamil",                 nonLatin: true,  gtCode: "ta",    ttsCode: "ta",   speechCode: "ta-IN"  },
+  te:         { name: "Telugu",                nonLatin: true,  gtCode: "te",    ttsCode: "te",   speechCode: "te-IN"  },
+  ur:         { name: "Urdu",                  nonLatin: true,  gtCode: "ur",    ttsCode: "ur",   speechCode: "ur-IN"  },
+  // Additional regional languages
+  bho:        { name: "Bhojpuri",              nonLatin: true,  gtCode: "bho",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  mwr:        { name: "Marwari",               nonLatin: true,  gtCode: "mwr",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  tcy:        { name: "Tulu",                  nonLatin: true,  gtCode: "tcy",   ttsCode: "kn",   speechCode: "kn-IN"  },
+  lus:        { name: "Mizo (Lushai)",         nonLatin: false, gtCode: "lus",   ttsCode: "en",   speechCode: "en-IN"  },
+  // State languages with Google Translate support
+  awa:        { name: "Awadhi",                nonLatin: true,  gtCode: "hi",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  mag:        { name: "Magahi",                nonLatin: true,  gtCode: "hi",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  hne:        { name: "Chhattisgarhi",         nonLatin: true,  gtCode: "hi",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  bgc:        { name: "Haryanvi",              nonLatin: true,  gtCode: "hi",    ttsCode: "hi",   speechCode: "hi-IN"  },
+  raj:        { name: "Rajasthani (Marwari)",  nonLatin: true,  gtCode: "mwr",   ttsCode: "hi",   speechCode: "hi-IN"  },
+  gom:        { name: "Goan Konkani",          nonLatin: true,  gtCode: "gom",   ttsCode: "mr",   speechCode: "mr-IN"  },
+  // Tribal / smaller languages
+  kha:        { name: "Khasi",                 nonLatin: false, gtCode: "kha",   ttsCode: "en",   speechCode: "en-IN"  },
+  lep:        { name: "Lepcha",                nonLatin: true,  gtCode: "ne",    ttsCode: "ne",   speechCode: "ne-NP"  },
+  // English
+  en:         { name: "English",               nonLatin: false, gtCode: "en",    ttsCode: "en",   speechCode: "en-IN"  },
 };
 
-// Languages that MUST go to backend (not supported by browser gtx directly)
+// Languages that MUST go to backend (not directly supported by browser gtx)
 const BACKEND_ONLY_LANGS = new Set([
   "ks", "brx", "sat", "mwr", "tcy", "mni-Mtei",
-  "doi", "kok", "mai", "as", "or", "sa", "bho", "lus"
+  "doi", "kok", "mai", "as", "or", "sa", "bho", "lus",
+  "awa", "mag", "hne", "bgc", "raj", "gom", "kha", "lep"
 ]);
 
-// Languages where audio uses closest-voice fallback
-const AUDIO_FALLBACK_LANGS = {
-  or: "Odia", as: "Assamese", sa: "Sanskrit", sd: "Sindhi", ks: "Kashmiri",
-  mai: "Maithili", doi: "Dogri", brx: "Bodo", kok: "Konkani",
-  "mni-Mtei": "Manipuri", sat: "Santali", bho: "Bhojpuri",
-  mwr: "Marwari", tcy: "Tulu", lus: "Mizo"
-};
-
+// Language display names
 const LANG_NAMES = Object.fromEntries(Object.entries(LANG_CONFIG).map(([k, v]) => [k, v.name]));
 
+// ── LANGUAGE GROUPS FOR SELECT ────────────────────────
+const LANG_GROUPS = [
+  {
+    label: "Major Indian Languages",
+    langs: ["te","ta","hi","kn","ml","mr","bn","gu","pa","ur","or","as","ne","sd","mai","bho","sa"]
+  },
+  {
+    label: "Scheduled Languages",
+    langs: ["kok","gom","mwr","tcy","lus","ks","doi","brx","sat","mni-Mtei"]
+  },
+  {
+    label: "Regional Languages",
+    langs: ["awa","mag","hne","bgc","raj","kha","lep"]
+  },
+  {
+    label: "English",
+    langs: ["en"]
+  }
+];
+
 function buildLangOptions(selectedVal = "en") {
-  return Object.entries(LANG_CONFIG).map(([code, cfg]) =>
-    `<option value="${code}"${code === selectedVal ? " selected" : ""}>${cfg.name}</option>`
-  ).join("");
+  let html = "";
+  LANG_GROUPS.forEach(group => {
+    const opts = group.langs
+      .filter(code => LANG_CONFIG[code])
+      .map(code => `<option value="${code}"${code === selectedVal ? " selected" : ""}>${LANG_CONFIG[code].name}</option>`)
+      .join("");
+    if (opts) html += `<optgroup label="${group.label}">${opts}</optgroup>`;
+  });
+  return html;
 }
 
 function initLanguageSelects() {
@@ -86,7 +120,8 @@ function isLikelyRomanized(text, fromLang) {
 }
 
 async function transliterateToNative(text, targetLang) {
-  const url = `https://inputtools.google.com/request?text=${encodeURIComponent(text)}&itc=${targetLang}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage`;
+  const gtCode = LANG_CONFIG[targetLang]?.gtCode || targetLang;
+  const url = `https://inputtools.google.com/request?text=${encodeURIComponent(text)}&itc=${gtCode}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage`;
   try {
     const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(6000) });
     if (res.ok) {
@@ -113,10 +148,15 @@ async function translateText(text, fromLang, toLang) {
   const q = text.trim();
   if (fromLang === toLang) return q;
 
+  // Use the Google Translate codes
+  const srcGt = LANG_CONFIG[fromLang]?.gtCode || fromLang;
+  const destGt = LANG_CONFIG[toLang]?.gtCode || toLang;
+
   const needsBackend = BACKEND_ONLY_LANGS.has(fromLang) || BACKEND_ONLY_LANGS.has(toLang);
 
   if (!needsBackend) {
-    const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(q)}`;
+    // Try direct Google Translate (gtx)
+    const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${srcGt}&tl=${destGt}&dt=t&q=${encodeURIComponent(q)}`;
     try {
       const res = await fetch(gtUrl, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
@@ -127,6 +167,7 @@ async function translateText(text, fromLang, toLang) {
         }
       }
     } catch (e) {}
+    // Try via allorigins proxy
     try {
       const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(gtUrl)}`, { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
@@ -147,7 +188,7 @@ async function translateText(text, fromLang, toLang) {
     const res = await fetch(`${API_URL}/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: q, from_lang: fromLang, to_lang: toLang }),
+      body: JSON.stringify({ text: q, from_lang: srcGt, to_lang: destGt }),
       signal: AbortSignal.timeout(30000)
     });
     if (res.ok) {
@@ -162,16 +203,31 @@ async function translateText(text, fromLang, toLang) {
     console.warn(`Backend translate failed (${fromLang}→${toLang}):`, e.message);
   }
 
+  // Last resort: try auto-detect source via backend
+  try {
+    const res = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: q, from_lang: "auto", to_lang: destGt }),
+      signal: AbortSignal.timeout(30000)
+    });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.translated && d.translated.trim()) return d.translated;
+    }
+  } catch (e) {}
+
   throw new Error(`Translation failed for ${LANG_NAMES[fromLang] || fromLang} → ${LANG_NAMES[toLang] || toLang}. Please check your connection.`);
 }
 
 // ── AUDIO ─────────────────────────────────────────────
 async function fetchAudio(text, lang) {
+  const ttsLang = LANG_CONFIG[lang]?.ttsCode || lang;
   try {
     const res = await fetch(`${API_URL}/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, lang }),
+      body: JSON.stringify({ text, lang: ttsLang }),
       signal: AbortSignal.timeout(25000)
     });
     if (!res.ok) { console.warn(`Audio fetch failed for lang=${lang}: HTTP ${res.status}`); return null; }
@@ -308,8 +364,13 @@ function toggleTheme() {
   isDarkMode = !isDarkMode;
   document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
   const icon = document.getElementById('themeIcon');
-  if (isDarkMode) icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
-  else icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  if (isDarkMode) {
+    icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+  } else {
+    icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  }
+  // Persist theme
+  localStorage.setItem('vaani_theme', isDarkMode ? 'dark' : 'light');
 }
 
 // ── INPUT MODE ────────────────────────────────────────
@@ -369,6 +430,9 @@ function closeMenu() {
   document.body.style.overflow = "";
 }
 
+// ── PAGE NAVIGATION WITH HASH PERSISTENCE ────────────
+const VALID_PAGES = ['Home', 'Single', 'Conversation', 'Travel', 'Image', 'History', 'Favourites'];
+
 function navigateTo(page) {
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.querySelectorAll(".menu-item").forEach(m => m.classList.remove("active"));
@@ -381,16 +445,13 @@ function navigateTo(page) {
   if (page === "Travel") loadTravelPhrases();
   if (page === "History") loadHistory();
   if (page === "Favourites") loadFavourites();
-  // ── FIX 1: Persist page in URL hash so refresh restores position ──
+  // Persist page in URL hash
   history.replaceState(null, '', '#' + page);
 }
 
-// ── FIX 1: Restore page from URL hash on load/refresh ─
 function restorePageFromHash() {
   const hash = window.location.hash.replace('#', '');
-  const validPages = ['Home', 'Single', 'Conversation', 'Travel', 'Image', 'History', 'Favourites'];
-  if (hash && validPages.includes(hash)) {
-    // Don't use navigateTo here to avoid pushing another hash; just show the page directly
+  if (hash && VALID_PAGES.includes(hash)) {
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     document.querySelectorAll(".menu-item").forEach(m => m.classList.remove("active"));
     const pageEl = document.getElementById("page" + hash);
@@ -401,26 +462,25 @@ function restorePageFromHash() {
     if (hash === "History") loadHistory();
     if (hash === "Favourites") loadFavourites();
   } else {
-    navigateTo('Home');
+    // Default to Home if no hash
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".menu-item").forEach(m => m.classList.remove("active"));
+    const homeEl = document.getElementById("pageHome");
+    if (homeEl) homeEl.classList.add("active");
+    const homeMenu = document.getElementById("menuHome");
+    if (homeMenu) homeMenu.classList.add("active");
+    history.replaceState(null, '', '#Home');
   }
 }
 
-// ── SPEECH RECOGNITION ───────────────────────────────
-// FIX 2: Map language codes to BCP-47 dialect tags for better accuracy
-const SPEECH_LANG_MAP = {
-  te: 'te-IN', ta: 'ta-IN', hi: 'hi-IN', kn: 'kn-IN',
-  ml: 'ml-IN', mr: 'mr-IN', bn: 'bn-IN', gu: 'gu-IN',
-  pa: 'pa-IN', ur: 'ur-IN', or: 'or-IN', as: 'as-IN',
-  ne: 'ne-NP', sa: 'sa-IN', sd: 'sd-IN',
-  // Fallbacks for languages without native speech recognition support
-  mai: 'hi-IN', doi: 'hi-IN', kok: 'mr-IN', bho: 'hi-IN',
-  mwr: 'hi-IN', brx: 'as-IN', sat: 'bn-IN',
-  ks: 'ur-IN', "mni-Mtei": 'bn-IN', tcy: 'kn-IN',
-  lus: 'en-IN', en: 'en-IN'
-};
+// Handle browser back/forward navigation
+window.addEventListener('popstate', () => {
+  restorePageFromHash();
+});
 
+// ── SPEECH RECOGNITION ───────────────────────────────
 function getSpeechLang(langCode) {
-  return SPEECH_LANG_MAP[langCode] || (langCode + '-IN');
+  return LANG_CONFIG[langCode]?.speechCode || (langCode + '-IN');
 }
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -430,7 +490,15 @@ let silenceTimer = null;
 let finalTranscript = '';
 let interimTranscript = '';
 
-// FIX 2: continuous=true + interimResults=true for complete, accurate speech capture
+const SILENCE_TIMEOUT_MS = 2500;
+
+function resetSilenceTimer() {
+  if (silenceTimer) clearTimeout(silenceTimer);
+  silenceTimer = setTimeout(() => {
+    if (recognition && recognitionActive) recognition.stop();
+  }, SILENCE_TIMEOUT_MS);
+}
+
 try {
   recognition = new SpeechRecognition();
   recognition.continuous = true;
@@ -440,72 +508,66 @@ try {
   console.warn("SpeechRecognition not supported:", e);
 }
 
-// FIX 2: Silence detection — stop only after 2.5s of no new speech
-const SILENCE_TIMEOUT_MS = 2500;
-
-function resetSilenceTimer() {
-  if (silenceTimer) clearTimeout(silenceTimer);
-  silenceTimer = setTimeout(() => {
-    if (recognition && recognitionActive) {
-      recognition.stop();
-    }
-  }, SILENCE_TIMEOUT_MS);
-}
-
-// ── FIX 3: Language change handlers ──────────────────
-document.getElementById("toLang").addEventListener("change", async () => {
-  if (lastSpokenText) {
-    stopAllAudio();
-    window._singleAudioBlob = null;
-    window._singleTranslatedText = null;
-    document.getElementById("translatedText").textContent = "Translating...";
-    document.getElementById("actionBtns").style.display = "none";
-    // Use stored lastFromLang — don't read fromLang select again (it could be different)
-    await translateAndSpeak(lastSpokenText, lastFromLang);
-  }
-});
-
-document.getElementById("fromLang").addEventListener("change", () => {
-  // FIX 3: When source language changes, the old speech belongs to a different language.
-  // Clear everything — user must speak again in the new language.
-  stopAllAudio();
-  window._singleAudioBlob = null;
-  window._singleTranslatedText = null;
-  lastSpokenText = "";
-  lastFromLang = "";
-  document.getElementById("originalText").textContent = "—";
-  document.getElementById("translatedText").textContent = "—";
-  document.getElementById("resultsSection").style.display = "none";
-  document.getElementById("micStatus").textContent = "Tap to speak";
-  const old = document.getElementById('timeline_single');
-  if (old) old.remove();
-});
-
-document.getElementById("imgToLang").addEventListener("change", async () => {
-  const el = document.getElementById('imgExtractedText');
-  const extracted = el.dataset.originalText || el.textContent;
-  if (extracted && extracted !== "—" && document.getElementById('imgResults').style.display !== 'none') {
-    stopAllAudio();
-    imgAudioBlob = null;
-    document.getElementById('imgTranslatedText').textContent = "Translating...";
-    const fromLang = document.getElementById('imgFromLang').value;
-    const toLang = document.getElementById('imgToLang').value;
-    try {
-      const translated = await translateText(extracted, fromLang, toLang);
-      const tEl = document.getElementById('imgTranslatedText');
-      tEl.textContent = translated;
-      delete tEl.dataset.originalText;
-      window._imgTranslatedText = translated;
-      imgAudioBlob = await fetchAudio(translated, toLang);
-      const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
-      if (playBtn && imgAudioBlob) {
-        const old = document.getElementById('timeline_img');
-        if (old) old.remove();
-        createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
+// ── LANGUAGE CHANGE HANDLERS ──────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const toLangEl = document.getElementById("toLang");
+  const fromLangEl = document.getElementById("fromLang");
+  if (toLangEl) {
+    toLangEl.addEventListener("change", async () => {
+      if (lastSpokenText) {
+        stopAllAudio();
+        window._singleAudioBlob = null;
+        window._singleTranslatedText = null;
+        document.getElementById("translatedText").textContent = "Translating...";
+        document.getElementById("actionBtns").style.display = "none";
+        await translateAndSpeak(lastSpokenText, lastFromLang);
       }
-    } catch (e) {
-      document.getElementById('imgTranslatedText').textContent = "Translation error: " + e.message;
-    }
+    });
+  }
+  if (fromLangEl) {
+    fromLangEl.addEventListener("change", () => {
+      stopAllAudio();
+      window._singleAudioBlob = null;
+      window._singleTranslatedText = null;
+      lastSpokenText = "";
+      lastFromLang = "";
+      document.getElementById("originalText").textContent = "—";
+      document.getElementById("translatedText").textContent = "—";
+      document.getElementById("resultsSection").style.display = "none";
+      document.getElementById("micStatus").textContent = "Tap to speak";
+      const old = document.getElementById('timeline_single');
+      if (old) old.remove();
+    });
+  }
+  const imgToLangEl = document.getElementById("imgToLang");
+  if (imgToLangEl) {
+    imgToLangEl.addEventListener("change", async () => {
+      const el = document.getElementById('imgExtractedText');
+      const extracted = el.dataset.originalText || el.textContent;
+      if (extracted && extracted !== "—" && document.getElementById('imgResults').style.display !== 'none') {
+        stopAllAudio();
+        imgAudioBlob = null;
+        document.getElementById('imgTranslatedText').textContent = "Translating...";
+        const fromLang = document.getElementById('imgFromLang').value;
+        const toLang = document.getElementById('imgToLang').value;
+        try {
+          const translated = await translateText(extracted, fromLang, toLang);
+          const tEl = document.getElementById('imgTranslatedText');
+          tEl.textContent = translated;
+          delete tEl.dataset.originalText;
+          window._imgTranslatedText = translated;
+          imgAudioBlob = await fetchAudio(translated, toLang);
+          const playBtn = document.querySelector('#imgActionBtns .ac-btn.ac-primary');
+          if (playBtn && imgAudioBlob) {
+            const old = document.getElementById('timeline_img');
+            if (old) old.remove();
+            createAudioPlayer(imgAudioBlob, playBtn, translated, 'img', 'imgTranslatedText');
+          }
+        } catch (e) {
+          document.getElementById('imgTranslatedText').textContent = "Translation error: " + e.message;
+        }
+      }
+    });
   }
 });
 
@@ -568,17 +630,13 @@ function startConvListening(person) {
 }
 
 if (recognition) {
-  // FIX 2: Handle interim + final results; show live transcript; pick best alternative
   recognition.onresult = (event) => {
-    resetSilenceTimer(); // Reset silence timer on each new speech chunk
-
+    resetSilenceTimer();
     let newFinal = '';
     let newInterim = '';
-
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
       if (result.isFinal) {
-        // Pick highest-confidence alternative
         let bestAlt = result[0];
         for (let j = 1; j < result.length; j++) {
           if (result[j].confidence > bestAlt.confidence) bestAlt = result[j];
@@ -588,11 +646,9 @@ if (recognition) {
         newInterim += result[0].transcript;
       }
     }
-
     if (newFinal) finalTranscript += newFinal;
     interimTranscript = newInterim;
 
-    // Show live transcript so user sees what's being captured
     const displayText = (finalTranscript + (interimTranscript ? ' ' + interimTranscript : '')).trim();
     if (displayText) {
       if (currentConvSpeaker) {
@@ -607,7 +663,6 @@ if (recognition) {
   recognition.onend = async () => {
     if (silenceTimer) clearTimeout(silenceTimer);
     recognitionActive = false;
-
     const spokenText = (finalTranscript || interimTranscript).trim();
 
     if (!spokenText) {
@@ -649,7 +704,6 @@ if (recognition) {
     if (silenceTimer) clearTimeout(silenceTimer);
     recognitionActive = false;
     console.warn("Speech recognition error:", event.error);
-
     let errMsg = "Error. Tap to try again.";
     if (event.error === 'no-speech') errMsg = "No speech heard. Tap to try again.";
     else if (event.error === 'network') errMsg = "Network error. Check connection.";
@@ -670,7 +724,6 @@ if (recognition) {
 async function translateAndSpeak(text, fromLang) {
   const toLang = document.getElementById("toLang").value;
   let translated = null;
-
   try {
     translated = await translateText(text, fromLang, toLang);
     window._singleTranslatedText = translated;
@@ -679,9 +732,10 @@ async function translateAndSpeak(text, fromLang) {
     delete textEl.dataset.originalText;
     document.getElementById("actionBtns").style.display = "flex";
 
-    const fallbackName = AUDIO_FALLBACK_LANGS[toLang];
-    document.getElementById("micStatus").textContent = fallbackName
-      ? `Loading audio (closest voice for ${fallbackName})...`
+    const ttsLang = LANG_CONFIG[toLang]?.ttsCode || toLang;
+    const fallbackNeeded = ttsLang !== toLang;
+    document.getElementById("micStatus").textContent = fallbackNeeded
+      ? `Loading audio (voice for ${LANG_NAMES[toLang]})...`
       : "Loading audio...";
 
     const blob = await fetchAudio(translated, toLang);
@@ -716,12 +770,8 @@ function playAudio() {
     if (text && toLang) {
       showToast("Generating audio...");
       fetchAudio(text, toLang).then(b => {
-        if (b) {
-          window._singleAudioBlob = b;
-          createAudioPlayer(b, btn, text, 'single', 'translatedText');
-        } else {
-          showToast(`Audio not available for ${LANG_NAMES[toLang] || toLang}`);
-        }
+        if (b) { window._singleAudioBlob = b; createAudioPlayer(b, btn, text, 'single', 'translatedText'); }
+        else showToast(`Audio not available for ${LANG_NAMES[toLang] || toLang}`);
       });
     }
     return;
@@ -777,7 +827,6 @@ function playAudioB() {
 function swapLanguages() {
   const f = document.getElementById("fromLang"), t = document.getElementById("toLang");
   [f.value, t.value] = [t.value, f.value];
-  // FIX 3: Clear all state on swap — don't re-translate stale speech
   lastSpokenText = "";
   lastFromLang = "";
   stopAllAudio();
@@ -913,7 +962,13 @@ async function translateImage() {
   imgAudioBlob = null;
   let translated = null;
   try {
-    const tessLangs = { en:'eng', hi:'hin', te:'tel', ta:'tam', kn:'kan', ml:'mal', bn:'ben', mr:'mar', gu:'guj', pa:'pan', ur:'urd', or:'ori', as:'asm', ne:'nep', sa:'san', sd:'snd' };
+    const tessLangs = {
+      en:'eng', hi:'hin', te:'tel', ta:'tam', kn:'kan', ml:'mal', bn:'ben',
+      mr:'mar', gu:'guj', pa:'pan', ur:'urd', or:'ori', as:'asm', ne:'nep',
+      sa:'san', sd:'snd', mai:'hin', doi:'hin', kok:'mar', bho:'hin',
+      mwr:'hin', tcy:'kan', ks:'urd', sat:'ben', "mni-Mtei":'ben',
+      lus:'eng', brx:'hin', awa:'hin', mag:'hin', hne:'hin'
+    };
     const ocrLang = tessLangs[fromLang] || 'eng';
     statusEl.textContent = 'Loading OCR engine...';
     btn.textContent = 'Loading OCR...';
@@ -974,12 +1029,8 @@ function playImgAudio() {
       const toLang = document.getElementById('imgToLang').value;
       showToast("Generating audio...");
       fetchAudio(window._imgTranslatedText, toLang).then(b => {
-        if (b) {
-          imgAudioBlob = b;
-          if (btn) toggleAudio(b, btn, window._imgTranslatedText, 'img', 'imgTranslatedText');
-        } else {
-          showToast(`Audio unavailable for ${LANG_NAMES[toLang] || toLang}`);
-        }
+        if (b) { imgAudioBlob = b; if (btn) toggleAudio(b, btn, window._imgTranslatedText, 'img', 'imgTranslatedText'); }
+        else showToast(`Audio unavailable for ${LANG_NAMES[toLang] || toLang}`);
       });
     }
     return;
@@ -1004,7 +1055,16 @@ window.saveSingleToFavourites = function () {
 
 // ── INIT ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Restore theme
+  const savedTheme = localStorage.getItem('vaani_theme');
+  if (savedTheme === 'light') {
+    isDarkMode = false;
+    document.documentElement.setAttribute('data-theme', 'light');
+    const icon = document.getElementById('themeIcon');
+    if (icon) icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  }
+  // Init language selects with all languages
   initLanguageSelects();
-  // FIX 1: Restore page from URL hash on load/refresh
+  // Restore page from URL hash — this is the KEY fix for refresh navigation
   restorePageFromHash();
 });
