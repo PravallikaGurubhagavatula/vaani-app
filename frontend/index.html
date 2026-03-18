@@ -8,7 +8,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="style.css?v=1773833364">
+  <link rel="stylesheet" href="style.css?v=1773833984">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#7c3aed">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -383,54 +383,68 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="firebase.js?v=1773833364"></script>
+  <script type="module" src="firebase.js?v=1773833984"></script>
   <script>window.VAANI_VERSION="1773833364";</script>
-  <script src="app.js?v=1773833364"></script>
+  <script src="app.js?v=1773833984"></script>
   <script>
-    // ── SERVICE WORKER + AUTO-UPDATE ──────────────────────────────────────
+    // ── AUTO-UPDATING SERVICE WORKER ─────────────────────────────────────
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', async () => {
-        try {
-          const reg = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+      window.addEventListener('load', () => {
 
-          // Check for updates every 60 seconds while app is open
-          setInterval(() => reg.update(), 60000);
+        // Register with updateViaCache:none so browser always fetches fresh sw.js
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+          .then(reg => {
+            console.log('[Vaani] SW registered:', reg.scope);
 
-          // When a new SW is waiting (update found), reload immediately
-          reg.addEventListener('updatefound', () => {
-            const newWorker = reg.installing;
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                // New version is ready — tell SW to take over, then reload
-                newWorker.postMessage('SKIP_WAITING');
-              }
+            // Poll for updates every 30 seconds (catches new deployments quickly)
+            setInterval(() => reg.update(), 30000);
+
+            // When a new SW finishes installing, tell it to skip waiting
+            reg.addEventListener('updatefound', () => {
+              const newSW = reg.installing;
+              if (!newSW) return;
+              newSW.addEventListener('statechange', () => {
+                if (newSW.state === 'installed') {
+                  // New SW is ready — activate it immediately
+                  newSW.postMessage('SKIP_WAITING');
+                }
+              });
             });
-          });
+          })
+          .catch(err => console.warn('[Vaani] SW failed:', err));
 
-          // When SW takes control, reload to get fresh files
-          let refreshing = false;
-          navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (!refreshing) { refreshing = true; window.location.reload(); }
-          });
+        // When SW sends SW_UPDATED message OR when controller changes → reload page
+        navigator.serviceWorker.addEventListener('message', event => {
+          if (event.data?.type === 'SW_UPDATED') {
+            console.log('[Vaani] New version', event.data.version, '— reloading');
+            window.location.reload(true);
+          }
+        });
 
-          console.log('[Vaani] Service worker registered ✓');
-        } catch (e) {
-          console.warn('[Vaani] SW registration failed:', e);
-        }
+        let reloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!reloading) { reloading = true; window.location.reload(true); }
+        });
       });
     }
 
-    // ── PWA INSTALL PROMPT ────────────────────────────────────────────────
+    // ── PWA INSTALL ───────────────────────────────────────────────────────
     let deferredPrompt;
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault(); deferredPrompt = e;
-      document.getElementById('installBtn').style.display = 'flex';
+      const btn = document.getElementById('installBtn');
+      if (btn) btn.style.display = 'flex';
     });
     window.addEventListener('appinstalled', () => {
-      document.getElementById('installBtn').style.display = 'none'; deferredPrompt = null;
+      const btn = document.getElementById('installBtn');
+      if (btn) btn.style.display = 'none';
+      deferredPrompt = null;
     });
     window.installApp = function() {
-      if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.then(() => { deferredPrompt = null; }); }
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+      }
     };
   </script>
 </body>
