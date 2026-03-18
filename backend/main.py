@@ -267,6 +267,16 @@ async def translate_text(data: dict):
     text = data["text"]
     src  = data.get("from_lang", "auto")
     dest = data["to_lang"]
+    # If text is pure ASCII but src language uses non-Latin script,
+    # the transliteration on the frontend failed — use auto-detect
+    # so Google correctly identifies romanized Telugu/Hindi/Tamil etc.
+    NON_LATIN = {
+        "te","ta","hi","kn","ml","mr","bn","gu","pa","ur","or","as",
+        "ne","sa","sd","mai","doi","kok","gom","bho","mwr","tcy","ks",
+        "sat","mni-Mtei","brx","lus","awa","mag","hne","bgc","raj","kha","lep"
+    }
+    if src in NON_LATIN and text and text.isascii():
+        src = "auto"
     try:
         chunks = split_text(text)
         parts  = [translate_chunk(c, src, dest) for c in chunks]
