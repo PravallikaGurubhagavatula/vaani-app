@@ -19,33 +19,142 @@ app.add_middleware(
 # ── gTTS supported codes ──────────────────────────────
 GTTS_SUPPORTED = set(tts_langs().keys())
 
-# ── deep_translator code mapping ─────────────────────
-# Some codes differ between what we use internally and what deep_translator expects
-DEEP_TRANS_MAP = {
-    "kok": "gom",        # Konkani → deep_translator uses 'gom'
-    "mni-Mtei": "mni-Mtei",  # Manipuri — works in deep_translator
-}
-
-# Languages NOT supported by deep_translator at all — use direct gtx requests
-# (These are supported by Google Translate web but not by deep_translator library)
-DEEP_TRANS_UNSUPPORTED = {"ks", "brx", "sat", "mwr", "tcy"}
-
-# ── Audio fallback map ────────────────────────────────
-AUDIO_FALLBACK = {
-    "or": "hi", "as": "bn", "sa": "hi", "sd": "ur", "ks": "ur",
-    "mai": "hi", "doi": "hi", "brx": "hi", "kok": "mr", "gom": "mr",
-    "mni-Mtei": "bn", "sat": "en", "bho": "hi", "mwr": "hi",
-    "tcy": "kn", "lus": "en",
+# ── Comprehensive TTS fallback map ───────────────────
+# Maps language code → best available TTS voice
+TTS_FALLBACK = {
+    # Odia → Hindi (closest family)
+    "or": "hi",
+    # Assamese → Bengali (same script, close family)
+    "as": "bn",
+    # Sanskrit → Hindi (Devanagari, close)
+    "sa": "hi",
+    # Sindhi → Urdu (Arabic script, similar)
+    "sd": "ur",
+    # Kashmiri → Urdu
+    "ks": "ur",
+    # Maithili → Hindi
+    "mai": "hi",
+    # Dogri → Hindi
+    "doi": "hi",
+    # Bodo → Hindi (Devanagari script)
+    "brx": "hi",
+    # Konkani → Marathi (same script, close)
+    "kok": "mr",
+    "gom": "mr",
+    # Manipuri → Bengali
+    "mni-Mtei": "bn",
+    # Santali → Bengali
+    "sat": "bn",
+    # Bhojpuri → Hindi
+    "bho": "hi",
+    # Marwari → Hindi
+    "mwr": "hi",
+    # Tulu → Kannada (same script region)
+    "tcy": "kn",
+    # Mizo → English
+    "lus": "en",
+    # Awadhi → Hindi
+    "awa": "hi",
+    # Magahi → Hindi
+    "mag": "hi",
+    # Chhattisgarhi → Hindi
+    "hne": "hi",
+    # Haryanvi → Hindi
+    "bgc": "hi",
+    # Rajasthani → Hindi
+    "raj": "hi",
+    # Khasi → English
+    "kha": "en",
+    # Lepcha → Nepali
+    "lep": "ne",
+    # Kokborok → Bengali
+    "trp": "bn",
+    # Lambadi → Telugu
+    "lmn": "te",
+    # Gondi → Hindi
+    "gon": "hi",
+    # Halbi → Hindi
+    "hlb": "hi",
+    # Kurukh → Hindi
+    "kru": "hi",
+    # Ho → Bengali
+    "hoc": "bn",
+    # Mundari → Bengali
+    "unr": "bn",
+    # Garhwali → Hindi
+    "gbm": "hi",
+    # Kumaoni → Hindi
+    "kfy": "hi",
+    # Angika → Hindi
+    "anp": "hi",
+    # Bundeli → Hindi
+    "bns": "hi",
+    # Bhili → Gujarati
+    "bhb": "gu",
+    # Kutchi → Gujarati
+    "kfr": "gu",
+    # Pahari → Hindi
+    "him": "hi",
+    # Kangri → Hindi
+    "xnr": "hi",
+    # Karbi → Assamese
+    "ajz": "as",
+    # Mishing → Assamese
+    "mrm": "as",
 }
 
 def get_tts_lang(lang_code: str) -> str:
+    """Get best available TTS language code."""
     if lang_code in GTTS_SUPPORTED:
         return lang_code
-    return AUDIO_FALLBACK.get(lang_code, "en")
+    # Try fallback
+    fallback = TTS_FALLBACK.get(lang_code)
+    if fallback and fallback in GTTS_SUPPORTED:
+        return fallback
+    return "en"
 
-# ── Direct Google Translate (bypasses deep_translator) ──
-# Uses the same gtx endpoint as the frontend, but from server side
-# This works for ALL languages Google Translate supports
+# ── Google Translate code mapping ────────────────────
+# Internal code → Google Translate API code
+GT_CODE_MAP = {
+    "kok": "gom",        # Konkani
+    "awa": "hi",         # Awadhi → use Hindi
+    "mag": "hi",         # Magahi → use Hindi
+    "hne": "hi",         # Chhattisgarhi → use Hindi
+    "bgc": "hi",         # Haryanvi → use Hindi
+    "raj": "mwr",        # Rajasthani → Marwari code
+    "lep": "ne",         # Lepcha → Nepali
+    "kha": "kha",        # Khasi (supported)
+    "gon": "hi",         # Gondi → Hindi
+    "hlb": "hi",         # Halbi → Hindi
+    "kru": "hi",         # Kurukh → Hindi
+    "hoc": "bn",         # Ho → Bengali
+    "unr": "bn",         # Mundari → Bengali
+    "gbm": "hi",         # Garhwali → Hindi
+    "kfy": "hi",         # Kumaoni → Hindi
+    "anp": "hi",         # Angika → Hindi
+    "bns": "hi",         # Bundeli → Hindi
+    "bhb": "gu",         # Bhili → Gujarati
+    "kfr": "gu",         # Kutchi → Gujarati
+    "him": "hi",         # Pahari → Hindi
+    "xnr": "hi",         # Kangri → Hindi
+    "ajz": "as",         # Karbi → Assamese
+    "mrm": "as",         # Mishing → Assamese
+    "trp": "bn",         # Kokborok → Bengali
+    "lmn": "te",         # Lambadi → Telugu
+}
+
+# Languages that deep_translator doesn't support well — use direct GTX
+DEEP_TRANS_UNSUPPORTED = {
+    "ks", "brx", "sat", "mwr", "tcy", "lus", "awa", "mag", "hne",
+    "bgc", "raj", "kha", "lep", "gon", "hlb", "kru", "hoc", "unr",
+    "gbm", "kfy", "anp", "bns", "bhb", "kfr", "him", "xnr", "ajz",
+    "mrm", "trp", "lmn"
+}
+
+def get_gt_code(lang: str) -> str:
+    """Map internal language code to Google Translate API code."""
+    return GT_CODE_MAP.get(lang, lang)
+
 def gtx_translate(text: str, src: str, dest: str) -> str:
     """Call Google Translate gtx API directly via requests."""
     url = "https://translate.googleapis.com/translate_a/single"
@@ -57,7 +166,7 @@ def gtx_translate(text: str, src: str, dest: str) -> str:
         "q": text
     }
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     resp = requests.get(url, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
@@ -68,16 +177,16 @@ def gtx_translate(text: str, src: str, dest: str) -> str:
 
 def translate_chunk(text: str, src: str, dest: str) -> str:
     """Translate a single chunk with best available method."""
-    # Map internal codes to deep_translator codes
-    dt_src  = DEEP_TRANS_MAP.get(src, src)
-    dt_dest = DEEP_TRANS_MAP.get(dest, dest)
+    # Map to Google Translate codes
+    gt_src = get_gt_code(src)
+    gt_dest = get_gt_code(dest)
 
     use_direct = (src in DEEP_TRANS_UNSUPPORTED or dest in DEEP_TRANS_UNSUPPORTED)
 
     if not use_direct:
         # Try deep_translator first (more reliable for supported langs)
         try:
-            translator = GoogleTranslator(source=dt_src, target=dt_dest)
+            translator = GoogleTranslator(source=gt_src, target=gt_dest)
             result = translator.translate(text)
             if result and result.strip():
                 return result
@@ -86,15 +195,15 @@ def translate_chunk(text: str, src: str, dest: str) -> str:
 
     # Fallback / primary for unsupported langs: direct gtx API
     try:
-        result = gtx_translate(text, src, dest)
+        result = gtx_translate(text, gt_src, gt_dest)
         if result and result.strip():
             return result
     except Exception as e:
         print(f"gtx direct failed ({src}→{dest}): {e}")
 
-    # Last resort: auto-detect source
+    # Try with auto-detect source
     try:
-        result = gtx_translate(text, "auto", dest)
+        result = gtx_translate(text, "auto", gt_dest)
         if result and result.strip():
             return result
     except Exception as e:
@@ -119,7 +228,7 @@ def split_text(text, max_len=4500):
 @app.post("/translate")
 async def translate_text(data: dict):
     text = data["text"]
-    src  = data["from_lang"]
+    src  = data.get("from_lang", "auto")
     dest = data["to_lang"]
     try:
         chunks = split_text(text, max_len=4500)
@@ -135,18 +244,19 @@ async def speak(data: dict):
     lang_req = data["lang"]
     tts_lang = get_tts_lang(lang_req)
     try:
-        tts = gTTS(text=text, lang=tts_lang)
-        filepath = "output.mp3"
+        tts = gTTS(text=text, lang=tts_lang, slow=False)
+        filepath = "/tmp/output_vaani.mp3"
         tts.save(filepath)
         response = FileResponse(filepath, media_type="audio/mpeg")
         response.headers["X-TTS-Lang-Used"]      = tts_lang
         response.headers["X-TTS-Lang-Requested"] = lang_req
         return response
     except Exception as e:
+        print(f"TTS error for lang={tts_lang}: {e}, trying 'en' fallback")
         try:
             tts = gTTS(text=text, lang="en")
-            tts.save("output.mp3")
-            response = FileResponse("output.mp3", media_type="audio/mpeg")
+            tts.save("/tmp/output_vaani.mp3")
+            response = FileResponse("/tmp/output_vaani.mp3", media_type="audio/mpeg")
             response.headers["X-TTS-Lang-Used"] = "en"
             return response
         except Exception as e2:
@@ -157,6 +267,9 @@ TESS_LANG_MAP = {
     "te":"tel","ta":"tam","hi":"hin","kn":"kan","ml":"mal",
     "mr":"mar","bn":"ben","gu":"guj","pa":"pan","ur":"urd",
     "or":"ori","as":"asm","ne":"nep","sa":"san","sd":"snd",
+    "mai":"hin","doi":"hin","kok":"mar","gom":"mar","bho":"hin",
+    "mwr":"hin","tcy":"kan","ks":"urd","sat":"ben","mni-Mtei":"ben",
+    "lus":"eng","brx":"hin","awa":"hin","mag":"hin","hne":"hin",
     "en":"eng",
 }
 
