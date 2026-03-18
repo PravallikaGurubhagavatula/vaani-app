@@ -553,9 +553,33 @@ try {
 document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("toLang")?.addEventListener("change", async () => {
-    if (!lastSpokenText) return;
-    _resetSingleResults();
-    await translateAndSpeak(lastSpokenText, lastFromLang);
+    // Use lastSpokenText if available, otherwise fall back to whatever is in the text area
+    const textAreaVal = document.getElementById("textInputArea")?.value?.trim();
+    const sourceText  = lastSpokenText || textAreaVal;
+    const sourceLang  = lastFromLang   || document.getElementById("fromLang").value;
+
+    if (!sourceText) return; // nothing has been entered yet, nothing to re-translate
+
+    // Stop audio and clear ONLY the translated output — keep source text intact
+    _stopAudio();
+    window._singleAudioBlob = null;
+    window._singleTranslatedText = null;
+    document.getElementById("timeline_single")?.remove();
+
+    // Show the results section with a loading indicator
+    const tEl = document.getElementById("translatedText");
+    delete tEl.dataset.originalText;
+    tEl.innerHTML = "";
+    tEl.textContent = "Translating...";
+    document.getElementById("originalText").textContent = sourceText;
+    document.getElementById("resultsSection").style.display = "block";
+    document.getElementById("actionBtns").style.display = "none";
+
+    // Re-translate into the new target language and auto-play
+    // Update lastFromLang so further language changes still work
+    lastSpokenText = sourceText;
+    lastFromLang   = sourceLang;
+    await translateAndSpeak(sourceText, sourceLang);
   });
 
   document.getElementById("fromLang")?.addEventListener("change", () => {
