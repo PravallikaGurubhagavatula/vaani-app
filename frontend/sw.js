@@ -1,46 +1,27 @@
 /* ================================================================
    Vaani Service Worker
-   IMPORTANT: Change CACHE_VERSION on every single deployment.
-   This is the ONLY reliable way to force phones to update.
-   When this string changes, all old caches are wiped and the
-   new SW takes control of all open tabs immediately.
+   HOW TO UPDATE ALL DEVICES INSTANTLY:
+   Every time you push to GitHub, just change CACHE_VERSION below.
+   Increment: vaani-v11 → vaani-v12 → vaani-v13 ...
+   That single change forces every phone/tablet/laptop to:
+   1. Download the new SW
+   2. Wipe all old caches
+   3. Reload the page automatically — no manual refresh needed
 ================================================================ */
 
-// ── CHANGE THIS NUMBER EVERY TIME YOU PUSH TO GITHUB ──────────
-// Just increment it: v1 → v2 → v3 → v4 ...
-// This is what forces Android/iOS to dump old cached files.
-const CACHE_VERSION = "vaani-v10";
-// ──────────────────────────────────────────────────────────────
+const CACHE_VERSION = "vaani-v11";
+const CACHE_NAME    = CACHE_VERSION;
 
-const CACHE_NAME = CACHE_VERSION;
-
-// These are cached for offline use
-const SHELL_URLS = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
-
-// ── INSTALL ───────────────────────────────────────────────────
-// Skip waiting immediately — don't queue behind old SW
+// ── INSTALL: take over immediately, don't queue ───────────────
 self.addEventListener("install", event => {
   console.log("[SW] Installing", CACHE_VERSION);
-  self.skipWaiting(); // <-- critical: take over right now, don't wait
-
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return Promise.allSettled(
-        SHELL_URLS.map(url =>
-          fetch(url, { cache: "no-store" })
-            .then(res => { if (res.ok) cache.put(url, res); })
-            .catch(() => {}) // don't crash install if one file fails
-        )
-      );
-    })
-  );
+  // skipWaiting() = don't wait for old SW to finish — take over NOW
+  self.skipWaiting();
 });
 
-// ── ACTIVATE ──────────────────────────────────────────────────
-// Wipe ALL caches from previous versions, then take over all tabs
+// ── ACTIVATE: wipe old caches, claim all tabs, force reload ───
 self.addEventListener("activate", event => {
-  console.log("[SW] Activating", CACHE_VERSION, "— wiping old caches");
-
+  console.log("[SW] Activating", CACHE_VERSION);
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
@@ -49,31 +30,34 @@ self.addEventListener("activate", event => {
           return caches.delete(k);
         })
       ))
-      .then(() => self.clients.claim()) // take control of ALL open tabs now
+      .then(() => self.clients.claim())
       .then(() => {
-        // Tell every open tab to reload so they get fresh content
-        return self.clients.matchAll({ type: "window" }).then(clients => {
-          clients.forEach(client => {
-            client.postMessage({ type: "SW_UPDATED", version: CACHE_VERSION });
+        // Tell every open tab to hard-reload right now
+        return self.clients.matchAll({ type: "window", includeUncontrolled: true })
+          .then(clients => {
+            clients.forEach(client => {
+              // postMessage triggers the reload in index.html
+              client.postMessage({ type: "SW_UPDATED", version: CACHE_VERSION });
+            });
           });
-        });
       })
   );
 });
 
-// ── FETCH ─────────────────────────────────────────────────────
+// ── FETCH: HTML always from network, assets from cache ────────
 self.addEventListener("fetch", event => {
   const req = event.request;
+  if (req.method !== "GET") return;
+
   const url = new URL(req.url);
 
-  // Only handle GET requests from same origin
-  if (req.method !== "GET") return;
+  // Skip cross-origin (API calls, CDN, fonts etc.)
   if (url.origin !== self.location.origin) return;
 
   const path = url.pathname;
 
-  // ── HTML files and SW itself: ALWAYS network, never cached ──
-  // This is crucial — phones must always get the latest index.html
+  // ── HTML, SW, manifest: ALWAYS fetch fresh from server ──────
+  // This is what ensures phones get new content immediately
   if (
     path === "/" ||
     path === "/index.html" ||
@@ -83,20 +67,12 @@ self.addEventListener("fetch", event => {
   ) {
     event.respondWith(
       fetch(req, { cache: "no-store" })
-        .then(res => {
-          if (res && res.ok) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then(c => c.put(req, clone));
-          }
-          return res;
-        })
         .catch(() => caches.match(req)) // offline fallback only
     );
     return;
   }
 
-  // ── JS / CSS: cache-first BUT index.html loads them with ?v=xxx ──
-  // So any new deployment = new URL = new cache entry = fresh file
+  // ── JS/CSS: served from cache (URL has ?v=xxx so new deploy = new URL) ──
   event.respondWith(
     caches.match(req).then(cached => {
       if (cached) return cached;
@@ -106,14 +82,12 @@ self.addEventListener("fetch", event => {
           caches.open(CACHE_NAME).then(c => c.put(req, clone));
         }
         return res;
-      }).catch(() => cached || new Response("Offline", { status: 503 }));
+      }).catch(() => new Response("Offline", { status: 503 }));
     })
   );
 });
 
-// ── MESSAGE ───────────────────────────────────────────────────
+// ── MESSAGE: app can also trigger skip waiting manually ───────
 self.addEventListener("message", event => {
-  if (event.data === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
