@@ -3,10 +3,10 @@
    HOW TO UPDATE ALL DEVICES INSTANTLY:
    Change CACHE_VERSION below every deploy → forces all devices to
    wipe old caches and reload automatically.
-   vaani-v13 → vaani-v14 → vaani-v15 ...
+   vaani-v14 → vaani-v14 → vaani-v15 ...
 ================================================================ */
 
-const CACHE_VERSION = "vaani-v13";
+const CACHE_VERSION = "vaani-v14";
 const CACHE_NAME    = CACHE_VERSION;
 
 self.addEventListener("install", event => {
