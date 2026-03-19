@@ -1,10 +1,13 @@
 /* ================================================================
-   Vaani — app.js  v3.1  TIMELINE + NO-GENDER UPDATE
+   Vaani — app.js  v3.2  PATCHED
    
-   CHANGES FROM v3.0:
-   1. REMOVED: Male/Female voice gender selection UI & logic
-   2. ADDED: Audio timeline (seek bar) with currentTime control
-   3. All existing features preserved exactly
+   CHANGES FROM v3.1:
+   1. HISTORY PAGE: Shows sign-in prompt for non-logged users
+   2. IMAGE OCR: Tesseract.js-based real OCR pipeline
+   3. IMAGE PREVIEW: Full-screen modal with close button
+   4. CHANGE IMAGE: Options modal (gallery / camera)
+   5. IMAGE CROPPING: Crop UI before OCR processing
+   All existing features preserved exactly.
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -184,10 +187,9 @@ async function _pivotTranslate(text, fromLang, toLang) {
 // AUDIO SYSTEM — Single instance + Timeline seek bar
 // ══════════════════════════════════════════════════════════════════
 let _curAudio = null;
-let _timelineRAF = null;    // requestAnimationFrame handle for timeline update
-let _timelineSeeking = false; // true while user drags the seek bar
+let _timelineRAF = null;
+let _timelineSeeking = false;
 
-// ── Stop current audio and clean up timeline ───────────────────────
 function stopAudio() {
   if (_timelineRAF) { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
   if (_curAudio) {
@@ -197,7 +199,6 @@ function stopAudio() {
   resetTimeline();
 }
 
-// ── Reset the seek bar UI to zero ─────────────────────────────────
 function resetTimeline() {
   const wrap = document.getElementById("audioTimeline");
   if (!wrap) return;
@@ -210,7 +211,6 @@ function resetTimeline() {
   if (total) total.textContent = "0:00";
 }
 
-// ── Format seconds → m:ss ─────────────────────────────────────────
 function _fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -218,12 +218,10 @@ function _fmtTime(sec) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// ── Update the seek bar's filled-portion CSS variable ─────────────
 function _updateSeekFill(bar, pct) {
   bar.style.setProperty("--seek-pct", `${Math.max(0, Math.min(100, pct))}%`);
 }
 
-// ── Start real-time timeline update loop ──────────────────────────
 function _startTimelineLoop(audio) {
   const wrap  = document.getElementById("audioTimeline");
   const bar   = document.getElementById("timelineSeek");
@@ -244,7 +242,6 @@ function _startTimelineLoop(audio) {
     _timelineRAF = requestAnimationFrame(tick);
   }
 
-  // Set total duration once metadata loads
   const setDuration = () => { total.textContent = _fmtTime(audio.duration); };
   if (audio.readyState >= 1) setDuration();
   else audio.addEventListener("loadedmetadata", setDuration, { once: true });
@@ -252,13 +249,11 @@ function _startTimelineLoop(audio) {
   _timelineRAF = requestAnimationFrame(tick);
 }
 
-// ── Seek bar event handlers (attached once at init) ────────────────
 function _initTimelineControls() {
   const bar = document.getElementById("timelineSeek");
   if (!bar || bar._vaaniInitialized) return;
   bar._vaaniInitialized = true;
 
-  // While dragging — update fill but don't move audio yet
   bar.addEventListener("input", () => {
     _timelineSeeking = true;
     _updateSeekFill(bar, parseFloat(bar.value));
@@ -268,19 +263,13 @@ function _initTimelineControls() {
     }
   });
 
-  // On release — seek audio to chosen position
   bar.addEventListener("change", () => {
     if (_curAudio && _curAudio.duration) {
       _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     }
     _timelineSeeking = false;
   });
-
-  // Click anywhere on the track (also fires "change", so handled above)
 }
-
-// ── Removed: getVoiceGender() — gender feature deleted ────────────
-// All /speak calls now use a fixed default voice (no gender param)
 
 async function speakText(text, lang) {
   if (!text?.trim()) return null;
@@ -288,7 +277,6 @@ async function speakText(text, lang) {
     const r = await fetch(`${API_URL}/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // gender param removed — backend will use its default
       body: JSON.stringify({ text: text.trim(), lang }),
       signal: AbortSignal.timeout(25000)
     });
@@ -304,10 +292,9 @@ async function speakText(text, lang) {
   } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
 }
 
-// ALL translations end here — auto-plays and shows timeline
 async function autoPlay(text, lang) {
   if (!text || text === "—" || text === "…" || !lang) return;
-  stopAudio(); // stop previous + reset timeline
+  stopAudio();
   const audio = await speakText(text, lang);
   if (audio) {
     _curAudio = audio;
@@ -317,7 +304,7 @@ async function autoPlay(text, lang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// MIC STATE MACHINE (unchanged from v3.0)
+// MIC STATE MACHINE (unchanged from v3.1)
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 const _mic = {
@@ -423,7 +410,6 @@ function startListening() {
   }
 }
 
-// Conversation mode mic (unchanged)
 async function startConvListening(speaker) {
   const ctx      = _mic[speaker];
   const otherSpk = speaker === "A" ? "B" : "A";
@@ -806,66 +792,435 @@ async function renderTravelPhrases() {
   if (loading) loading.style.display = "none";
 }
 
-// ── IMAGE TRANSLATION ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// IMAGE TRANSLATION — PATCHED: Tesseract.js OCR + Crop + Preview
+// ══════════════════════════════════════════════════════════════════
+
+// State for the current image workflow
+let _imgCurrentFile = null;   // the raw File object before crop
+let _imgCroppedBlob = null;   // the cropped Blob ready for OCR
+let _cropperInstance = null;  // Cropper.js instance
+
+// ── Load Tesseract.js lazily ───────────────────────────────────────
+function _loadTesseract() {
+  return new Promise((resolve, reject) => {
+    if (window.Tesseract) { resolve(window.Tesseract); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js";
+    s.onload  = () => resolve(window.Tesseract);
+    s.onerror = () => reject(new Error("Failed to load Tesseract.js"));
+    document.head.appendChild(s);
+  });
+}
+
+// ── Load Cropper.js lazily ────────────────────────────────────────
+function _loadCropper() {
+  return new Promise((resolve, reject) => {
+    if (window.Cropper) { resolve(window.Cropper); return; }
+    // CSS
+    if (!document.getElementById("vaani-cropper-css")) {
+      const link = document.createElement("link");
+      link.id   = "vaani-cropper-css";
+      link.rel  = "stylesheet";
+      link.href = "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css";
+      document.head.appendChild(link);
+    }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js";
+    s.onload  = () => resolve(window.Cropper);
+    s.onerror = () => reject(new Error("Failed to load Cropper.js"));
+    document.head.appendChild(s);
+  });
+}
+
+// ── Map lang code → Tesseract lang string ─────────────────────────
+const TESS_LANG_MAP = {
+  te:"tel", ta:"tam", hi:"hin", kn:"kan", ml:"mal", mr:"mar",
+  bn:"ben", gu:"guj", pa:"pan", ur:"urd", or:"ori", as:"asm",
+  ne:"nep", sa:"san", sd:"snd", mai:"hin", doi:"hin", kok:"mar",
+  bho:"hin", mwr:"hin", tcy:"kan", ks:"urd", sat:"ben",
+  "mni-Mtei":"ben", lus:"eng", brx:"hin", awa:"hin", mag:"hin",
+  hne:"hin", en:"eng",
+};
+
+// ── Preprocess image for better OCR (canvas-based) ─────────────────
+function _preprocessImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      // Scale up small images
+      const scale = img.width < 1000 ? (1000 / img.width) : 1;
+      canvas.width  = Math.round(img.width  * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Grayscale + contrast boost
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+        // Contrast: f(x) = 1.5*(x-128)+128
+        const c = Math.min(255, Math.max(0, 1.8 * (gray - 128) + 128));
+        d[i] = d[i+1] = d[i+2] = c;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      canvas.toBlob(blob => resolve(blob), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+// ── Run Tesseract OCR ──────────────────────────────────────────────
+async function _runOCR(blob, langCode) {
+  const Tesseract = await _loadTesseract();
+  const tessLang  = TESS_LANG_MAP[langCode] || "eng";
+
+  // Build language string: always include eng as fallback script
+  const langStr = tessLang === "eng" ? "eng" : `${tessLang}+eng`;
+
+  const statusEl = document.getElementById("imgStatus");
+  const worker = await Tesseract.createWorker(langStr, 1, {
+    logger: m => {
+      if (m.status === "recognizing text" && statusEl) {
+        const pct = Math.round((m.progress || 0) * 100);
+        statusEl.textContent = `Recognizing text… ${pct}%`;
+      }
+    }
+  });
+
+  try {
+    const { data: { text } } = await worker.recognize(blob);
+    await worker.terminate();
+    return (text || "").trim();
+  } catch (e) {
+    try { await worker.terminate(); } catch(_){}
+    throw e;
+  }
+}
+
+// ── Open full-screen image preview modal ──────────────────────────
+function openImagePreview(src) {
+  // Remove existing modal if any
+  const existing = document.getElementById("vaaniImgModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "vaaniImgModal";
+  modal.className = "vaani-img-modal";
+  modal.innerHTML = `
+    <div class="vim-backdrop"></div>
+    <div class="vim-content">
+      <button class="vim-close" aria-label="Close preview">
+        <svg viewBox="0 0 24 24" width="20" height="20"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <img class="vim-img" src="${src}" alt="Full preview">
+    </div>`;
+
+  document.body.appendChild(modal);
+  requestAnimationFrame(() => modal.classList.add("vim-open"));
+
+  const close = () => {
+    modal.classList.remove("vim-open");
+    setTimeout(() => modal.remove(), 300);
+  };
+
+  modal.querySelector(".vim-backdrop").addEventListener("click", close);
+  modal.querySelector(".vim-close").addEventListener("click", close);
+
+  // Close on Escape
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
+
+// ── Open crop modal ───────────────────────────────────────────────
+async function _openCropModal(file, onConfirm) {
+  // Remove existing
+  const existing = document.getElementById("vaaniCropModal");
+  if (existing) existing.remove();
+  if (_cropperInstance) { try { _cropperInstance.destroy(); } catch(_){} _cropperInstance = null; }
+
+  await _loadCropper();
+
+  const objectUrl = URL.createObjectURL(file);
+
+  const modal = document.createElement("div");
+  modal.id = "vaaniCropModal";
+  modal.className = "vaani-crop-modal";
+  modal.innerHTML = `
+    <div class="vcm-backdrop"></div>
+    <div class="vcm-content">
+      <div class="vcm-header">
+        <span class="vcm-title">Crop Image</span>
+        <button class="vcm-close" aria-label="Cancel crop">
+          <svg viewBox="0 0 24 24" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="vcm-body">
+        <img id="vcmCropImg" src="${objectUrl}" alt="Crop" style="max-width:100%">
+      </div>
+      <div class="vcm-footer">
+        <button class="vcm-btn vcm-cancel">Cancel</button>
+        <button class="vcm-btn vcm-confirm">Crop &amp; Process</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  requestAnimationFrame(() => modal.classList.add("vcm-open"));
+
+  const cropImg = modal.querySelector("#vcmCropImg");
+  cropImg.onload = () => {
+    _cropperInstance = new Cropper(cropImg, {
+      viewMode: 1,
+      autoCropArea: 0.9,
+      responsive: true,
+      background: false,
+    });
+  };
+
+  const close = () => {
+    modal.classList.remove("vcm-open");
+    setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+      modal.remove();
+      if (_cropperInstance) { try { _cropperInstance.destroy(); } catch(_){} _cropperInstance = null; }
+    }, 300);
+  };
+
+  modal.querySelector(".vcm-cancel").addEventListener("click", close);
+  modal.querySelector(".vcm-close").addEventListener("click", close);
+  modal.querySelector(".vcm-backdrop").addEventListener("click", close);
+
+  modal.querySelector(".vcm-confirm").addEventListener("click", () => {
+    if (!_cropperInstance) return;
+    const canvas = _cropperInstance.getCroppedCanvas({ maxWidth: 2000, maxHeight: 2000 });
+    canvas.toBlob(blob => {
+      close();
+      if (blob) onConfirm(blob);
+    }, "image/png");
+  });
+}
+
+// ── Show "Change" options modal ───────────────────────────────────
+function _openChangeModal() {
+  const existing = document.getElementById("vaaniChangeModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "vaaniChangeModal";
+  modal.className = "vaani-change-modal";
+  modal.innerHTML = `
+    <div class="vchm-backdrop"></div>
+    <div class="vchm-sheet">
+      <div class="vchm-title">Change Image</div>
+      <button class="vchm-opt" id="vchm-gallery">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        Upload from Gallery
+      </button>
+      <button class="vchm-opt" id="vchm-camera">
+        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Take a Photo
+      </button>
+      <button class="vchm-cancel">Cancel</button>
+    </div>`;
+
+  document.body.appendChild(modal);
+  requestAnimationFrame(() => modal.classList.add("vchm-open"));
+
+  const close = () => {
+    modal.classList.remove("vchm-open");
+    setTimeout(() => modal.remove(), 300);
+  };
+
+  modal.querySelector(".vchm-backdrop").addEventListener("click", close);
+  modal.querySelector(".vchm-cancel").addEventListener("click", close);
+
+  modal.querySelector("#vchm-gallery").addEventListener("click", () => {
+    close();
+    const input = document.getElementById("imageInput");
+    if (input) { input.value = ""; input.click(); }
+  });
+
+  modal.querySelector("#vchm-camera").addEventListener("click", () => {
+    close();
+    const input = document.getElementById("cameraInput");
+    if (input) { input.value = ""; input.click(); }
+  });
+}
+
+// ── Show preview with click-to-expand ─────────────────────────────
+function _showPreviewBox(objectUrl) {
+  const pb = document.getElementById("imgPreviewBox");
+  const p  = document.getElementById("imgPreview");
+  const b  = document.getElementById("imgTranslateBtn");
+  const up = document.getElementById("uploadArea");
+
+  if (p) {
+    p.src = objectUrl;
+    // Click → full screen preview
+    p.style.cursor = "zoom-in";
+    p.onclick = () => openImagePreview(p.src);
+  }
+  if (pb) pb.style.display = "block";
+  if (b)  b.style.display  = "flex";
+  if (up) up.style.display = "none";
+}
+
+// ── Core: handle a new file (show crop → update preview) ──────────
+async function processImageFile(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    showToast("Please upload an image file");
+    return;
+  }
+  _imgCurrentFile = file;
+
+  // Show crop modal; on confirm update preview and store cropped blob
+  await _openCropModal(file, (croppedBlob) => {
+    _imgCroppedBlob = croppedBlob;
+    const croppedUrl = URL.createObjectURL(croppedBlob);
+    _showPreviewBox(croppedUrl);
+    // Reset results
+    document.getElementById("imgResults").style.display = "none";
+    document.getElementById("imgStatus").textContent = "";
+  });
+}
+
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById("uploadArea")?.classList.remove("drag-over");
   const f = e.dataTransfer?.files?.[0];
   if (f) processImageFile(f);
 }
-function handleImageUpload(e) { const f = e.target?.files?.[0]; if (f) processImageFile(f); }
-function processImageFile(file) {
-  if (!file.type.startsWith("image/")) { showToast("Upload an image file"); return; }
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const p = document.getElementById("imgPreview");
-    const pb = document.getElementById("imgPreviewBox");
-    const b  = document.getElementById("imgTranslateBtn");
-    if (p) p.src = e.target.result;
-    if (pb) pb.style.display = "block";
-    if (b)  b.style.display  = "flex";
-    const up = document.getElementById("uploadArea");
-    if (up) up.style.display = "none";
-  };
-  reader.readAsDataURL(file);
-}
-async function translateImage() {
-  const fi = document.getElementById("imageInput");
-  const ci = document.getElementById("cameraInput");
-  const file = fi?.files?.[0] || ci?.files?.[0];
-  if (!file) { showToast("No image selected"); return; }
 
+function handleImageUpload(e) {
+  const f = e.target?.files?.[0];
+  if (f) processImageFile(f);
+}
+
+// ── Main translate image handler ───────────────────────────────────
+async function translateImage() {
   const fromLang = document.getElementById("imgFromLang")?.value || "en";
   const toLang   = document.getElementById("imgToLang")?.value   || "en";
   const status   = document.getElementById("imgStatus");
   const btn      = document.getElementById("imgTranslateBtn");
 
-  if (status) status.textContent = "Extracting text…";
+  // Use cropped blob first, fall back to raw file
+  const sourceBlob = _imgCroppedBlob || _imgCurrentFile;
+
+  if (!sourceBlob) {
+    showToast("No image selected");
+    return;
+  }
+
   if (btn)    btn.disabled = true;
+  if (status) status.textContent = "Preprocessing image…";
   document.getElementById("imgResults").style.display = "none";
 
-  const fd = new FormData();
-  fd.append("file", file); fd.append("from_lang", fromLang); fd.append("to_lang", toLang);
-
   try {
-    const resp = await fetch(`${API_URL}/image-translate`, {
-      method:"POST", body:fd, signal:AbortSignal.timeout(35000)
-    });
-    if (!resp.ok) throw new Error("Server error " + resp.status);
-    const data = await resp.json();
-    document.getElementById("imgExtractedText").textContent  = data.extracted || "No text found";
-    document.getElementById("imgTranslatedText").textContent = data.translated || "—";
+    // Step 1: Preprocess
+    const preprocessed = await _preprocessImage(sourceBlob);
+
+    // Step 2: OCR with Tesseract.js
+    if (status) status.textContent = "Loading OCR engine…";
+    let extractedText = "";
+    try {
+      extractedText = await _runOCR(preprocessed, fromLang);
+    } catch (ocrErr) {
+      console.warn("[Vaani OCR] Tesseract error:", ocrErr);
+      // Fallback: try backend OCR
+      if (status) status.textContent = "Trying server OCR…";
+      try {
+        const fd = new FormData();
+        fd.append("file", sourceBlob, "image.png");
+        fd.append("from_lang", fromLang);
+        fd.append("to_lang", toLang);
+        const resp = await fetch(`${API_URL}/image-translate`, {
+          method:"POST", body:fd, signal:AbortSignal.timeout(35000)
+        });
+        if (resp.ok) {
+          const d = await resp.json();
+          extractedText = d.extracted || "";
+          if (d.translated && extractedText) {
+            document.getElementById("imgExtractedText").textContent  = extractedText;
+            document.getElementById("imgTranslatedText").textContent = d.translated;
+            document.getElementById("imgResults").style.display      = "block";
+            if (status) status.textContent = "";
+            await autoPlay(d.translated, toLang);
+            return;
+          }
+        }
+      } catch(fbErr) {
+        console.warn("[Vaani OCR] Backend fallback error:", fbErr);
+      }
+    }
+
+    // Step 3: Display extracted text
+    if (!extractedText || extractedText.length < 2) {
+      document.getElementById("imgExtractedText").textContent  = "No text found";
+      document.getElementById("imgTranslatedText").textContent = "No text detected in this image.";
+      document.getElementById("imgResults").style.display      = "block";
+      if (status) status.textContent = "";
+      return;
+    }
+
+    document.getElementById("imgExtractedText").textContent = extractedText;
+    if (status) status.textContent = "Translating…";
+
+    // Step 4: Translate
+    let translated = "";
+    if (fromLang === toLang) {
+      translated = extractedText;
+    } else {
+      try {
+        const chunks = _splitText(extractedText);
+        const parts  = await Promise.all(chunks.map(c => _clientTranslateChunk(c, fromLang, toLang)));
+        translated = parts.join(" ");
+      } catch(tErr) {
+        console.warn("[Vaani] Translation error:", tErr);
+        translated = extractedText;
+      }
+    }
+
+    document.getElementById("imgTranslatedText").textContent = translated || "—";
     document.getElementById("imgResults").style.display      = "block";
     if (status) status.textContent = "";
-    if (data.translated && data.translated !== "No text detected in this image.") {
-      await autoPlay(data.translated, toLang);
+
+    if (translated && translated !== extractedText) {
+      await autoPlay(translated, toLang);
     }
   } catch (e) {
+    console.error("[Vaani] translateImage:", e);
     if (status) status.textContent = "Error: " + e.message;
-    showToast("Image translation failed");
+    showToast("Image processing failed");
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// ── Client-side translate chunk (mirrors backend logic lightly) ────
+function _splitText(text, maxLen = 4500) {
+  const sentences = text.split(/(?<=[।.!?\n])\s*/);
+  const chunks = [], current_parts = [];
+  let len = 0;
+  for (const s of sentences) {
+    const st = s.trim();
+    if (!st) continue;
+    if (len + st.length + 1 > maxLen && current_parts.length) {
+      chunks.push(current_parts.join(" "));
+      current_parts.length = 0; len = 0;
+    }
+    current_parts.push(st); len += st.length + 1;
+  }
+  if (current_parts.length) chunks.push(current_parts.join(" "));
+  return chunks.length ? chunks : [text];
+}
+
+async function _clientTranslateChunk(text, fromLang, toLang) {
+  return await translateText(text, fromLang, toLang) || text;
 }
 
 // ── HISTORY & FAVOURITES ──────────────────────────────────────────
@@ -879,12 +1234,35 @@ function saveToHistory(orig, trans, fromLang, toLang) {
   } catch(_){}
 }
 
+// ══════════════════════════════════════════════════════════════════
+// HISTORY PAGE — PATCHED: shows sign-in prompt for non-logged users
+// ══════════════════════════════════════════════════════════════════
 function renderHistory() {
-  const hist = JSON.parse(localStorage.getItem("vaani_history") || "[]");
   const list = document.getElementById("historyList");
   if (!list) return;
+
+  // Check login state via Firebase currentUser (may be null if not signed in)
+  const isLoggedIn = !!(window._vaaniCurrentUser);
+
+  if (!isLoggedIn) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <p class="es-title">Sign in to view history</p>
+        <p class="es-sub">Sign in to save and view your translation history across devices.</p>
+        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Sign In
+        </button>
+      </div>`;
+    return;
+  }
+
+  const hist = JSON.parse(localStorage.getItem("vaani_history") || "[]");
   if (!hist.length) {
-    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here</p></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
     return;
   }
   list.innerHTML = hist.map((h,i) => `
@@ -953,7 +1331,7 @@ function deleteFavourite(i) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SETTINGS PAGE — gender voice section REMOVED
+// SETTINGS PAGE
 // ══════════════════════════════════════════════════════════════════
 function renderSettingsPage() {
   const container = document.getElementById("settingsContainer");
@@ -1014,6 +1392,7 @@ function renderSettingsPage() {
         <div>Vaani — Indian Language Translator</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
         <div>Speech: Bhashini TTS + gTTS fallback</div>
+        <div>OCR: Tesseract.js (client-side) + server fallback</div>
         <div>30+ Indian languages supported</div>
       </div>
     </div>
@@ -1066,7 +1445,6 @@ function navigateTo(page) {
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
-  // Stop all mics when navigating away
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
@@ -1109,16 +1487,38 @@ function pingBackend() {
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
-// Firebase stubs
+// Firebase stubs — real auth state tracked via window._vaaniCurrentUser
 if (typeof window.signInWithGoogle === "undefined") window.signInWithGoogle = () => showToast("Sign-in coming soon");
 if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => showToast("Signed out");
+
+// ── AUTH STATE HOOK ───────────────────────────────────────────────
+// firebase.js should set window._vaaniCurrentUser on auth state change
+// and call window._vaaniOnAuthChange() if defined.
+window._vaaniCurrentUser = null;
+window._vaaniOnAuthChange = function(user) {
+  window._vaaniCurrentUser = user || null;
+  // Re-render history if it's currently visible
+  const histPage = document.getElementById("pageHistory");
+  if (histPage && histPage.classList.contains("active")) {
+    renderHistory();
+  }
+};
 
 // ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
-  // Gender sync removed — no gender feature
   initLanguageSelects();
-  _initTimelineControls();  // attach seek bar event listeners once
+  _initTimelineControls();
+
+  // Change button → open change modal (patch: replaces direct file input click)
+  const changeBtn = document.getElementById("imgChangeBtn");
+  if (changeBtn) {
+    changeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      _openChangeModal();
+    });
+  }
+
   const hash = location.hash.replace("#","");
   navigateTo(PAGES.find(p => p.toLowerCase() === hash) || "Home");
   renderHistory();
