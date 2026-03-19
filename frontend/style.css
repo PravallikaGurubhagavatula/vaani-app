@@ -215,6 +215,106 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .ac-star{background:rgba(234,179,8,0.08) !important;border-color:rgba(234,179,8,0.2) !important;color:#eab308 !important}
 .ac-star:hover{background:rgba(234,179,8,0.15) !important}
 
+/* ══════════════════════════════════════════════════════════════════
+   AUDIO TIMELINE SEEK BAR
+   Placed inside .result-translated, between translated text and action buttons.
+   Hidden (display:none) by default — shown by JS when audio starts playing.
+══════════════════════════════════════════════════════════════════ */
+.audio-timeline{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:14px;
+  padding:10px 12px;
+  background:var(--bg3);
+  border:1px solid var(--card-border);
+  border-radius:var(--radius-sm);
+  animation:fadeIn 0.25s ease;
+}
+
+/* Time labels */
+.tl-time{
+  font-size:11px;
+  font-weight:600;
+  color:var(--text3);
+  font-variant-numeric:tabular-nums;
+  letter-spacing:0.3px;
+  white-space:nowrap;
+  min-width:30px;
+  text-align:center;
+  flex-shrink:0;
+}
+
+/* ── Seek bar (range input) ── */
+.tl-seek{
+  flex:1;
+  -webkit-appearance:none;
+  appearance:none;
+  height:4px;
+  border-radius:4px;
+  outline:none;
+  cursor:pointer;
+  /* Two-colour gradient: filled left = accent, unfilled right = card-border */
+  background:linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--seek-pct, 0%),
+    var(--card-border) var(--seek-pct, 0%),
+    var(--card-border) 100%
+  );
+  transition:background 0.05s linear;
+}
+
+/* Thumb — webkit */
+.tl-seek::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  appearance:none;
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:var(--accent-light);
+  border:2px solid var(--bg);
+  box-shadow:0 0 0 2px var(--accent-border);
+  cursor:pointer;
+  transition:transform 0.15s ease, box-shadow 0.15s ease;
+}
+.tl-seek::-webkit-slider-thumb:hover,
+.tl-seek:active::-webkit-slider-thumb{
+  transform:scale(1.25);
+  box-shadow:0 0 0 4px var(--accent-glow);
+}
+
+/* Thumb — firefox */
+.tl-seek::-moz-range-thumb{
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:var(--accent-light);
+  border:2px solid var(--bg);
+  box-shadow:0 0 0 2px var(--accent-border);
+  cursor:pointer;
+  transition:transform 0.15s ease, box-shadow 0.15s ease;
+}
+.tl-seek::-moz-range-thumb:hover{
+  transform:scale(1.25);
+  box-shadow:0 0 0 4px var(--accent-glow);
+}
+
+/* Track — firefox (fills left side automatically) */
+.tl-seek::-moz-range-progress{
+  background:var(--accent);
+  height:4px;
+  border-radius:4px;
+}
+
+/* Light theme adjustments */
+[data-theme="light"] .tl-seek::-webkit-slider-thumb{
+  border-color:var(--bg2);
+}
+[data-theme="light"] .tl-seek::-moz-range-thumb{
+  border-color:var(--bg2);
+}
+
 /* ── CONVERSATION ── */
 .conv-grid{display:grid;grid-template-columns:1fr 1px 1fr;gap:0;margin-top:4px}
 .conv-sep{background:var(--card-border);margin:0 8px}
@@ -241,8 +341,6 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .phrase-trans{font-size:14px;color:var(--accent-light);margin-bottom:3px;font-weight:600}
 .phrase-en{font-size:11px;color:var(--text3);font-style:italic}
 .phrase-btns{display:flex;gap:6px;flex-shrink:0}
-
-/* BUG #7 FIX: Travel phrase buttons — text only, no SVG */
 .phrase-btn{
   padding:6px 14px;border-radius:var(--radius-xs);font-size:12px;font-weight:500;
   border:1px solid var(--card-border);background:var(--card);color:var(--text2);
@@ -298,17 +396,10 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .toast.show{transform:translateX(-50%) translateY(0)}
 [data-theme="light"] .toast{background:rgba(255,255,255,0.96)}
 
-/* ── GENDER TOGGLE ── */
-.gender-toggle{display:flex;align-items:center;background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius-xs);overflow:hidden;height:36px}
-.gender-btn{width:36px;height:34px;background:transparent;border:none;color:var(--text3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all var(--transition)}
-.gender-btn svg{width:14px;height:14px}
-.gender-btn:first-child{border-right:1px solid var(--card-border)}
-.gender-btn:hover{background:var(--accent-subtle);color:var(--accent-light)}
-.gender-btn.active{background:var(--accent);color:white}
-.gender-btn.active svg{stroke:white}
+/* ── GENDER TOGGLE REMOVED — styles deleted ── */
 
 /* ══════════════════════════════════════════════════════════════════
-   BUG #8 FIX — SETTINGS PAGE STYLES
+   SETTINGS PAGE STYLES
 ══════════════════════════════════════════════════════════════════ */
 .stg-section{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);padding:20px;margin-bottom:14px}
 .stg-title{font-size:12px;font-weight:700;color:var(--accent-light);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--card-border)}
@@ -350,8 +441,9 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
   .stg-select{min-width:100%;max-width:100%}
   .stg-radios{flex-wrap:wrap}
   .phrase-btns{flex-direction:column;gap:4px}
+  .audio-timeline{gap:6px;padding:8px 10px}
+  .tl-time{min-width:26px;font-size:10px}
 }
 @media(max-width:360px){
   .nav-brand-hint{display:none}
-  .gender-toggle{display:none}
 }
