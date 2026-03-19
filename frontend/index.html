@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Vaani">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20250323">
+  <link rel="stylesheet" href="style.css?v=20250324">
 </head>
 <body>
 
@@ -363,25 +363,42 @@
     <div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
     <p class="upload-title">Drop image here</p>
     <p class="upload-sub">or tap to upload — JPG, PNG, WEBP</p>
-    <!-- Hidden inputs -->
     <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
   </div>
 
-  <!-- Source buttons (always visible above preview, shown at all times) -->
+  <!-- Source buttons -->
   <div class="img-source-btns">
     <button class="img-src-btn" onclick="document.getElementById('imageInput').click()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload Photo
     </button>
-    <button class="img-src-btn img-src-camera" onclick="document.getElementById('cameraInput').click()">
+    <!-- Camera button now uses getUserMedia back camera -->
+    <button class="img-src-btn img-src-camera" id="cameraSrcBtn">
       <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Take Photo
     </button>
-    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleImageUpload(event)">
+    <!-- Hidden file input fallback for non-getUserMedia browsers -->
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+  </div>
+
+  <!-- Live Camera Translation Button -->
+  <div class="live-cam-bar">
+    <button class="btn-ghost live-cam-toggle" id="liveCamBtn" onclick="startLiveCamera()">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+      🎥 Live Camera Translation
+    </button>
+  </div>
+
+  <!-- Live camera container -->
+  <div id="liveCamContainer" class="live-cam-container" style="display:none">
+    <!-- video element injected by JS -->
+    <div class="live-cam-overlay-wrap">
+      <div class="live-cam-overlay" id="liveCamOverlay" style="display:none"></div>
+    </div>
+    <p class="live-cam-status" id="liveCamStatus">Camera active…</p>
   </div>
 
   <!-- Preview box — image is clickable for full-screen, Change button opens modal -->
   <div id="imgPreviewBox" class="img-preview" style="display:none">
     <img id="imgPreview" src="" alt="Preview" title="Tap to view full screen" style="cursor:zoom-in">
-    <!-- PATCHED: id="imgChangeBtn" so app.js can attach event listener -->
     <button class="change-btn" id="imgChangeBtn">
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.43"/></svg>Change
     </button>
@@ -397,13 +414,19 @@
       <div class="rc-header"><span class="rc-label">Text found in image</span>
         <button class="sm-btn" onclick="copyText('imgExtractedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
-      <p class="rc-text" id="imgExtractedText">—</p>
+      <p class="rc-text" id="imgExtractedText" style="white-space:pre-wrap">—</p>
     </div>
     <div class="result-card result-translated">
       <div class="rc-header"><span class="rc-label">Translation</span>
         <button class="sm-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
-      <p class="rc-text rc-accent" id="imgTranslatedText">—</p>
+      <p class="rc-text rc-accent" id="imgTranslatedText" style="white-space:pre-wrap">—</p>
+      <!-- ✅ AUDIO TIMELINE FOR IMAGE PAGE -->
+      <div class="audio-timeline" id="audioTimelineImg" style="display:none">
+        <span class="tl-time" id="timelineCurrentImg">0:00</span>
+        <input type="range" id="timelineSeekImg" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Image audio seek bar">
+        <span class="tl-time" id="timelineTotalImg">0:00</span>
+      </div>
       <div class="rc-actions">
         <button class="ac-btn ac-primary" onclick="playImgAudio()"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play</button>
         <button class="ac-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
@@ -437,9 +460,14 @@
 <div id="toast" class="toast"></div>
 
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
-<script>window.VAANI_VERSION = "20250323";</script>
-<script type="module" src="firebase.js?v=20250323"></script>
-<script src="app.js?v=20250323"></script>
+<script>
+  window.VAANI_VERSION = "20250324";
+  // ── Set your Google Vision API key here (or via environment) ──
+  // window.VAANI_VISION_KEY = "YOUR_GOOGLE_VISION_API_KEY";
+  window.VAANI_VISION_KEY = "";
+</script>
+<script type="module" src="firebase.js?v=20250324"></script>
+<script src="app.js?v=20250324"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
