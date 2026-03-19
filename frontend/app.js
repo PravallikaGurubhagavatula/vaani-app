@@ -1,15 +1,10 @@
 /* ================================================================
-   Vaani — app.js  v3.0  COMPLETE BUG-FIX RELEASE
+   Vaani — app.js  v3.1  TIMELINE + NO-GENDER UPDATE
    
-   BUGS FIXED:
-   1. Wrong translation → transliterate→native FIRST, then translate
-   2. Language change → strict clear + retranslate
-   3. Swap → swap langs + text + retranslate correctly
-   4. Audio auto-plays after every translation
-   5. Mic: tap1=start, tap2=stop, tap3=completely fresh
-   6. Removed all branding strings from JS
-   7. Travel helper: pure text, zero SVG icons
-   8. Full Settings page implemented
+   CHANGES FROM v3.0:
+   1. REMOVED: Male/Female voice gender selection UI & logic
+   2. ADDED: Audio timeline (seek bar) with currentTime control
+   3. All existing features preserved exactly
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -72,19 +67,14 @@ function cacheSet(k, v) {
 function cacheClear() { _transCache.clear(); }
 
 // ══════════════════════════════════════════════════════════════════
-// BUG #1 FIX — TRANSLITERATION PIPELINE
-// Root cause: "acha idedo bagundi kada" → Google receives raw ASCII
-// with from_lang=te. Google doesn't know it's romanized Telugu,
-// so it translates it as a "foreign" word and echoes it back.
-// Fix: detect romanized → convert to native Telugu script FIRST
-// via Google Input Tools, THEN send native script to /translate.
+// TRANSLITERATION PIPELINE
 // ══════════════════════════════════════════════════════════════════
 
 function isRomanized(text, fromLang) {
   if (!LANG_CONFIG[fromLang]?.nonLatin) return false;
   const t = (text || "").trim();
   if (t.length < 2) return false;
-  if (/[^\x00-\x7F]/.test(t)) return false; // already has native chars
+  if (/[^\x00-\x7F]/.test(t)) return false;
   return /[a-zA-Z]/.test(t);
 }
 
@@ -98,7 +88,7 @@ async function transliterateWord(word, gtCode) {
       if (d[0] === "SUCCESS" && d[1]?.[0]?.[1]?.[0]) return d[1][0][1][0];
     }
   } catch (_) {}
-  return word; // return original if fails
+  return word;
 }
 
 async function transliterateToNative(text, fromLang) {
@@ -111,7 +101,7 @@ async function transliterateToNative(text, fromLang) {
   return native;
 }
 
-// ── CORE TRANSLATE — full pipeline ────────────────────────────────
+// ── CORE TRANSLATE ────────────────────────────────────────────────
 async function translateText(text, fromLang, toLang) {
   const q = (text || "").trim();
   if (!q || fromLang === toLang) return q || "";
@@ -119,18 +109,15 @@ async function translateText(text, fromLang, toLang) {
   const ck = `${q}|${fromLang}|${toLang}`;
   if (cacheGet(ck)) return cacheGet(ck);
 
-  // STEP 1: transliterate romanized → native script
   let workText = q;
   if (isRomanized(q, fromLang)) {
     setMicStatus("Converting script…");
     workText = await transliterateToNative(q, fromLang);
   }
 
-  // STEP 2: translate native → target
   const result = await _callTranslate(workText, fromLang, toLang, q);
   if (result) { cacheSet(ck, result); return result; }
 
-  // STEP 3: pivot via English if direct failed
   const pivot = await _pivotTranslate(workText, fromLang, toLang);
   if (pivot) { cacheSet(ck, pivot); return pivot; }
 
@@ -148,13 +135,11 @@ async function _callTranslate(text, fromLang, toLang, originalInput) {
     if (!r.ok) return "";
     const d = await r.json();
     const result = (d.translated || "").trim();
-
-    // Catch passthrough: if result === input text, translation failed
     if (!result) return "";
     const rLow = result.toLowerCase();
     if (rLow === (originalInput||"").toLowerCase() || rLow === text.toLowerCase()) {
       console.warn("[Vaani] Passthrough detected:", result);
-      return ""; // force pivot
+      return "";
     }
     return result;
   } catch (e) {
@@ -164,7 +149,6 @@ async function _callTranslate(text, fromLang, toLang, originalInput) {
 }
 
 async function _pivotTranslate(text, fromLang, toLang) {
-  // source → English → target
   if (toLang === "en") return "";
   try {
     const r1 = await fetch(`${API_URL}/translate`, {
@@ -197,18 +181,106 @@ async function _pivotTranslate(text, fromLang, toLang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUDIO  — BUG #4 FIX: auto-play centralized here
+// AUDIO SYSTEM — Single instance + Timeline seek bar
 // ══════════════════════════════════════════════════════════════════
 let _curAudio = null;
+let _timelineRAF = null;    // requestAnimationFrame handle for timeline update
+let _timelineSeeking = false; // true while user drags the seek bar
 
+// ── Stop current audio and clean up timeline ───────────────────────
 function stopAudio() {
+  if (_timelineRAF) { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
   if (_curAudio) {
     try { _curAudio.pause(); _curAudio.currentTime = 0; } catch (_) {}
     _curAudio = null;
   }
+  resetTimeline();
 }
 
-function getVoiceGender() { return localStorage.getItem("vaani_voice_gender") || "female"; }
+// ── Reset the seek bar UI to zero ─────────────────────────────────
+function resetTimeline() {
+  const wrap = document.getElementById("audioTimeline");
+  if (!wrap) return;
+  wrap.style.display = "none";
+  const bar   = document.getElementById("timelineSeek");
+  const cur   = document.getElementById("timelineCurrent");
+  const total = document.getElementById("timelineTotal");
+  if (bar)   { bar.value = 0; _updateSeekFill(bar, 0); }
+  if (cur)   cur.textContent = "0:00";
+  if (total) total.textContent = "0:00";
+}
+
+// ── Format seconds → m:ss ─────────────────────────────────────────
+function _fmtTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ── Update the seek bar's filled-portion CSS variable ─────────────
+function _updateSeekFill(bar, pct) {
+  bar.style.setProperty("--seek-pct", `${Math.max(0, Math.min(100, pct))}%`);
+}
+
+// ── Start real-time timeline update loop ──────────────────────────
+function _startTimelineLoop(audio) {
+  const wrap  = document.getElementById("audioTimeline");
+  const bar   = document.getElementById("timelineSeek");
+  const cur   = document.getElementById("timelineCurrent");
+  const total = document.getElementById("timelineTotal");
+  if (!wrap || !bar || !cur || !total) return;
+
+  wrap.style.display = "flex";
+
+  function tick() {
+    if (!_curAudio || _curAudio !== audio) return;
+    if (!_timelineSeeking) {
+      const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+      bar.value = pct;
+      _updateSeekFill(bar, pct);
+      cur.textContent = _fmtTime(audio.currentTime);
+    }
+    _timelineRAF = requestAnimationFrame(tick);
+  }
+
+  // Set total duration once metadata loads
+  const setDuration = () => { total.textContent = _fmtTime(audio.duration); };
+  if (audio.readyState >= 1) setDuration();
+  else audio.addEventListener("loadedmetadata", setDuration, { once: true });
+
+  _timelineRAF = requestAnimationFrame(tick);
+}
+
+// ── Seek bar event handlers (attached once at init) ────────────────
+function _initTimelineControls() {
+  const bar = document.getElementById("timelineSeek");
+  if (!bar || bar._vaaniInitialized) return;
+  bar._vaaniInitialized = true;
+
+  // While dragging — update fill but don't move audio yet
+  bar.addEventListener("input", () => {
+    _timelineSeeking = true;
+    _updateSeekFill(bar, parseFloat(bar.value));
+    const cur = document.getElementById("timelineCurrent");
+    if (cur && _curAudio && _curAudio.duration) {
+      cur.textContent = _fmtTime((_curAudio.duration * parseFloat(bar.value)) / 100);
+    }
+  });
+
+  // On release — seek audio to chosen position
+  bar.addEventListener("change", () => {
+    if (_curAudio && _curAudio.duration) {
+      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
+    }
+    _timelineSeeking = false;
+  });
+
+  // Click anywhere on the track (also fires "change", so handled above)
+}
+
+// ── Removed: getVoiceGender() — gender feature deleted ────────────
+// All /speak calls now use a fixed default voice (no gender param)
 
 async function speakText(text, lang) {
   if (!text?.trim()) return null;
@@ -216,34 +288,36 @@ async function speakText(text, lang) {
     const r = await fetch(`${API_URL}/speak`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.trim(), lang, gender: getVoiceGender() }),
+      // gender param removed — backend will use its default
+      body: JSON.stringify({ text: text.trim(), lang }),
       signal: AbortSignal.timeout(25000)
     });
     if (!r.ok) return null;
     const blob  = await r.blob();
     const url   = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      resetTimeline();
+    };
     return audio;
   } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
 }
 
-// ALL translations end here — auto-plays without exception
+// ALL translations end here — auto-plays and shows timeline
 async function autoPlay(text, lang) {
   if (!text || text === "—" || text === "…" || !lang) return;
-  stopAudio();
+  stopAudio(); // stop previous + reset timeline
   const audio = await speakText(text, lang);
   if (audio) {
     _curAudio = audio;
+    _startTimelineLoop(audio);
     audio.play().catch(e => console.warn("[Vaani] play:", e.message));
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// MIC STATE MACHINE — BUG #5 FIX
-// tap 1: IDLE → LISTENING (start, clear old results)
-// tap 2: LISTENING → STOPPED (stop, process result)
-// tap 3: STOPPED/any → IDLE → LISTENING (full fresh start)
+// MIC STATE MACHINE (unchanged from v3.0)
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 const _mic = {
@@ -267,7 +341,6 @@ function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
 
-  // TAP 2 — stop
   if (ctx.state === MicState.LISTENING) {
     if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
     ctx.state = MicState.STOPPED;
@@ -276,7 +349,6 @@ function startListening() {
     return;
   }
 
-  // TAP 1 or TAP 3 — fresh start (clears ALL old state)
   _killMic(ctx);
   clearSingleResults();
 
@@ -320,7 +392,7 @@ function startListening() {
 
     if (translated) {
       saveToHistory(transcript, translated, fromLang, toLang);
-      await autoPlay(translated, toLang); // BUG #4 AUTO-PLAY
+      await autoPlay(translated, toLang);
     }
     ctx.rec = null;
   };
@@ -351,7 +423,7 @@ function startListening() {
   }
 }
 
-// Conversation mode mic
+// Conversation mode mic (unchanged)
 async function startConvListening(speaker) {
   const ctx      = _mic[speaker];
   const otherSpk = speaker === "A" ? "B" : "A";
@@ -365,7 +437,6 @@ async function startConvListening(speaker) {
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
   const micBtn     = document.getElementById(micBtnId);
 
-  // TAP 2
   if (ctx.state === MicState.LISTENING) {
     if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
     ctx.state = MicState.STOPPED;
@@ -374,7 +445,6 @@ async function startConvListening(speaker) {
     return;
   }
 
-  // TAP 1/3: kill self + kill other speaker
   _killMic(ctx);
   _killMic(_mic[otherSpk]);
   document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
@@ -416,7 +486,7 @@ async function startConvListening(speaker) {
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
     setMicStatus("Tap to speak again", statId);
 
-    if (translated) await autoPlay(translated, toLang); // BUG #4
+    if (translated) await autoPlay(translated, toLang);
     ctx.rec = null;
   };
 
@@ -450,6 +520,7 @@ function clearSingleResults() {
   if (o) o.textContent = "—";
   if (t) t.textContent = "—";
   if (a) a.style.display = "none";
+  resetTimeline();
 }
 
 function showOriginalText(text) {
@@ -464,6 +535,7 @@ function setTranslating() {
   const a = document.getElementById("actionBtns");
   if (t) t.textContent  = "…";
   if (a) a.style.display = "none";
+  resetTimeline();
 }
 
 function showFinalTranslation(original, translated) {
@@ -495,13 +567,11 @@ async function translateTypedText() {
 
   if (translated) {
     saveToHistory(raw, translated, fromLang, toLang);
-    await autoPlay(translated, toLang); // BUG #4
+    await autoPlay(translated, toLang);
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// BUG #2 FIX — LANGUAGE CHANGE: strict clear + retranslate
-// ══════════════════════════════════════════════════════════════════
+// ── LANGUAGE CHANGE ───────────────────────────────────────────────
 async function onLanguageChange() {
   const fromLang = document.getElementById("fromLang")?.value || "en";
   const toLang   = document.getElementById("toLang")?.value   || "en";
@@ -509,26 +579,23 @@ async function onLanguageChange() {
   localStorage.setItem("vaani_lang_fromLang", fromLang);
   localStorage.setItem("vaani_lang_toLang",   toLang);
 
-  // Always clear translation first
   const transEl = document.getElementById("translatedText");
   const actEl   = document.getElementById("actionBtns");
   if (transEl) transEl.textContent  = "—";
   if (actEl)   actEl.style.display  = "none";
+  resetTimeline();
 
-  // Retranslate if there's existing original text
   const origText = (document.getElementById("originalText")?.textContent || "").trim();
   if (origText && origText !== "—" && origText !== "…") {
     if (transEl) transEl.textContent = "…";
     const translated = await translateText(origText, fromLang, toLang);
     if (transEl) transEl.textContent  = translated || "—";
     if (actEl)   actEl.style.display  = translated ? "flex" : "none";
-    if (translated) await autoPlay(translated, toLang); // BUG #4
+    if (translated) await autoPlay(translated, toLang);
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// BUG #3 FIX — SWAP: swap langs + text + auto-retranslate
-// ══════════════════════════════════════════════════════════════════
+// ── SWAP ──────────────────────────────────────────────────────────
 async function swapLanguages() {
   const fromEl = document.getElementById("fromLang");
   const toEl   = document.getElementById("toLang");
@@ -539,13 +606,11 @@ async function swapLanguages() {
   const origText  = (document.getElementById("originalText")?.textContent  || "").trim();
   const transText = (document.getElementById("translatedText")?.textContent || "").trim();
 
-  // Swap language selects
   fromEl.value = prevTo;
   toEl.value   = prevFrom;
   localStorage.setItem("vaani_lang_fromLang", prevTo);
   localStorage.setItem("vaani_lang_toLang",   prevFrom);
 
-  // Use old translated text as new source (swap meaning correctly)
   const newSource = (transText && transText !== "—" && transText !== "…") ? transText : origText;
   if (!newSource || newSource === "—") return;
 
@@ -554,7 +619,7 @@ async function swapLanguages() {
 
   const translated = await translateText(newSource, prevTo, prevFrom);
   showFinalTranslation(newSource, translated);
-  if (translated) await autoPlay(translated, prevFrom); // BUG #4
+  if (translated) await autoPlay(translated, prevFrom);
 }
 
 // ── INPUT MODE TOGGLE ──────────────────────────────────────────────
@@ -609,19 +674,6 @@ function copyText(id) {
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
 }
 
-// ── GENDER / VOICE ────────────────────────────────────────────────
-function setVoiceGender(g) {
-  localStorage.setItem("vaani_voice_gender", g);
-  document.querySelectorAll(".gender-btn").forEach(b => b.classList.toggle("active", b.dataset.gender === g));
-  const r = document.querySelector(`input[name="settingsGender"][value="${g}"]`);
-  if (r) r.checked = true;
-  showToast(g === "male" ? "Male voice selected" : "Female voice selected");
-}
-function syncGenderButtons() {
-  const g = getVoiceGender();
-  document.querySelectorAll(".gender-btn").forEach(b => b.classList.toggle("active", b.dataset.gender === g));
-}
-
 // ── LANGUAGE SELECT HELPERS ────────────────────────────────────────
 function buildLangOptions(sel) {
   let html = "";
@@ -645,11 +697,9 @@ function initLanguageSelects() {
     el.value     = val;
   });
 
-  // BUG #2: these two use onLanguageChange — NOT save-only
   document.getElementById("fromLang")?.addEventListener("change", onLanguageChange);
   document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
 
-  // Others just save pref
   ["travelFromLang","travelToLang","imgFromLang","imgToLang","convLangA","convLangB"].forEach(id => {
     document.getElementById(id)?.addEventListener("change", () => {
       localStorage.setItem(`vaani_lang_${id}`, document.getElementById(id).value);
@@ -658,7 +708,7 @@ function initLanguageSelects() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// BUG #7 FIX — TRAVEL HELPER: text-only, zero icons
+// TRAVEL HELPER
 // ══════════════════════════════════════════════════════════════════
 let _cat = "food";
 let _tCache = {};
@@ -737,7 +787,6 @@ async function renderTravelPhrases() {
     const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
     _tCache[tk] = toText;
 
-    // BUG #7: zero SVG/icons — pure text buttons
     const card = document.createElement("div");
     card.className = "phrase-card";
     card.innerHTML = `
@@ -808,7 +857,6 @@ async function translateImage() {
     document.getElementById("imgTranslatedText").textContent = data.translated || "—";
     document.getElementById("imgResults").style.display      = "block";
     if (status) status.textContent = "";
-    // BUG #4: auto-play image translation result
     if (data.translated && data.translated !== "No text detected in this image.") {
       await autoPlay(data.translated, toLang);
     }
@@ -824,7 +872,7 @@ async function translateImage() {
 function saveToHistory(orig, trans, fromLang, toLang) {
   try {
     const h = JSON.parse(localStorage.getItem("vaani_history") || "[]");
-    if (h.length && h[0].original === orig && h[0].toLang === toLang) return; // dedup
+    if (h.length && h[0].original === orig && h[0].toLang === toLang) return;
     h.unshift({ original:orig, translated:trans, fromLang, toLang, ts:Date.now() });
     if (h.length > 200) h.splice(200);
     localStorage.setItem("vaani_history", JSON.stringify(h));
@@ -905,14 +953,13 @@ function deleteFavourite(i) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// BUG #8 FIX — SETTINGS PAGE (full implementation)
+// SETTINGS PAGE — gender voice section REMOVED
 // ══════════════════════════════════════════════════════════════════
 function renderSettingsPage() {
   const container = document.getElementById("settingsContainer");
   if (!container) return;
 
   const theme    = localStorage.getItem("vaani_theme") || "dark";
-  const gender   = getVoiceGender();
   const fromPref = localStorage.getItem("vaani_lang_fromLang") || "te";
   const toPref   = localStorage.getItem("vaani_lang_toLang")   || "ta";
 
@@ -931,26 +978,6 @@ function renderSettingsPage() {
           ${buildLangOptions(toPref)}
         </select>
       </div>
-    </div>
-
-    <div class="stg-section">
-      <div class="stg-title">Voice Selection</div>
-      <div class="stg-row">
-        <label class="stg-label">Voice Gender</label>
-        <div class="stg-radios">
-          <label class="stg-radio-lbl">
-            <input type="radio" name="settingsGender" value="female"
-              ${gender === "female" ? "checked" : ""} onchange="setVoiceGender('female')">
-            <span>Female</span>
-          </label>
-          <label class="stg-radio-lbl">
-            <input type="radio" name="settingsGender" value="male"
-              ${gender === "male" ? "checked" : ""} onchange="setVoiceGender('male')">
-            <span>Male</span>
-          </label>
-        </div>
-      </div>
-      <div class="stg-note">Male voice requires Bhashini API configuration. Female voice works with both Bhashini and gTTS fallback.</div>
     </div>
 
     <div class="stg-section">
@@ -1025,7 +1052,6 @@ function stgResetAll() {
 }
 
 // ── NAVIGATION ────────────────────────────────────────────────────
-// BUG #6: Settings is in PAGES, branding text removed from everywhere
 const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
 
 function navigateTo(page) {
@@ -1041,9 +1067,7 @@ function navigateTo(page) {
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
   // Stop all mics when navigating away
-  Object.values(_mic).forEach(ctx => {
-    _killMic(ctx);
-  });
+  Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
   );
@@ -1091,16 +1115,12 @@ if (typeof window.signOutUser      === "undefined") window.signOutUser      = ()
 
 // ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Restore theme
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
-  // Sync gender toggles
-  syncGenderButtons();
-  // Build all language dropdowns + attach listeners
+  // Gender sync removed — no gender feature
   initLanguageSelects();
-  // Navigate to hash or Home
+  _initTimelineControls();  // attach seek bar event listeners once
   const hash = location.hash.replace("#","");
   navigateTo(PAGES.find(p => p.toLowerCase() === hash) || "Home");
-  // Render stored data
   renderHistory();
   renderFavourites();
 });
