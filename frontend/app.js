@@ -1,24 +1,20 @@
 /* ================================================================
-   Vaani — app.js  v2.0
+   Vaani — app.js  v3.0  COMPLETE BUG-FIX RELEASE
    
-   ARCHITECTURE:
-   ─ State machine for mic (IDLE → LISTENING → STOPPED → IDLE)
-   ─ Single speakText() gateway for all TTS calls
-   ─ Translation cache (2000 entries, LRU-style)
-   ─ Proper async/await everywhere, no race conditions
-   ─ Gender preference persisted in localStorage
-   ─ Language change → reset only relevant state
-   ─ Swap button → swap text + retranslate
-   ─ Conversation mode — isolated state per speaker
-   ─ All event listeners added once (no duplicates)
+   BUGS FIXED:
+   1. Wrong translation → transliterate→native FIRST, then translate
+   2. Language change → strict clear + retranslate
+   3. Swap → swap langs + text + retranslate correctly
+   4. Audio auto-plays after every translation
+   5. Mic: tap1=start, tap2=stop, tap3=completely fresh
+   6. Removed all branding strings from JS
+   7. Travel helper: pure text, zero SVG icons
+   8. Full Settings page implemented
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
-const VERSION  = window.VAANI_VERSION || "2.0";
 
-// ══════════════════════════════════════════════════════════════════
-// LANGUAGE CONFIG
-// ══════════════════════════════════════════════════════════════════
+// ── LANGUAGE CONFIG ────────────────────────────────────────────────
 const LANG_CONFIG = {
   as:         { name:"Assamese",             nonLatin:true,  gtCode:"as",       ttsCode:"bn",  speechCode:"bn-IN" },
   bn:         { name:"Bengali",              nonLatin:true,  gtCode:"bn",       ttsCode:"bn",  speechCode:"bn-IN" },
@@ -66,76 +62,572 @@ const LANG_GROUPS = [
   { label:"English",                langs:["en"] }
 ];
 
-// ══════════════════════════════════════════════════════════════════
-// TRANSLATION CACHE (frontend mirror of backend cache)
-// ══════════════════════════════════════════════════════════════════
+// ── TRANSLATION CACHE ──────────────────────────────────────────────
 const _transCache = new Map();
-const TRANS_CACHE_MAX = 500;
+function cacheGet(k) { return _transCache.get(k); }
+function cacheSet(k, v) {
+  if (_transCache.size >= 500) _transCache.delete(_transCache.keys().next().value);
+  _transCache.set(k, v);
+}
+function cacheClear() { _transCache.clear(); }
 
-function cacheGet(key) { return _transCache.get(key); }
-function cacheSet(key, val) {
-  if (_transCache.size >= TRANS_CACHE_MAX) {
-    const firstKey = _transCache.keys().next().value;
-    _transCache.delete(firstKey);
+// ══════════════════════════════════════════════════════════════════
+// BUG #1 FIX — TRANSLITERATION PIPELINE
+// Root cause: "acha idedo bagundi kada" → Google receives raw ASCII
+// with from_lang=te. Google doesn't know it's romanized Telugu,
+// so it translates it as a "foreign" word and echoes it back.
+// Fix: detect romanized → convert to native Telugu script FIRST
+// via Google Input Tools, THEN send native script to /translate.
+// ══════════════════════════════════════════════════════════════════
+
+function isRomanized(text, fromLang) {
+  if (!LANG_CONFIG[fromLang]?.nonLatin) return false;
+  const t = (text || "").trim();
+  if (t.length < 2) return false;
+  if (/[^\x00-\x7F]/.test(t)) return false; // already has native chars
+  return /[a-zA-Z]/.test(t);
+}
+
+async function transliterateWord(word, gtCode) {
+  if (!word) return word;
+  const url = `https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=${gtCode}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage`;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) {
+      const d = await r.json();
+      if (d[0] === "SUCCESS" && d[1]?.[0]?.[1]?.[0]) return d[1][0][1][0];
+    }
+  } catch (_) {}
+  return word; // return original if fails
+}
+
+async function transliterateToNative(text, fromLang) {
+  if (!isRomanized(text, fromLang)) return text;
+  const gtCode = LANG_CONFIG[fromLang]?.gtCode || fromLang;
+  const words  = text.trim().split(/\s+/);
+  const out    = await Promise.all(words.map(w => transliterateWord(w, gtCode)));
+  const native = out.join(" ");
+  console.log(`[Vaani translit] "${text}" → "${native}"`);
+  return native;
+}
+
+// ── CORE TRANSLATE — full pipeline ────────────────────────────────
+async function translateText(text, fromLang, toLang) {
+  const q = (text || "").trim();
+  if (!q || fromLang === toLang) return q || "";
+
+  const ck = `${q}|${fromLang}|${toLang}`;
+  if (cacheGet(ck)) return cacheGet(ck);
+
+  // STEP 1: transliterate romanized → native script
+  let workText = q;
+  if (isRomanized(q, fromLang)) {
+    setMicStatus("Converting script…");
+    workText = await transliterateToNative(q, fromLang);
   }
-  _transCache.set(key, val);
+
+  // STEP 2: translate native → target
+  const result = await _callTranslate(workText, fromLang, toLang, q);
+  if (result) { cacheSet(ck, result); return result; }
+
+  // STEP 3: pivot via English if direct failed
+  const pivot = await _pivotTranslate(workText, fromLang, toLang);
+  if (pivot) { cacheSet(ck, pivot); return pivot; }
+
+  return "";
+}
+
+async function _callTranslate(text, fromLang, toLang, originalInput) {
+  try {
+    const r = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang }),
+      signal: AbortSignal.timeout(22000)
+    });
+    if (!r.ok) return "";
+    const d = await r.json();
+    const result = (d.translated || "").trim();
+
+    // Catch passthrough: if result === input text, translation failed
+    if (!result) return "";
+    const rLow = result.toLowerCase();
+    if (rLow === (originalInput||"").toLowerCase() || rLow === text.toLowerCase()) {
+      console.warn("[Vaani] Passthrough detected:", result);
+      return ""; // force pivot
+    }
+    return result;
+  } catch (e) {
+    console.warn("[Vaani] _callTranslate:", e.message);
+    return "";
+  }
+}
+
+async function _pivotTranslate(text, fromLang, toLang) {
+  // source → English → target
+  if (toLang === "en") return "";
+  try {
+    const r1 = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: "en" }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!r1.ok) return "";
+    const d1 = await r1.json();
+    const en  = (d1.translated || "").trim();
+    if (!en || en.toLowerCase() === text.toLowerCase()) return "";
+
+    if (toLang === "en") return en;
+    const r2 = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: en, from_lang: "en", to_lang: toLang }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!r2.ok) return "";
+    const d2 = await r2.json();
+    const result = (d2.translated || "").trim();
+    console.log(`[Vaani pivot] "${text}"→EN:"${en}"→"${result}"`);
+    return result;
+  } catch (e) {
+    console.warn("[Vaani] _pivotTranslate:", e.message);
+    return "";
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SPEECH RECOGNITION STATE MACHINE
-// States: IDLE → LISTENING → STOPPED → IDLE
+// AUDIO  — BUG #4 FIX: auto-play centralized here
+// ══════════════════════════════════════════════════════════════════
+let _curAudio = null;
+
+function stopAudio() {
+  if (_curAudio) {
+    try { _curAudio.pause(); _curAudio.currentTime = 0; } catch (_) {}
+    _curAudio = null;
+  }
+}
+
+function getVoiceGender() { return localStorage.getItem("vaani_voice_gender") || "female"; }
+
+async function speakText(text, lang) {
+  if (!text?.trim()) return null;
+  try {
+    const r = await fetch(`${API_URL}/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.trim(), lang, gender: getVoiceGender() }),
+      signal: AbortSignal.timeout(25000)
+    });
+    if (!r.ok) return null;
+    const blob  = await r.blob();
+    const url   = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    return audio;
+  } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
+}
+
+// ALL translations end here — auto-plays without exception
+async function autoPlay(text, lang) {
+  if (!text || text === "—" || text === "…" || !lang) return;
+  stopAudio();
+  const audio = await speakText(text, lang);
+  if (audio) {
+    _curAudio = audio;
+    audio.play().catch(e => console.warn("[Vaani] play:", e.message));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MIC STATE MACHINE — BUG #5 FIX
+// tap 1: IDLE → LISTENING (start, clear old results)
+// tap 2: LISTENING → STOPPED (stop, process result)
+// tap 3: STOPPED/any → IDLE → LISTENING (full fresh start)
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
-
-// Per-context mic state (single mode + conv A + conv B)
-const micContexts = {
-  single: { state: MicState.IDLE, recognition: null, lastTranscript: "" },
-  A:      { state: MicState.IDLE, recognition: null, lastTranscript: "" },
-  B:      { state: MicState.IDLE, recognition: null, lastTranscript: "" },
+const _mic = {
+  single: { state: MicState.IDLE, rec: null, last: "" },
+  A:      { state: MicState.IDLE, rec: null, last: "" },
+  B:      { state: MicState.IDLE, rec: null, last: "" },
 };
 
-function getMicContext(ctx) { return micContexts[ctx] || micContexts.single; }
+function _killMic(ctx) {
+  if (ctx.rec) { try { ctx.rec.abort(); } catch(_){} ctx.rec = null; }
+  ctx.state = MicState.IDLE;
+  ctx.last  = "";
+}
 
-// ══════════════════════════════════════════════════════════════════
-// AUDIO STATE
-// ══════════════════════════════════════════════════════════════════
-let currentAudio = null;
+function setMicStatus(msg, id = "micStatus") {
+  const el = document.getElementById(id);
+  if (el) el.textContent = msg;
+}
 
-function stopCurrentAudio() {
-  if (currentAudio) {
-    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch(e){}
-    currentAudio = null;
+function startListening() {
+  const ctx    = _mic.single;
+  const micBtn = document.getElementById("micBtn");
+
+  // TAP 2 — stop
+  if (ctx.state === MicState.LISTENING) {
+    if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
+    ctx.state = MicState.STOPPED;
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak again");
+    return;
+  }
+
+  // TAP 1 or TAP 3 — fresh start (clears ALL old state)
+  _killMic(ctx);
+  clearSingleResults();
+
+  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+    showToast("Voice input not supported. Use Chrome.");
+    return;
+  }
+
+  const fromLang   = document.getElementById("fromLang")?.value || "en";
+  const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
+
+  const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = speechCode; rec.interimResults = false; rec.maxAlternatives = 3;
+
+  ctx.rec   = rec;
+  ctx.state = MicState.LISTENING;
+  micBtn?.classList.add("listening");
+  setMicStatus("Listening…");
+
+  rec.onresult = async (e) => {
+    let best = "", bestConf = -1;
+    for (let i = 0; i < e.results[0].length; i++) {
+      const a = e.results[0][i];
+      if (a.confidence > bestConf) { bestConf = a.confidence; best = a.transcript; }
+    }
+    const transcript = best.trim();
+    if (!transcript || transcript === ctx.last) return;
+    ctx.last  = transcript;
+    ctx.state = MicState.STOPPED;
+    micBtn?.classList.remove("listening");
+
+    const toLang = document.getElementById("toLang")?.value || "en";
+    showOriginalText(transcript);
+    setTranslating();
+    setMicStatus("Translating…");
+
+    const translated = await translateText(transcript, fromLang, toLang);
+    showFinalTranslation(transcript, translated);
+    setMicStatus("Tap to speak again");
+
+    if (translated) {
+      saveToHistory(transcript, translated, fromLang, toLang);
+      await autoPlay(translated, toLang); // BUG #4 AUTO-PLAY
+    }
+    ctx.rec = null;
+  };
+
+  rec.onerror = (e) => {
+    ctx.state = MicState.IDLE; ctx.rec = null;
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak");
+    if (e.error === "no-speech") showToast("No speech. Try again.");
+    else if (e.error !== "aborted") showToast("Mic: " + e.error);
+  };
+
+  rec.onend = () => {
+    micBtn?.classList.remove("listening");
+    if (ctx.state === MicState.LISTENING) {
+      ctx.state = MicState.IDLE;
+      setMicStatus("Tap to speak");
+    }
+    ctx.rec = null;
+  };
+
+  try { rec.start(); }
+  catch (e) {
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak");
+    showToast("Cannot start mic. Allow microphone access.");
+  }
+}
+
+// Conversation mode mic
+async function startConvListening(speaker) {
+  const ctx      = _mic[speaker];
+  const otherSpk = speaker === "A" ? "B" : "A";
+  const fromSel  = `convLang${speaker}`;
+  const toSel    = speaker === "A" ? "convLangB" : "convLangA";
+  const micBtnId = `micBtn${speaker}`;
+  const statId   = `micStatus${speaker}`;
+
+  const fromLang   = document.getElementById(fromSel)?.value || "en";
+  const toLang     = document.getElementById(toSel)?.value   || "en";
+  const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
+  const micBtn     = document.getElementById(micBtnId);
+
+  // TAP 2
+  if (ctx.state === MicState.LISTENING) {
+    if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
+    ctx.state = MicState.STOPPED;
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak again", statId);
+    return;
+  }
+
+  // TAP 1/3: kill self + kill other speaker
+  _killMic(ctx);
+  _killMic(_mic[otherSpk]);
+  document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
+  setMicStatus("Tap to speak", `micStatus${otherSpk}`);
+
+  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+    showToast("Voice not supported. Use Chrome."); return;
+  }
+
+  const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = speechCode; rec.interimResults = false; rec.maxAlternatives = 3;
+
+  ctx.rec = rec; ctx.state = MicState.LISTENING;
+  micBtn?.classList.add("listening");
+  setMicStatus("Listening…", statId);
+
+  rec.onresult = async (e) => {
+    let best = "", bconf = -1;
+    for (let i = 0; i < e.results[0].length; i++) {
+      const a = e.results[0][i];
+      if (a.confidence > bconf) { bconf = a.confidence; best = a.transcript; }
+    }
+    const transcript = best.trim();
+    if (!transcript || transcript === ctx.last) return;
+    ctx.last = transcript; ctx.state = MicState.STOPPED;
+    micBtn?.classList.remove("listening");
+    setMicStatus("Translating…", statId);
+
+    const origEl  = document.getElementById(`originalText${speaker}`);
+    const transEl = document.getElementById(`translatedText${speaker}`);
+    const playBtn = document.getElementById(`playBtn${speaker}`);
+
+    if (origEl)  origEl.textContent  = transcript;
+    if (transEl) transEl.textContent = "…";
+
+    const translated = await translateText(transcript, fromLang, toLang);
+    if (transEl) transEl.textContent = translated || "—";
+    if (playBtn) playBtn.style.display = translated ? "flex" : "none";
+    setMicStatus("Tap to speak again", statId);
+
+    if (translated) await autoPlay(translated, toLang); // BUG #4
+    ctx.rec = null;
+  };
+
+  rec.onerror = (e) => {
+    ctx.state = MicState.IDLE; ctx.rec = null;
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak", statId);
+    if (e.error !== "aborted") showToast("Mic: " + e.error);
+  };
+
+  rec.onend = () => {
+    micBtn?.classList.remove("listening");
+    if (ctx.state === MicState.LISTENING) {
+      ctx.state = MicState.IDLE;
+      setMicStatus("Tap to speak", statId);
+    }
+    ctx.rec = null;
+  };
+
+  try { rec.start(); }
+  catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); }
+}
+
+// ── SINGLE RESULT DISPLAY HELPERS ─────────────────────────────────
+function clearSingleResults() {
+  const s = document.getElementById("resultsSection");
+  if (s) s.style.display = "none";
+  const o = document.getElementById("originalText");
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (o) o.textContent = "—";
+  if (t) t.textContent = "—";
+  if (a) a.style.display = "none";
+}
+
+function showOriginalText(text) {
+  const s = document.getElementById("resultsSection");
+  if (s) s.style.display = "block";
+  const o = document.getElementById("originalText");
+  if (o) o.textContent = text;
+}
+
+function setTranslating() {
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent  = "…";
+  if (a) a.style.display = "none";
+}
+
+function showFinalTranslation(original, translated) {
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent  = translated || "—";
+  if (a) a.style.display = translated ? "flex" : "none";
+}
+
+// ── TEXT MODE ─────────────────────────────────────────────────────
+async function translateTypedText() {
+  const area = document.getElementById("textInputArea");
+  const raw  = area?.value?.trim();
+  if (!raw) { showToast("Please enter some text"); return; }
+
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+
+  const btn = document.getElementById("translateTextBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
+
+  showOriginalText(raw);
+  setTranslating();
+
+  const translated = await translateText(raw, fromLang, toLang);
+  showFinalTranslation(raw, translated);
+
+  if (btn) { btn.disabled = false; btn.textContent = "Translate"; }
+
+  if (translated) {
+    saveToHistory(raw, translated, fromLang, toLang);
+    await autoPlay(translated, toLang); // BUG #4
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// GENDER / VOICE PREFERENCE
+// BUG #2 FIX — LANGUAGE CHANGE: strict clear + retranslate
 // ══════════════════════════════════════════════════════════════════
-function getVoiceGender() {
-  return localStorage.getItem("vaani_voice_gender") || "female";
+async function onLanguageChange() {
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+
+  localStorage.setItem("vaani_lang_fromLang", fromLang);
+  localStorage.setItem("vaani_lang_toLang",   toLang);
+
+  // Always clear translation first
+  const transEl = document.getElementById("translatedText");
+  const actEl   = document.getElementById("actionBtns");
+  if (transEl) transEl.textContent  = "—";
+  if (actEl)   actEl.style.display  = "none";
+
+  // Retranslate if there's existing original text
+  const origText = (document.getElementById("originalText")?.textContent || "").trim();
+  if (origText && origText !== "—" && origText !== "…") {
+    if (transEl) transEl.textContent = "…";
+    const translated = await translateText(origText, fromLang, toLang);
+    if (transEl) transEl.textContent  = translated || "—";
+    if (actEl)   actEl.style.display  = translated ? "flex" : "none";
+    if (translated) await autoPlay(translated, toLang); // BUG #4
+  }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// BUG #3 FIX — SWAP: swap langs + text + auto-retranslate
+// ══════════════════════════════════════════════════════════════════
+async function swapLanguages() {
+  const fromEl = document.getElementById("fromLang");
+  const toEl   = document.getElementById("toLang");
+  if (!fromEl || !toEl) return;
+
+  const prevFrom  = fromEl.value;
+  const prevTo    = toEl.value;
+  const origText  = (document.getElementById("originalText")?.textContent  || "").trim();
+  const transText = (document.getElementById("translatedText")?.textContent || "").trim();
+
+  // Swap language selects
+  fromEl.value = prevTo;
+  toEl.value   = prevFrom;
+  localStorage.setItem("vaani_lang_fromLang", prevTo);
+  localStorage.setItem("vaani_lang_toLang",   prevFrom);
+
+  // Use old translated text as new source (swap meaning correctly)
+  const newSource = (transText && transText !== "—" && transText !== "…") ? transText : origText;
+  if (!newSource || newSource === "—") return;
+
+  showOriginalText(newSource);
+  setTranslating();
+
+  const translated = await translateText(newSource, prevTo, prevFrom);
+  showFinalTranslation(newSource, translated);
+  if (translated) await autoPlay(translated, prevFrom); // BUG #4
+}
+
+// ── INPUT MODE TOGGLE ──────────────────────────────────────────────
+function switchInputMode(mode) {
+  const vSec = document.getElementById("voiceInput");
+  const tSec = document.getElementById("textInput");
+  const vBtn = document.getElementById("voiceModeBtn");
+  const tBtn = document.getElementById("textModeBtn");
+  if (mode === "voice") {
+    if (vSec) vSec.style.display = "block";
+    if (tSec) tSec.style.display = "none";
+    vBtn?.classList.add("active"); tBtn?.classList.remove("active");
+  } else {
+    if (vSec) vSec.style.display = "none";
+    if (tSec) tSec.style.display = "block";
+    tBtn?.classList.add("active"); vBtn?.classList.remove("active");
+  }
+}
+
+// ── PLAY BUTTONS (manual) ─────────────────────────────────────────
+async function playAudio() {
+  const t = document.getElementById("translatedText")?.textContent;
+  const l = document.getElementById("toLang")?.value;
+  if (t && t !== "—" && t !== "…") await autoPlay(t, l);
+}
+async function playAudioA() {
+  const t = document.getElementById("translatedTextA")?.textContent;
+  const l = document.getElementById("convLangB")?.value;
+  if (t && t !== "—") await autoPlay(t, l);
+}
+async function playAudioB() {
+  const t = document.getElementById("translatedTextB")?.textContent;
+  const l = document.getElementById("convLangA")?.value;
+  if (t && t !== "—") await autoPlay(t, l);
+}
+async function playImgAudio() {
+  const t = document.getElementById("imgTranslatedText")?.textContent;
+  const l = document.getElementById("imgToLang")?.value;
+  if (t && t !== "—") await autoPlay(t, l);
+}
+async function playPhrase(text, lang) {
+  if (text) await autoPlay(text, lang);
+}
+
+// ── COPY ──────────────────────────────────────────────────────────
+function copyTranslation() {
+  const t = document.getElementById("translatedText")?.textContent;
+  if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+}
+function copyText(id) {
+  const t = document.getElementById(id)?.textContent;
+  if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+}
+
+// ── GENDER / VOICE ────────────────────────────────────────────────
 function setVoiceGender(g) {
   localStorage.setItem("vaani_voice_gender", g);
-  document.querySelectorAll(".gender-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.gender === g);
-  });
-  showToast(g === "male" ? "👨 Male voice selected" : "👩 Female voice selected");
+  document.querySelectorAll(".gender-btn").forEach(b => b.classList.toggle("active", b.dataset.gender === g));
+  const r = document.querySelector(`input[name="settingsGender"][value="${g}"]`);
+  if (r) r.checked = true;
+  showToast(g === "male" ? "Male voice selected" : "Female voice selected");
 }
 function syncGenderButtons() {
   const g = getVoiceGender();
-  document.querySelectorAll(".gender-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.gender === g);
-  });
+  document.querySelectorAll(".gender-btn").forEach(b => b.classList.toggle("active", b.dataset.gender === g));
 }
 
-// ══════════════════════════════════════════════════════════════════
-// LANGUAGE SELECT HELPERS
-// ══════════════════════════════════════════════════════════════════
-function buildLangOptions(selectedVal = "en") {
+// ── LANGUAGE SELECT HELPERS ────────────────────────────────────────
+function buildLangOptions(sel) {
   let html = "";
   LANG_GROUPS.forEach(g => {
     const opts = g.langs.filter(c => LANG_CONFIG[c])
-      .map(c => `<option value="${c}"${c === selectedVal ? " selected" : ""}>${LANG_CONFIG[c].name}</option>`)
+      .map(c => `<option value="${c}"${c === sel ? " selected" : ""}>${LANG_CONFIG[c].name}</option>`)
       .join("");
     if (opts) html += `<optgroup label="${g.label}">${opts}</optgroup>`;
   });
@@ -143,623 +635,111 @@ function buildLangOptions(selectedVal = "en") {
 }
 
 function initLanguageSelects() {
-  const cfg = {
-    fromLang:"te", toLang:"ta",
-    travelFromLang:"te", travelToLang:"hi",
-    imgFromLang:"te", imgToLang:"en",
-    convLangA:"te", convLangB:"ta"
-  };
-  Object.entries(cfg).forEach(([id, def]) => {
+  const defaults = { fromLang:"te", toLang:"ta", travelFromLang:"te", travelToLang:"hi", imgFromLang:"te", imgToLang:"en", convLangA:"te", convLangB:"ta" };
+  Object.entries(defaults).forEach(([id, def]) => {
     const el = document.getElementById(id);
-    if (el) {
-      el.innerHTML = buildLangOptions(def);
-      // Restore saved preference
-      const saved = localStorage.getItem(`vaani_lang_${id}`);
-      if (saved && LANG_CONFIG[saved]) el.value = saved;
-    }
+    if (!el) return;
+    const saved = localStorage.getItem(`vaani_lang_${id}`);
+    const val   = (saved && LANG_CONFIG[saved]) ? saved : def;
+    el.innerHTML = buildLangOptions(val);
+    el.value     = val;
   });
 
-  // Save selections on change
-  ["fromLang","toLang","travelFromLang","travelToLang","imgFromLang","imgToLang","convLangA","convLangB"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.addEventListener("change", () => {
-        localStorage.setItem(`vaani_lang_${id}`, el.value);
-      });
-    }
+  // BUG #2: these two use onLanguageChange — NOT save-only
+  document.getElementById("fromLang")?.addEventListener("change", onLanguageChange);
+  document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
+
+  // Others just save pref
+  ["travelFromLang","travelToLang","imgFromLang","imgToLang","convLangA","convLangB"].forEach(id => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      localStorage.setItem(`vaani_lang_${id}`, document.getElementById(id).value);
+    });
   });
 }
 
 // ══════════════════════════════════════════════════════════════════
-// TRANSLATION CORE
+// BUG #7 FIX — TRAVEL HELPER: text-only, zero icons
 // ══════════════════════════════════════════════════════════════════
-async function translateText(text, fromLang, toLang) {
-  if (!text?.trim()) return "";
-  const q = text.trim();
-  if (fromLang === toLang) return q;
-
-  const key = `${q}|||${fromLang}|||${toLang}`;
-  const cached = cacheGet(key);
-  if (cached) return cached;
-
-  try {
-    const resp = await fetch(`${API_URL}/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: q, from_lang: fromLang, to_lang: toLang }),
-      signal: AbortSignal.timeout(20000)
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.translated) {
-        cacheSet(key, data.translated);
-        return data.translated;
-      }
-    }
-    const err = await resp.json().catch(() => ({}));
-    console.warn("[Vaani] Translation error:", err);
-  } catch(e) {
-    console.warn("[Vaani] translateText:", e.message);
-  }
-  return "";
-}
-
-// ══════════════════════════════════════════════════════════════════
-// TTS CORE — all audio goes through here
-// ══════════════════════════════════════════════════════════════════
-async function speakText(text, lang) {
-  if (!text?.trim()) return null;
-  const gender = getVoiceGender();
-
-  try {
-    const resp = await fetch(`${API_URL}/speak`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.trim(), lang, gender }),
-      signal: AbortSignal.timeout(25000)
-    });
-    if (!resp.ok) throw new Error(`TTS HTTP ${resp.status}`);
-
-    const engine = resp.headers.get("X-TTS-Engine") || "";
-    if (engine.startsWith("gtts") && gender === "male") {
-      showToast("👨 Male voice needs Bhashini — using default");
-    }
-
-    const blob  = await resp.blob();
-    const url   = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    return audio;
-  } catch(e) {
-    console.warn("[Vaani] speakText:", e.message);
-    return null;
-  }
-}
-
-async function playAndTrack(audio) {
-  if (!audio) return;
-  stopCurrentAudio();
-  currentAudio = audio;
-  try { await audio.play(); } catch(e) { console.warn("[Vaani] play:", e.message); }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// SINGLE MODE — SPEECH RECOGNITION
-// State machine: tap 1 = start, tap 2 = stop, tap 3 = fresh start
-// ══════════════════════════════════════════════════════════════════
-function startListening() {
-  const ctx     = getMicContext("single");
-  const micBtn  = document.getElementById("micBtn");
-  const micStat = document.getElementById("micStatus");
-
-  // ── Tap 2: stop recording ──────────────────────────────────────
-  if (ctx.state === MicState.LISTENING) {
-    if (ctx.recognition) {
-      try { ctx.recognition.stop(); } catch(e){}
-    }
-    ctx.state = MicState.STOPPED;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak again";
-    return;
-  }
-
-  // ── Tap 1 or 3: fresh start ────────────────────────────────────
-  // Always abort any previous instance first
-  if (ctx.recognition) {
-    try { ctx.recognition.abort(); } catch(e){}
-    ctx.recognition = null;
-  }
-
-  // Reset state for fresh recording
-  ctx.state = MicState.IDLE;
-  ctx.lastTranscript = "";
-
-  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-    showToast("Voice not supported in this browser. Try Chrome.");
-    return;
-  }
-
-  const fromLang   = document.getElementById("fromLang")?.value || "en";
-  const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
-
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const rec = new SR();
-  rec.lang            = speechCode;
-  rec.interimResults  = false;
-  rec.maxAlternatives = 3; // get best of 3 alternatives
-  rec.continuous      = false;
-
-  ctx.recognition = rec;
-  ctx.state       = MicState.LISTENING;
-
-  micBtn?.classList.add("listening");
-  if (micStat) micStat.textContent = "Listening…";
-
-  // Clear previous results for fresh recording
-  const resultsSection = document.getElementById("resultsSection");
-  if (resultsSection) resultsSection.style.display = "none";
-
-  rec.onresult = async (e) => {
-    // Pick highest-confidence alternative
-    let best = "", bestConf = -1;
-    for (let i = 0; i < e.results[0].length; i++) {
-      const alt = e.results[0][i];
-      if (alt.confidence > bestConf) {
-        bestConf = alt.confidence;
-        best = alt.transcript;
-      }
-    }
-    const transcript = best.trim();
-    if (!transcript) return;
-
-    ctx.lastTranscript = transcript;
-    ctx.state = MicState.STOPPED;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Translating…";
-
-    const toLang = document.getElementById("toLang")?.value || "en";
-
-    document.getElementById("resultsSection").style.display = "block";
-    document.getElementById("originalText").textContent = transcript;
-    document.getElementById("translatedText").textContent = "…";
-    document.getElementById("actionBtns").style.display = "none";
-
-    const translated = await translateText(transcript, fromLang, toLang);
-    document.getElementById("translatedText").textContent = translated || "—";
-    document.getElementById("actionBtns").style.display = translated ? "flex" : "none";
-
-    if (micStat) micStat.textContent = "Tap to speak again";
-
-    if (translated) {
-      saveToHistory(transcript, translated, fromLang, toLang);
-      const audio = await speakText(translated, toLang);
-      await playAndTrack(audio);
-    }
-  };
-
-  rec.onerror = (e) => {
-    ctx.state = MicState.IDLE;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak";
-    if (e.error === "no-speech") {
-      showToast("No speech detected. Try again.");
-    } else if (e.error !== "aborted") {
-      showToast(`Mic error: ${e.error}`);
-    }
-    ctx.recognition = null;
-  };
-
-  rec.onend = () => {
-    micBtn?.classList.remove("listening");
-    if (ctx.state === MicState.LISTENING) {
-      // Ended without result
-      ctx.state = MicState.IDLE;
-      if (micStat) micStat.textContent = "Tap to speak";
-    }
-    ctx.recognition = null;
-  };
-
-  try {
-    rec.start();
-  } catch(e) {
-    ctx.state = MicState.IDLE;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak";
-    showToast("Could not start mic. Please allow microphone access.");
-    ctx.recognition = null;
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// CONVERSATION MODE
-// ══════════════════════════════════════════════════════════════════
-async function startConvListening(speaker) {
-  const ctx        = getMicContext(speaker);
-  const langSel    = `convLang${speaker}`;
-  const otherLang  = speaker === "A" ? "convLangB" : "convLangA";
-  const micBtnId   = `micBtn${speaker}`;
-  const micStatId  = `micStatus${speaker}`;
-  const origId     = `originalText${speaker}`;
-  const transId    = `translatedText${speaker}`;
-  const playBtnId  = `playBtn${speaker}`;
-
-  const fromLang   = document.getElementById(langSel)?.value   || "en";
-  const toLang     = document.getElementById(otherLang)?.value || "en";
-  const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
-  const micBtn     = document.getElementById(micBtnId);
-  const micStat    = document.getElementById(micStatId);
-
-  // Stop if listening (tap 2)
-  if (ctx.state === MicState.LISTENING) {
-    if (ctx.recognition) try { ctx.recognition.stop(); } catch(e){}
-    ctx.state = MicState.STOPPED;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak again";
-    return;
-  }
-
-  // Fresh start (tap 1 or 3)
-  if (ctx.recognition) {
-    try { ctx.recognition.abort(); } catch(e){}
-    ctx.recognition = null;
-  }
-  ctx.state = MicState.IDLE;
-  ctx.lastTranscript = "";
-
-  // Stop the OTHER speaker if they were recording
-  const otherSpeaker = speaker === "A" ? "B" : "A";
-  const otherCtx = getMicContext(otherSpeaker);
-  if (otherCtx.state === MicState.LISTENING && otherCtx.recognition) {
-    try { otherCtx.recognition.abort(); } catch(e){}
-    otherCtx.state = MicState.IDLE;
-    otherCtx.recognition = null;
-    const otherMicBtn = document.getElementById(`micBtn${otherSpeaker}`);
-    const otherStat   = document.getElementById(`micStatus${otherSpeaker}`);
-    otherMicBtn?.classList.remove("listening");
-    if (otherStat) otherStat.textContent = "Tap to speak";
-  }
-
-  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-    showToast("Voice not supported. Try Chrome.");
-    return;
-  }
-
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const rec = new SR();
-  rec.lang            = speechCode;
-  rec.interimResults  = false;
-  rec.maxAlternatives = 3;
-
-  ctx.recognition = rec;
-  ctx.state       = MicState.LISTENING;
-
-  micBtn?.classList.add("listening");
-  if (micStat) micStat.textContent = "Listening…";
-
-  rec.onresult = async (e) => {
-    let best = "", bestConf = -1;
-    for (let i = 0; i < e.results[0].length; i++) {
-      const alt = e.results[0][i];
-      if (alt.confidence > bestConf) { bestConf = alt.confidence; best = alt.transcript; }
-    }
-    const transcript = best.trim();
-    if (!transcript) return;
-
-    ctx.state = MicState.STOPPED;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Translating…";
-
-    const origEl  = document.getElementById(origId);
-    const transEl = document.getElementById(transId);
-    const playBtn = document.getElementById(playBtnId);
-
-    if (origEl) origEl.textContent = transcript;
-    if (transEl) transEl.textContent = "…";
-
-    const translated = await translateText(transcript, fromLang, toLang);
-    if (transEl) transEl.textContent = translated || "—";
-    if (playBtn) playBtn.style.display = translated ? "flex" : "none";
-
-    if (micStat) micStat.textContent = "Tap to speak again";
-
-    if (translated) {
-      const audio = await speakText(translated, toLang);
-      await playAndTrack(audio);
-    }
-    ctx.recognition = null;
-  };
-
-  rec.onerror = (e) => {
-    ctx.state = MicState.IDLE;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak";
-    if (e.error !== "aborted") showToast(`Mic error: ${e.error}`);
-    ctx.recognition = null;
-  };
-
-  rec.onend = () => {
-    micBtn?.classList.remove("listening");
-    if (ctx.state === MicState.LISTENING) {
-      ctx.state = MicState.IDLE;
-      if (micStat) micStat.textContent = "Tap to speak";
-    }
-    ctx.recognition = null;
-  };
-
-  try {
-    rec.start();
-  } catch(e) {
-    ctx.state = MicState.IDLE;
-    micBtn?.classList.remove("listening");
-    if (micStat) micStat.textContent = "Tap to speak";
-    ctx.recognition = null;
-    showToast("Could not start mic.");
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// TEXT MODE TRANSLATION
-// ══════════════════════════════════════════════════════════════════
-async function translateTypedText() {
-  const textArea = document.getElementById("textInputArea");
-  const raw = textArea?.value?.trim();
-  if (!raw) { showToast("Please enter some text"); return; }
-
-  const fromLang = document.getElementById("fromLang")?.value || "en";
-  const toLang   = document.getElementById("toLang")?.value   || "en";
-
-  const btn = document.querySelector("#textInput .btn-primary");
-  if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
-
-  document.getElementById("resultsSection").style.display = "block";
-  document.getElementById("originalText").textContent  = raw;
-  document.getElementById("translatedText").textContent = "…";
-  document.getElementById("actionBtns").style.display  = "none";
-
-  const translated = await translateText(raw, fromLang, toLang);
-
-  document.getElementById("translatedText").textContent = translated || "—";
-  document.getElementById("actionBtns").style.display   = translated ? "flex" : "none";
-
-  if (btn) { btn.disabled = false; btn.textContent = "Translate"; }
-
-  if (translated) {
-    saveToHistory(raw, translated, fromLang, toLang);
-    const audio = await speakText(translated, toLang);
-    await playAndTrack(audio);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// LANGUAGE SWAP
-// ══════════════════════════════════════════════════════════════════
-async function swapLanguages() {
-  const from = document.getElementById("fromLang");
-  const to   = document.getElementById("toLang");
-  if (!from || !to) return;
-
-  const origText  = document.getElementById("originalText")?.textContent;
-  const transText = document.getElementById("translatedText")?.textContent;
-
-  // Swap language values
-  const tmp = from.value;
-  from.value = to.value;
-  to.value   = tmp;
-
-  // Save swapped selections
-  localStorage.setItem("vaani_lang_fromLang", from.value);
-  localStorage.setItem("vaani_lang_toLang", to.value);
-
-  // Swap text display
-  if (origText && origText !== "—" && transText && transText !== "—" && transText !== "…") {
-    document.getElementById("originalText").textContent  = transText;
-    document.getElementById("translatedText").textContent = origText;
-
-    // Re-translate in new direction
-    const newTranslated = await translateText(transText, from.value, to.value);
-    if (newTranslated) {
-      document.getElementById("translatedText").textContent = newTranslated;
-    }
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// PLAY BUTTONS
-// ══════════════════════════════════════════════════════════════════
-async function playAudio() {
-  const text = document.getElementById("translatedText")?.textContent;
-  const lang = document.getElementById("toLang")?.value;
-  if (!text || text === "—" || text === "…") return;
-  const btn = document.getElementById("playBtn");
-  if (btn) btn.classList.add("loading");
-  const audio = await speakText(text, lang);
-  await playAndTrack(audio);
-  if (btn) btn.classList.remove("loading");
-}
-
-async function playAudioA() {
-  const text = document.getElementById("translatedTextA")?.textContent;
-  const lang = document.getElementById("convLangB")?.value;
-  if (!text || text === "—") return;
-  const audio = await speakText(text, lang);
-  await playAndTrack(audio);
-}
-
-async function playAudioB() {
-  const text = document.getElementById("translatedTextB")?.textContent;
-  const lang = document.getElementById("convLangA")?.value;
-  if (!text || text === "—") return;
-  const audio = await speakText(text, lang);
-  await playAndTrack(audio);
-}
-
-async function playImgAudio() {
-  const text = document.getElementById("imgTranslatedText")?.textContent;
-  const lang = document.getElementById("imgToLang")?.value;
-  if (!text || text === "—") return;
-  const audio = await speakText(text, lang);
-  await playAndTrack(audio);
-}
-
-async function playPhrase(text, lang, btn) {
-  if (!text) return;
-  if (btn) btn.classList.add("loading");
-  const audio = await speakText(text, lang);
-  await playAndTrack(audio);
-  if (btn) btn.classList.remove("loading");
-}
-
-// ══════════════════════════════════════════════════════════════════
-// INPUT MODE TOGGLE
-// ══════════════════════════════════════════════════════════════════
-function switchInputMode(mode) {
-  const voiceSection = document.getElementById("voiceInput");
-  const textSection  = document.getElementById("textInput");
-  const voiceBtn     = document.getElementById("voiceModeBtn");
-  const textBtn      = document.getElementById("textModeBtn");
-
-  if (mode === "voice") {
-    voiceSection.style.display = "block";
-    textSection.style.display  = "none";
-    voiceBtn?.classList.add("active");
-    textBtn?.classList.remove("active");
-  } else {
-    voiceSection.style.display = "none";
-    textSection.style.display  = "block";
-    textBtn?.classList.add("active");
-    voiceBtn?.classList.remove("active");
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// COPY HELPERS
-// ══════════════════════════════════════════════════════════════════
-function copyTranslation() {
-  const text = document.getElementById("translatedText")?.textContent;
-  if (text && text !== "—") {
-    navigator.clipboard.writeText(text).then(() => showToast("Copied!")).catch(() => {});
-  }
-}
-function copyText(id) {
-  const text = document.getElementById(id)?.textContent;
-  if (text && text !== "—") {
-    navigator.clipboard.writeText(text).then(() => showToast("Copied!")).catch(() => {});
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// TRAVEL HELPER
-// ══════════════════════════════════════════════════════════════════
-let currentCategory = "food";
-let travelPhrasesCache = {};
+let _cat = "food";
+let _tCache = {};
+let _tTimer = null;
 
 const TRAVEL_PHRASES = {
-  food: [
-    { en:"Where is a good restaurant?",         key:"food_1" },
-    { en:"I am vegetarian.",                      key:"food_2" },
-    { en:"The bill please.",                      key:"food_3" },
-    { en:"Is this spicy?",                        key:"food_4" },
-    { en:"No onion, no garlic please.",           key:"food_5" },
-    { en:"Water please.",                         key:"food_6" },
-    { en:"I am allergic to nuts.",                key:"food_7" },
-    { en:"Is this food fresh?",                   key:"food_8" },
+  food:      [
+    { en:"Where is a good restaurant?" }, { en:"I am vegetarian." },
+    { en:"The bill please." },            { en:"Is this spicy?" },
+    { en:"No onion, no garlic please." }, { en:"Water please." },
+    { en:"I am allergic to nuts." },      { en:"Is this food fresh?" },
   ],
   transport: [
-    { en:"Where is the bus stand?",               key:"transport_1" },
-    { en:"How much to go to the station?",        key:"transport_2" },
-    { en:"Stop here please.",                     key:"transport_3" },
-    { en:"Is this the right bus?",                key:"transport_4" },
-    { en:"I am lost, please help.",               key:"transport_5" },
-    { en:"Call an auto rickshaw please.",         key:"transport_6" },
-    { en:"How long will it take?",                key:"transport_7" },
-    { en:"Please go slow.",                       key:"transport_8" },
+    { en:"Where is the bus stand?" },      { en:"How much to go to the station?" },
+    { en:"Stop here please." },            { en:"Is this the right bus?" },
+    { en:"I am lost, please help." },      { en:"Call an auto rickshaw please." },
+    { en:"How long will it take?" },       { en:"Please go slow." },
   ],
   hotel: [
-    { en:"Do you have a room available?",         key:"hotel_1" },
-    { en:"What is the price per night?",          key:"hotel_2" },
-    { en:"Can I see the room?",                   key:"hotel_3" },
-    { en:"Please clean the room.",                key:"hotel_4" },
-    { en:"The AC is not working.",                key:"hotel_5" },
-    { en:"What time is checkout?",                key:"hotel_6" },
-    { en:"I need an extra blanket.",              key:"hotel_7" },
-    { en:"Can I get hot water?",                  key:"hotel_8" },
+    { en:"Do you have a room available?" }, { en:"What is the price per night?" },
+    { en:"Can I see the room?" },           { en:"Please clean the room." },
+    { en:"The AC is not working." },        { en:"What time is checkout?" },
+    { en:"I need an extra blanket." },      { en:"Can I get hot water?" },
   ],
   emergency: [
-    { en:"Please call the police.",               key:"emergency_1" },
-    { en:"I need a doctor.",                      key:"emergency_2" },
-    { en:"Where is the hospital?",                key:"emergency_3" },
-    { en:"I have lost my wallet.",                key:"emergency_4" },
-    { en:"This is an emergency!",                 key:"emergency_5" },
-    { en:"Help me please!",                       key:"emergency_6" },
-    { en:"I need medicine.",                      key:"emergency_7" },
-    { en:"Call an ambulance.",                    key:"emergency_8" },
+    { en:"Please call the police." },  { en:"I need a doctor." },
+    { en:"Where is the hospital?" },   { en:"I have lost my wallet." },
+    { en:"This is an emergency!" },    { en:"Help me please!" },
+    { en:"I need medicine." },         { en:"Call an ambulance." },
   ],
   shopping: [
-    { en:"How much does this cost?",              key:"shopping_1" },
-    { en:"Can you reduce the price?",             key:"shopping_2" },
-    { en:"I want to buy this.",                   key:"shopping_3" },
-    { en:"Do you have a smaller size?",           key:"shopping_4" },
-    { en:"Where is the market?",                  key:"shopping_5" },
-    { en:"Give me a discount.",                   key:"shopping_6" },
-    { en:"Do you accept cards?",                  key:"shopping_7" },
-    { en:"I want to return this.",                key:"shopping_8" },
+    { en:"How much does this cost?" },    { en:"Can you reduce the price?" },
+    { en:"I want to buy this." },         { en:"Do you have a smaller size?" },
+    { en:"Where is the market?" },        { en:"Give me a discount." },
+    { en:"Do you accept cards?" },        { en:"I want to return this." },
   ],
   greetings: [
-    { en:"Hello, how are you?",                   key:"greet_1" },
-    { en:"Good morning.",                         key:"greet_2" },
-    { en:"Good evening.",                         key:"greet_3" },
-    { en:"Thank you very much.",                  key:"greet_4" },
-    { en:"I don't understand.",                   key:"greet_5" },
-    { en:"Please speak slowly.",                  key:"greet_6" },
-    { en:"What is your name?",                    key:"greet_7" },
-    { en:"Nice to meet you.",                     key:"greet_8" },
+    { en:"Hello, how are you?" },          { en:"Good morning." },
+    { en:"Good evening." },                { en:"Thank you very much." },
+    { en:"I don't understand." },          { en:"Please speak slowly." },
+    { en:"What is your name?" },           { en:"Nice to meet you." },
   ],
 };
 
 function selectCategory(cat, btn) {
-  currentCategory = cat;
+  _cat = cat;
   document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
-  btn?.classList.add("active");
-  renderTravelPhrases();
+  if (btn) btn.classList.add("active");
+  clearTimeout(_tTimer);
+  _tTimer = setTimeout(renderTravelPhrases, 150);
 }
 
-let _travelRenderTimeout = null;
-async function loadTravelPhrases() {
-  clearTimeout(_travelRenderTimeout);
-  _travelRenderTimeout = setTimeout(renderTravelPhrases, 200);
+function loadTravelPhrases() {
+  clearTimeout(_tTimer);
+  _tTimer = setTimeout(renderTravelPhrases, 200);
 }
 
 async function renderTravelPhrases() {
   const fromLang = document.getElementById("travelFromLang")?.value || "en";
   const toLang   = document.getElementById("travelToLang")?.value   || "en";
-  const phrases  = TRAVEL_PHRASES[currentCategory] || [];
+  const phrases  = TRAVEL_PHRASES[_cat] || [];
   const list     = document.getElementById("phrasesList");
   const loading  = document.getElementById("travelLoading");
-
   if (!list) return;
   list.innerHTML = "";
   if (loading) loading.style.display = "flex";
 
   for (const phrase of phrases) {
-    const fromKey = `${phrase.key}_en_${fromLang}`;
-    const toKey   = `${phrase.key}_en_${toLang}`;
-
+    const fk = `${phrase.en}|${fromLang}`;
+    const tk = `${phrase.en}|${toLang}`;
     let fromText = phrase.en;
-    let toText   = "…";
-
     if (fromLang !== "en") {
-      fromText = travelPhrasesCache[fromKey] || await translateText(phrase.en, "en", fromLang);
-      travelPhrasesCache[fromKey] = fromText;
+      fromText = _tCache[fk] || await translateText(phrase.en, "en", fromLang);
+      _tCache[fk] = fromText;
     }
+    const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
+    _tCache[tk] = toText;
 
-    toText = travelPhrasesCache[toKey] || await translateText(phrase.en, "en", toLang);
-    travelPhrasesCache[toKey] = toText;
-
+    // BUG #7: zero SVG/icons — pure text buttons
     const card = document.createElement("div");
     card.className = "phrase-card";
-    const safeToText   = JSON.stringify(toText);
-    const safeLang     = JSON.stringify(toLang);
-    const safeCopyText = (toText || "").replace(/'/g,"&#39;");
     card.innerHTML = `
       <div class="phrase-texts">
         <div class="phrase-orig">${fromText}</div>
@@ -767,56 +747,43 @@ async function renderTravelPhrases() {
         <div class="phrase-en">${phrase.en}</div>
       </div>
       <div class="phrase-btns">
-        <button class="phrase-btn phrase-play" title="Play"
-          onclick="playPhrase(${safeToText},${safeLang},this)">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        </button>
-        <button class="phrase-btn" title="Copy"
-          onclick="navigator.clipboard.writeText(${safeToText}).then(()=>showToast('Copied!'))">
-          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-      </div>
-    `;
+        <button class="phrase-btn phrase-play"
+          onclick="playPhrase(${JSON.stringify(toText)},${JSON.stringify(toLang)})">Play</button>
+        <button class="phrase-btn phrase-copy"
+          onclick="navigator.clipboard.writeText(${JSON.stringify(toText)}).then(()=>showToast('Copied!'))">Copy</button>
+      </div>`;
     list.appendChild(card);
   }
   if (loading) loading.style.display = "none";
 }
 
-// ══════════════════════════════════════════════════════════════════
-// IMAGE TRANSLATION
-// ══════════════════════════════════════════════════════════════════
-function handleDrop(event) {
-  event.preventDefault();
+// ── IMAGE TRANSLATION ─────────────────────────────────────────────
+function handleDrop(e) {
+  e.preventDefault();
   document.getElementById("uploadArea")?.classList.remove("drag-over");
-  const file = event.dataTransfer?.files?.[0];
-  if (file) processImageFile(file);
+  const f = e.dataTransfer?.files?.[0];
+  if (f) processImageFile(f);
 }
-
-function handleImageUpload(event) {
-  const file = event.target?.files?.[0];
-  if (file) processImageFile(file);
-}
-
+function handleImageUpload(e) { const f = e.target?.files?.[0]; if (f) processImageFile(f); }
 function processImageFile(file) {
-  if (!file.type.startsWith("image/")) { showToast("Please upload an image file"); return; }
+  if (!file.type.startsWith("image/")) { showToast("Upload an image file"); return; }
   const reader = new FileReader();
   reader.onload = (e) => {
-    const preview    = document.getElementById("imgPreview");
-    const previewBox = document.getElementById("imgPreviewBox");
-    const translateBtn = document.getElementById("imgTranslateBtn");
-    if (preview)    preview.src = e.target.result;
-    if (previewBox) previewBox.style.display = "block";
-    if (translateBtn) translateBtn.style.display = "flex";
-    const uploadArea = document.getElementById("uploadArea");
-    if (uploadArea) uploadArea.style.display = "none";
+    const p = document.getElementById("imgPreview");
+    const pb = document.getElementById("imgPreviewBox");
+    const b  = document.getElementById("imgTranslateBtn");
+    if (p) p.src = e.target.result;
+    if (pb) pb.style.display = "block";
+    if (b)  b.style.display  = "flex";
+    const up = document.getElementById("uploadArea");
+    if (up) up.style.display = "none";
   };
   reader.readAsDataURL(file);
 }
-
 async function translateImage() {
-  const fileInput   = document.getElementById("imageInput");
-  const cameraInput = document.getElementById("cameraInput");
-  const file = fileInput?.files?.[0] || cameraInput?.files?.[0];
+  const fi = document.getElementById("imageInput");
+  const ci = document.getElementById("cameraInput");
+  const file = fi?.files?.[0] || ci?.files?.[0];
   if (!file) { showToast("No image selected"); return; }
 
   const fromLang = document.getElementById("imgFromLang")?.value || "en";
@@ -825,47 +792,43 @@ async function translateImage() {
   const btn      = document.getElementById("imgTranslateBtn");
 
   if (status) status.textContent = "Extracting text…";
-  if (btn) { btn.disabled = true; }
+  if (btn)    btn.disabled = true;
   document.getElementById("imgResults").style.display = "none";
 
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("from_lang", fromLang);
-  formData.append("to_lang", toLang);
+  const fd = new FormData();
+  fd.append("file", file); fd.append("from_lang", fromLang); fd.append("to_lang", toLang);
 
   try {
     const resp = await fetch(`${API_URL}/image-translate`, {
-      method: "POST",
-      body: formData,
-      signal: AbortSignal.timeout(30000)
+      method:"POST", body:fd, signal:AbortSignal.timeout(35000)
     });
-    if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+    if (!resp.ok) throw new Error("Server error " + resp.status);
     const data = await resp.json();
-
-    document.getElementById("imgExtractedText").textContent  = data.extracted || "No text found in image";
+    document.getElementById("imgExtractedText").textContent  = data.extracted || "No text found";
     document.getElementById("imgTranslatedText").textContent = data.translated || "—";
     document.getElementById("imgResults").style.display      = "block";
     if (status) status.textContent = "";
-  } catch(e) {
+    // BUG #4: auto-play image translation result
+    if (data.translated && data.translated !== "No text detected in this image.") {
+      await autoPlay(data.translated, toLang);
+    }
+  } catch (e) {
     if (status) status.textContent = "Error: " + e.message;
     showToast("Image translation failed");
   } finally {
-    if (btn) { btn.disabled = false; }
+    if (btn) btn.disabled = false;
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// HISTORY & FAVOURITES
-// ══════════════════════════════════════════════════════════════════
-function saveToHistory(original, translated, fromLang, toLang) {
+// ── HISTORY & FAVOURITES ──────────────────────────────────────────
+function saveToHistory(orig, trans, fromLang, toLang) {
   try {
-    const hist = JSON.parse(localStorage.getItem("vaani_history") || "[]");
-    // Deduplicate: don't add same original+toLang twice in a row
-    if (hist.length && hist[0].original === original && hist[0].toLang === toLang) return;
-    hist.unshift({ original, translated, fromLang, toLang, ts: Date.now() });
-    if (hist.length > 200) hist.splice(200);
-    localStorage.setItem("vaani_history", JSON.stringify(hist));
-  } catch(e) {}
+    const h = JSON.parse(localStorage.getItem("vaani_history") || "[]");
+    if (h.length && h[0].original === orig && h[0].toLang === toLang) return; // dedup
+    h.unshift({ original:orig, translated:trans, fromLang, toLang, ts:Date.now() });
+    if (h.length > 200) h.splice(200);
+    localStorage.setItem("vaani_history", JSON.stringify(h));
+  } catch(_){}
 }
 
 function renderHistory() {
@@ -873,62 +836,46 @@ function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
   if (!hist.length) {
-    list.innerHTML = `<div class="empty-state">
-      <div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-      <p class="es-title">No history yet</p>
-      <p class="es-sub">Start translating to see your history here</p>
-    </div>`;
+    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here</p></div>`;
     return;
   }
-  list.innerHTML = hist.map((h, i) => `
+  list.innerHTML = hist.map((h,i) => `
     <div class="hist-card">
       <div class="hist-langs">${LANG_NAMES[h.fromLang]||h.fromLang} → ${LANG_NAMES[h.toLang]||h.toLang}</div>
       <div class="hist-orig">${h.original}</div>
       <div class="hist-trans">${h.translated}</div>
       <div class="hist-actions">
-        <button class="hist-btn" onclick="speakText(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)}).then(a=>playAndTrack(a))">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
-        </button>
-        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">
-          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy
-        </button>
-        <button class="hist-btn" onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">
-          <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Save
-        </button>
-        <button class="hist-btn del" onclick="deleteHistory(${i})">
-          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>Del
-        </button>
+        <button class="hist-btn" onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
+        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
+        <button class="hist-btn" onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">Save</button>
+        <button class="hist-btn del" onclick="deleteHistory(${i})">Delete</button>
       </div>
-    </div>
-  `).join("");
+    </div>`).join("");
 }
 
-function deleteHistory(index) {
-  const hist = JSON.parse(localStorage.getItem("vaani_history") || "[]");
-  hist.splice(index, 1);
-  localStorage.setItem("vaani_history", JSON.stringify(hist));
-  renderHistory();
+function deleteHistory(i) {
+  const h = JSON.parse(localStorage.getItem("vaani_history") || "[]");
+  h.splice(i,1); localStorage.setItem("vaani_history", JSON.stringify(h)); renderHistory();
 }
 
 function saveSingleToFavourites() {
-  const original   = document.getElementById("originalText")?.textContent;
-  const translated = document.getElementById("translatedText")?.textContent;
-  const fromLang   = document.getElementById("fromLang")?.value;
-  const toLang     = document.getElementById("toLang")?.value;
-  if (!translated || translated === "—" || translated === "…") return;
-  saveFavourite(original, translated, fromLang, toLang);
+  const o = document.getElementById("originalText")?.textContent;
+  const t = document.getElementById("translatedText")?.textContent;
+  const f = document.getElementById("fromLang")?.value;
+  const tl = document.getElementById("toLang")?.value;
+  if (!t || t === "—" || t === "…") return;
+  saveFavourite(o, t, f, tl);
 }
 
-function saveFavourite(original, translated, fromLang, toLang) {
+function saveFavourite(orig, trans, fromLang, toLang) {
   try {
     const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
-    const exists = favs.some(f => f.original === original && f.toLang === toLang);
-    if (exists) { showToast("Already saved!"); return; }
-    favs.unshift({ original, translated, fromLang, toLang, ts: Date.now() });
+    if (favs.some(f => f.original === orig && f.toLang === toLang)) { showToast("Already saved!"); return; }
+    favs.unshift({ original:orig, translated:trans, fromLang, toLang, ts:Date.now() });
     localStorage.setItem("vaani_favs", JSON.stringify(favs));
-    showToast("⭐ Saved to favourites");
+    showToast("Saved to favourites");
     renderFavourites();
-  } catch(e) {}
+  } catch(_){}
 }
 
 function renderFavourites() {
@@ -936,78 +883,174 @@ function renderFavourites() {
   const list = document.getElementById("favouritesList");
   if (!list) return;
   if (!favs.length) {
-    list.innerHTML = `<div class="empty-state">
-      <div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
-      <p class="es-title">No favourites yet</p>
-      <p class="es-sub">Tap the star after a translation to save it here</p>
-    </div>`;
+    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
     return;
   }
-  list.innerHTML = favs.map((f, i) => `
+  list.innerHTML = favs.map((f,i) => `
     <div class="hist-card fav-card">
       <div class="hist-langs">${LANG_NAMES[f.fromLang]||f.fromLang} → ${LANG_NAMES[f.toLang]||f.toLang}</div>
       <div class="hist-orig">${f.original}</div>
       <div class="hist-trans">${f.translated}</div>
       <div class="hist-actions">
-        <button class="hist-btn" onclick="speakText(${JSON.stringify(f.translated)},${JSON.stringify(f.toLang)}).then(a=>playAndTrack(a))">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
-        </button>
-        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(f.translated)}).then(()=>showToast('Copied!'))">
-          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/></svg>Copy
-        </button>
-        <button class="hist-btn del" onclick="deleteFavourite(${i})">
-          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>Remove
-        </button>
+        <button class="hist-btn" onclick="autoPlay(${JSON.stringify(f.translated)},${JSON.stringify(f.toLang)})">Play</button>
+        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(f.translated)}).then(()=>showToast('Copied!'))">Copy</button>
+        <button class="hist-btn del" onclick="deleteFavourite(${i})">Remove</button>
+      </div>
+    </div>`).join("");
+}
+
+function deleteFavourite(i) {
+  const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
+  favs.splice(i,1); localStorage.setItem("vaani_favs", JSON.stringify(favs)); renderFavourites();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// BUG #8 FIX — SETTINGS PAGE (full implementation)
+// ══════════════════════════════════════════════════════════════════
+function renderSettingsPage() {
+  const container = document.getElementById("settingsContainer");
+  if (!container) return;
+
+  const theme    = localStorage.getItem("vaani_theme") || "dark";
+  const gender   = getVoiceGender();
+  const fromPref = localStorage.getItem("vaani_lang_fromLang") || "te";
+  const toPref   = localStorage.getItem("vaani_lang_toLang")   || "ta";
+
+  container.innerHTML = `
+    <div class="stg-section">
+      <div class="stg-title">Language Preferences</div>
+      <div class="stg-row">
+        <label class="stg-label">Default Source Language</label>
+        <select class="stg-select" onchange="stgSaveLang('fromLang',this.value)">
+          ${buildLangOptions(fromPref)}
+        </select>
+      </div>
+      <div class="stg-row">
+        <label class="stg-label">Default Target Language</label>
+        <select class="stg-select" onchange="stgSaveLang('toLang',this.value)">
+          ${buildLangOptions(toPref)}
+        </select>
       </div>
     </div>
-  `).join("");
+
+    <div class="stg-section">
+      <div class="stg-title">Voice Selection</div>
+      <div class="stg-row">
+        <label class="stg-label">Voice Gender</label>
+        <div class="stg-radios">
+          <label class="stg-radio-lbl">
+            <input type="radio" name="settingsGender" value="female"
+              ${gender === "female" ? "checked" : ""} onchange="setVoiceGender('female')">
+            <span>Female</span>
+          </label>
+          <label class="stg-radio-lbl">
+            <input type="radio" name="settingsGender" value="male"
+              ${gender === "male" ? "checked" : ""} onchange="setVoiceGender('male')">
+            <span>Male</span>
+          </label>
+        </div>
+      </div>
+      <div class="stg-note">Male voice requires Bhashini API configuration. Female voice works with both Bhashini and gTTS fallback.</div>
+    </div>
+
+    <div class="stg-section">
+      <div class="stg-title">Appearance</div>
+      <div class="stg-row">
+        <label class="stg-label">Theme</label>
+        <div class="stg-radios">
+          <label class="stg-radio-lbl">
+            <input type="radio" name="stgTheme" value="dark"
+              ${theme === "dark" ? "checked" : ""} onchange="applyTheme('dark')">
+            <span>Dark</span>
+          </label>
+          <label class="stg-radio-lbl">
+            <input type="radio" name="stgTheme" value="light"
+              ${theme === "light" ? "checked" : ""} onchange="applyTheme('light')">
+            <span>Light</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="stg-section">
+      <div class="stg-title">Data &amp; Cache</div>
+      <div class="stg-btn-col">
+        <button class="stg-btn stg-warn" onclick="stgClearHistory()">Clear Translation History</button>
+        <button class="stg-btn stg-warn" onclick="stgClearFavs()">Clear Favourites</button>
+        <button class="stg-btn stg-danger" onclick="stgResetAll()">Reset All App Data</button>
+      </div>
+    </div>
+
+    <div class="stg-section">
+      <div class="stg-title">About</div>
+      <div class="stg-about">
+        <div>Vaani — Indian Language Translator</div>
+        <div>Translation: Bhashini NMT + Google Translate fallback</div>
+        <div>Speech: Bhashini TTS + gTTS fallback</div>
+        <div>30+ Indian languages supported</div>
+      </div>
+    </div>
+  `;
 }
 
-function deleteFavourite(index) {
-  const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
-  favs.splice(index, 1);
-  localStorage.setItem("vaani_favs", JSON.stringify(favs));
+function stgSaveLang(field, val) {
+  localStorage.setItem(`vaani_lang_${field}`, val);
+  const el = document.getElementById(field);
+  if (el && LANG_CONFIG[val]) el.value = val;
+}
+
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  localStorage.setItem("vaani_theme", t);
+}
+
+function stgClearHistory() {
+  if (!confirm("Clear all translation history?")) return;
+  localStorage.removeItem("vaani_history");
+  showToast("History cleared");
+  renderHistory();
+}
+function stgClearFavs() {
+  if (!confirm("Clear all favourites?")) return;
+  localStorage.removeItem("vaani_favs");
+  showToast("Favourites cleared");
   renderFavourites();
 }
+function stgResetAll() {
+  if (!confirm("Reset ALL app data? Cannot be undone.")) return;
+  localStorage.clear();
+  cacheClear();
+  showToast("All data reset");
+  setTimeout(() => location.reload(), 800);
+}
 
-// ══════════════════════════════════════════════════════════════════
-// NAVIGATION
-// ══════════════════════════════════════════════════════════════════
-const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites"];
+// ── NAVIGATION ────────────────────────────────────────────────────
+// BUG #6: Settings is in PAGES, branding text removed from everywhere
+const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
 
 function navigateTo(page) {
   if (!PAGES.includes(page)) page = "Home";
   PAGES.forEach(p => {
-    const el   = document.getElementById(`page${p}`);
-    const item = document.getElementById(`menu${p}`);
-    if (el)   el.classList.toggle("active", p === page);
-    if (item) item.classList.toggle("active", p === page);
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
   closeMenu();
   history.pushState({ page }, "", `#${page.toLowerCase()}`);
-
   if (page === "Travel")     renderTravelPhrases();
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
-
-  // Stop any active mic when navigating away
-  Object.values(micContexts).forEach(ctx => {
-    if (ctx.recognition) {
-      try { ctx.recognition.abort(); } catch(e){}
-      ctx.recognition = null;
-    }
-    ctx.state = MicState.IDLE;
+  if (page === "Settings")   renderSettingsPage();
+  // Stop all mics when navigating away
+  Object.values(_mic).forEach(ctx => {
+    _killMic(ctx);
   });
+  ["micBtn","micBtnA","micBtnB"].forEach(id =>
+    document.getElementById(id)?.classList.remove("listening")
+  );
 }
+window.addEventListener("popstate", e => navigateTo(e.state?.page || "Home"));
 
-window.addEventListener("popstate", (e) => {
-  const page = e.state?.page || "Home";
-  navigateTo(page);
-});
-
-// ══════════════════════════════════════════════════════════════════
-// MENU
-// ══════════════════════════════════════════════════════════════════
+// ── MENU ──────────────────────────────────────────────────────────
 function toggleMenu() {
   document.getElementById("sideMenu")?.classList.toggle("open");
   document.getElementById("menuOverlay")?.classList.toggle("open");
@@ -1017,19 +1060,13 @@ function closeMenu() {
   document.getElementById("menuOverlay")?.classList.remove("open");
 }
 
-// ══════════════════════════════════════════════════════════════════
-// THEME
-// ══════════════════════════════════════════════════════════════════
+// ── THEME ─────────────────────────────────────────────────────────
 function toggleTheme() {
-  const html = document.documentElement;
-  const newTheme = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
-  html.setAttribute("data-theme", newTheme);
-  localStorage.setItem("vaani_theme", newTheme);
+  const cur = document.documentElement.getAttribute("data-theme");
+  applyTheme(cur === "dark" ? "light" : "dark");
 }
 
-// ══════════════════════════════════════════════════════════════════
-// TOAST
-// ══════════════════════════════════════════════════════════════════
+// ── TOAST ─────────────────────────────────────────────────────────
 let _toastTimer = null;
 function showToast(msg) {
   const t = document.getElementById("toast");
@@ -1040,63 +1077,29 @@ function showToast(msg) {
   _toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// KEEP-ALIVE PING (prevents Render free-tier sleep)
-// ══════════════════════════════════════════════════════════════════
+// ── KEEP-ALIVE ────────────────────────────────────────────────────
 function pingBackend() {
-  fetch(`${API_URL}/ping`, {
-    method: "GET",
-    signal: AbortSignal.timeout(10000)
-  }).then(r => r.json())
-    .then(d => console.log("[Vaani] Backend:", d.status, "| Bhashini:", d.bhashini))
-    .catch(() => {});
+  fetch(`${API_URL}/ping`, { signal: AbortSignal.timeout(10000) })
+    .then(r => r.json()).then(d => console.log("[Vaani] ping:", d.status)).catch(() => {});
 }
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
-// ══════════════════════════════════════════════════════════════════
-// Firebase stubs (overridden by firebase.js when loaded)
-// ══════════════════════════════════════════════════════════════════
-if (typeof window.signInWithGoogle === "undefined") {
-  window.signInWithGoogle = () => showToast("Sign-in coming soon");
-}
-if (typeof window.signOutUser === "undefined") {
-  window.signOutUser = () => showToast("Signed out");
-}
+// Firebase stubs
+if (typeof window.signInWithGoogle === "undefined") window.signInWithGoogle = () => showToast("Sign-in coming soon");
+if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => showToast("Signed out");
 
-// ══════════════════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════════════════
+// ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   // Restore theme
-  const savedTheme = localStorage.getItem("vaani_theme") || "dark";
-  document.documentElement.setAttribute("data-theme", savedTheme);
-
-  // Sync gender buttons
+  applyTheme(localStorage.getItem("vaani_theme") || "dark");
+  // Sync gender toggles
   syncGenderButtons();
-
-  // Populate all language dropdowns
+  // Build all language dropdowns + attach listeners
   initLanguageSelects();
-
-  // Handle language change → retranslate
-  ["fromLang","toLang"].forEach(id => {
-    document.getElementById(id)?.addEventListener("change", async () => {
-      const origText   = document.getElementById("originalText")?.textContent;
-      const fromLang   = document.getElementById("fromLang")?.value;
-      const toLang     = document.getElementById("toLang")?.value;
-      if (origText && origText !== "—" && origText.trim()) {
-        document.getElementById("translatedText").textContent = "…";
-        const translated = await translateText(origText, fromLang, toLang);
-        document.getElementById("translatedText").textContent = translated || "—";
-      }
-    });
-  });
-
   // Navigate to hash or Home
-  const hash      = location.hash.replace("#", "");
-  const startPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
-  navigateTo(startPage);
-
+  const hash = location.hash.replace("#","");
+  navigateTo(PAGES.find(p => p.toLowerCase() === hash) || "Home");
   // Render stored data
   renderHistory();
   renderFavourites();
