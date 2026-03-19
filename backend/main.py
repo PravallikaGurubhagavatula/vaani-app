@@ -1,5 +1,5 @@
 """
-Vaani Backend — FastAPI  v2.0
+Vaani Backend — FastAPI  v3.0
 ═══════════════════════════════════════════════════════════════════
 TRANSLATION PRIORITY (most Indian-accurate first):
   1. Bhashini NMT  — trained on Samanantar + IndicCorp Indian data
@@ -13,6 +13,10 @@ TTS PRIORITY:
 ASR PRIORITY:
   1. Bhashini ASR  — Indian-accent trained
   2. Browser Web Speech API (handled in frontend)
+
+OCR PRIORITY:
+  1. Google Cloud Vision API  — production-grade, preserves structure
+  2. Tesseract (Pillow-based) — fallback
 
 All Bhashini calls are wrapped in try/except — app NEVER crashes if
 Bhashini is unconfigured or down.
@@ -30,7 +34,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import requests, io, os, re, json, base64, hashlib, time
 from functools import lru_cache
 
-app = FastAPI(title="Vaani API", version="2.0")
+app = FastAPI(title="Vaani API", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,8 +45,6 @@ app.add_middleware(
 
 # ══════════════════════════════════════════════════════════════════
 # BHASHINI CONFIG
-# Set these environment variables in Render/Railway/etc.
-# Without them the app still works — it falls back to Google.
 # ══════════════════════════════════════════════════════════════════
 BHASHINI_USER_ID        = os.environ.get("BHASHINI_USER_ID", "")
 BHASHINI_ULCA_API_KEY   = os.environ.get("BHASHINI_ULCA_API_KEY", "")
@@ -50,6 +52,12 @@ BHASHINI_INFERENCE_KEY  = os.environ.get("BHASHINI_INFERENCE_KEY", "")
 
 BHASHINI_PIPELINE_URL   = "https://meity-auth.ulcacontrib.org/ulca/apis/v0/model/getModelsPipeline"
 BHASHINI_INFER_URL      = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline"
+
+# ══════════════════════════════════════════════════════════════════
+# GOOGLE VISION API CONFIG
+# ══════════════════════════════════════════════════════════════════
+GOOGLE_VISION_API_KEY   = os.environ.get("GOOGLE_VISION_API_KEY", "")
+GOOGLE_VISION_URL       = "https://vision.googleapis.com/v1/images:annotate"
 
 # ── Bhashini language code map ────────────────────────────────────
 BHASHINI_LANG_MAP = {
@@ -68,7 +76,7 @@ NON_LATIN_LANGS = {
     "sat","mni-Mtei","brx","lus","awa","mag","hne","bgc","raj","kha","lep"
 }
 
-# ── Simple in-memory translation cache (avoids repeat API calls) ──
+# ── Simple in-memory translation cache ──
 _trans_cache: dict = {}
 _cache_max = 2000
 
@@ -77,7 +85,6 @@ def cache_get(key: str):
 
 def cache_set(key: str, value: str):
     if len(_trans_cache) >= _cache_max:
-        # Remove oldest 20%
         keys = list(_trans_cache.keys())
         for k in keys[:int(_cache_max * 0.2)]:
             _trans_cache.pop(k, None)
@@ -85,7 +92,145 @@ def cache_set(key: str, value: str):
 
 
 # ══════════════════════════════════════════════════════════════════
-# BHASHINI HELPERS
+# GOOGLE VISION OCR
+# ══════════════════════════════════════════════════════════════════
+
+def google_vision_ocr(image_bytes: bytes, lang_hint: str = "en") -> dict:
+    """
+    Use Google Cloud Vision API for production-grade OCR.
+    Returns dict with:
+      - text: full reconstructed text preserving structure
+      - blocks: list of paragraph blocks
+      - engine: "google_vision"
+    Falls back gracefully if API key not set.
+    """
+    if not GOOGLE_VISION_API_KEY:
+        return None
+
+    # Map our lang codes to BCP-47 hints for Vision API
+    lang_hint_map = {
+        "te": "te", "ta": "ta", "hi": "hi", "kn": "kn", "ml": "ml",
+        "mr": "mr", "bn": "bn", "gu": "gu", "pa": "pa", "ur": "ur",
+        "or": "or", "as": "as", "ne": "ne", "sa": "sa", "en": "en",
+        "sd": "ur", "mai": "hi", "doi": "hi", "kok": "mr", "bho": "hi",
+        "mwr": "hi", "tcy": "kn", "ks": "ur",
+    }
+    bcp47 = lang_hint_map.get(lang_hint, "en")
+
+    try:
+        img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        payload = {
+            "requests": [{
+                "image": {"content": img_b64},
+                "features": [
+                    {"type": "DOCUMENT_TEXT_DETECTION", "maxResults": 1}
+                ],
+                "imageContext": {
+                    "languageHints": [bcp47, "en"]
+                }
+            }]
+        }
+
+        resp = requests.post(
+            f"{GOOGLE_VISION_URL}?key={GOOGLE_VISION_API_KEY}",
+            json=payload,
+            timeout=30
+        )
+
+        if not resp.ok:
+            print(f"[Vision API] HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        data = resp.json()
+        responses = data.get("responses", [{}])
+        if not responses:
+            return None
+
+        r = responses[0]
+
+        if "error" in r:
+            print(f"[Vision API] Error: {r['error']}")
+            return None
+
+        full_annotation = r.get("fullTextAnnotation", {})
+        if not full_annotation:
+            # Try simple text annotation
+            simple = r.get("textAnnotations", [])
+            if simple:
+                return {
+                    "text": simple[0].get("description", "").strip(),
+                    "blocks": [],
+                    "engine": "google_vision_simple"
+                }
+            return None
+
+        # Reconstruct text preserving structure from fullTextAnnotation
+        reconstructed = _reconstruct_vision_text(full_annotation)
+
+        return {
+            "text": reconstructed,
+            "blocks": [],
+            "engine": "google_vision"
+        }
+
+    except Exception as e:
+        print(f"[Vision API] Exception: {e}")
+        return None
+
+
+def _reconstruct_vision_text(full_annotation: dict) -> str:
+    """
+    Reconstruct text from Google Vision fullTextAnnotation,
+    preserving paragraph structure, line breaks, bullets, and emojis.
+    """
+    pages = full_annotation.get("pages", [])
+    if not pages:
+        # Fall back to raw text
+        return full_annotation.get("text", "").strip()
+
+    result_lines = []
+
+    for page in pages:
+        for block in page.get("blocks", []):
+            block_lines = []
+            for paragraph in block.get("paragraphs", []):
+                para_words = []
+                for word in paragraph.get("words", []):
+                    symbols = word.get("symbols", [])
+                    word_text = ""
+                    for sym in symbols:
+                        char = sym.get("text", "")
+                        word_text += char
+                        # Check for line break or paragraph break
+                        prop = sym.get("property", {})
+                        detected_break = prop.get("detectedBreak", {})
+                        break_type = detected_break.get("type", "")
+                        if break_type in ("LINE_BREAK", "EOL_SURE_SPACE"):
+                            word_text += "\n"
+                        elif break_type == "HYPHEN":
+                            word_text += "-"
+                    para_words.append(word_text)
+
+                para_text = " ".join(para_words).strip()
+                # Clean up spaces before newlines
+                para_text = re.sub(r' +\n', '\n', para_text)
+                para_text = re.sub(r'\n +', '\n', para_text)
+                if para_text:
+                    block_lines.append(para_text)
+
+            if block_lines:
+                result_lines.append("\n".join(block_lines))
+
+    if result_lines:
+        return "\n\n".join(result_lines).strip()
+
+    # Ultimate fallback: use the raw text field
+    return full_annotation.get("text", "").strip()
+
+
+# ══════════════════════════════════════════════════════════════════
+# BHASHINI HELPERS (unchanged from v2.0)
 # ══════════════════════════════════════════════════════════════════
 
 def bhashini_available() -> bool:
@@ -95,7 +240,6 @@ def get_bhashini_lang(code: str) -> str:
     return BHASHINI_LANG_MAP.get(code, code)
 
 def get_bhashini_pipeline(task: str, src_lang: str, tgt_lang: str = None) -> dict | None:
-    """Fetch Bhashini pipeline service ID for a given task."""
     if not bhashini_available():
         return None
     try:
@@ -130,11 +274,6 @@ def get_bhashini_pipeline(task: str, src_lang: str, tgt_lang: str = None) -> dic
 
 
 def bhashini_transliterate(text: str, lang: str) -> str | None:
-    """
-    Romanized text → native script via Bhashini.
-    E.g. 'vandukunnava' → 'వండుకున్నావా' (cook) not వందుకున్నావా (come).
-    Bhashini's model is trained on Indian data — Google fails here.
-    """
     if not bhashini_available():
         return None
     bl = get_bhashini_lang(lang)
@@ -162,7 +301,6 @@ def bhashini_transliterate(text: str, lang: str) -> str | None:
                           .get("output", [{}])[0]
                           .get("target", ""))
             if native and not native.isascii():
-                print(f"[Bhashini Translit] '{text[:30]}' → '{native[:30]}'")
                 return native
     except Exception as e:
         print(f"[Bhashini Translit/{lang}] {e}")
@@ -170,12 +308,6 @@ def bhashini_transliterate(text: str, lang: str) -> str | None:
 
 
 def bhashini_translate(text: str, src_lang: str, dest_lang: str) -> str | None:
-    """
-    Bhashini NMT — the BEST engine for Indian↔Indian language pairs.
-    Trained on Samanantar (millions of Indian parallel sentences) +
-    IndicCorp (8.5B words of actual Indian text).
-    Understands colloquial Telugu/Hindi/Tamil that Google mangles.
-    """
     if not bhashini_available():
         return None
     bl_src  = get_bhashini_lang(src_lang)
@@ -184,7 +316,6 @@ def bhashini_translate(text: str, src_lang: str, dest_lang: str) -> str | None:
         return text
     pipeline = get_bhashini_pipeline("translation", bl_src, bl_dest)
     if not pipeline or not pipeline.get("serviceId"):
-        print(f"[Bhashini NMT] No pipeline for {bl_src}→{bl_dest}")
         return None
     try:
         payload = {
@@ -206,7 +337,6 @@ def bhashini_translate(text: str, src_lang: str, dest_lang: str) -> str | None:
                               .get("output", [{}])[0]
                               .get("target", ""))
             if translated and translated.strip():
-                print(f"[Bhashini NMT] '{text[:30]}' → '{translated[:30]}'")
                 return translated
     except Exception as e:
         print(f"[Bhashini NMT/{src_lang}→{dest_lang}] {e}")
@@ -214,7 +344,6 @@ def bhashini_translate(text: str, src_lang: str, dest_lang: str) -> str | None:
 
 
 def bhashini_tts(text: str, lang: str, gender: str = "female") -> bytes | None:
-    """Bhashini TTS — human quality, gender-aware, Indian language voices."""
     if not bhashini_available():
         return None
     bl = get_bhashini_lang(lang)
@@ -250,7 +379,6 @@ def bhashini_tts(text: str, lang: str, gender: str = "female") -> bytes | None:
 
 
 def bhashini_asr(audio_b64: str, lang: str) -> str | None:
-    """Bhashini ASR — Indian-accent trained speech recognition."""
     if not bhashini_available():
         return None
     bl = get_bhashini_lang(lang)
@@ -285,7 +413,7 @@ def bhashini_asr(audio_b64: str, lang: str) -> str | None:
 
 
 # ══════════════════════════════════════════════════════════════════
-# GOOGLE TRANSLATE HELPERS
+# GOOGLE TRANSLATE HELPERS (unchanged from v2.0)
 # ══════════════════════════════════════════════════════════════════
 
 GT_CODE_MAP = {
@@ -324,23 +452,15 @@ def _extract_translation(data) -> str:
     return ""
 
 def _is_phonetic_only(result: str, dest_lang: str) -> bool:
-    """True if Google returned phonetic/romanized output instead of a real translation."""
     if dest_lang in NON_LATIN_LANGS:
         if result and result.isascii():
             return True
     return False
 
 def translate_romanized_robust(text: str, src_lang: str, dest_lang: str) -> str | None:
-    """
-    3-strategy waterfall for romanized Indian text (e.g. typing Telugu in English letters).
-    Strategy 1: tw-ob client with explicit src lang (most accurate for short phrases)
-    Strategy 2: auto-detect + language family check
-    Strategy 3: pivot via English (most reliable fallback)
-    """
     gt_src  = ROMANIZED_HINT_MAP.get(src_lang, src_lang)
     gt_dest = get_gt_code(dest_lang)
 
-    # Strategy 1: tw-ob with explicit romanized source hint
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = [("client","tw-ob"),("sl",gt_src),("tl",gt_dest),("dt","t"),("q",text)]
@@ -353,22 +473,18 @@ def translate_romanized_robust(text: str, src_lang: str, dest_lang: str) -> str 
             data   = resp.json()
             result = _extract_translation(data)
             if result and not _is_phonetic_only(result, dest_lang):
-                print(f"[Romanized S1] '{text[:20]}' → '{result[:20]}'")
                 return result
     except Exception as e:
         print(f"[Romanized S1] {e}")
 
-    # Strategy 2: auto-detect
     try:
         data   = _gtx_call(text, "auto", gt_dest, dt_flags=["t","ld"])
         result = _extract_translation(data)
         if result and not _is_phonetic_only(result, dest_lang):
-            print(f"[Romanized S2] '{text[:20]}' → '{result[:20]}'")
             return result
     except Exception as e:
         print(f"[Romanized S2] {e}")
 
-    # Strategy 3: romanized → English → target (pivot)
     try:
         data_en  = _gtx_call(text, "auto", "en")
         english  = _extract_translation(data_en)
@@ -378,7 +494,6 @@ def translate_romanized_robust(text: str, src_lang: str, dest_lang: str) -> str 
             data_final = _gtx_call(english, "en", gt_dest)
             result = _extract_translation(data_final)
             if result and not _is_phonetic_only(result, dest_lang):
-                print(f"[Romanized S3] pivot '{text[:20]}' → EN '{english[:20]}' → '{result[:20]}'")
                 return result
     except Exception as e:
         print(f"[Romanized S3] {e}")
@@ -454,7 +569,7 @@ def get_gtts_lang(code: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
-# OCR CONFIG
+# TESSERACT OCR FALLBACK CONFIG
 # ══════════════════════════════════════════════════════════════════
 
 TESS_LANG_MAP = {
@@ -468,15 +583,11 @@ TESS_LANG_MAP = {
 
 def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
     """Enhance image for better OCR accuracy, especially for Indian scripts."""
-    # Convert to grayscale
     if image.mode != 'L':
         image = image.convert('L')
-    # Increase contrast
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(2.0)
-    # Sharpen
     image = image.filter(ImageFilter.SHARPEN)
-    # Scale up small images (Tesseract works better at 300 DPI+)
     w, h = image.size
     if w < 1000:
         scale = 1000 / w
@@ -490,10 +601,6 @@ def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
 
 @app.post("/translate")
 async def translate_text(data: dict):
-    """
-    Main translation endpoint.
-    Priority: Bhashini NMT → Google romanized waterfall → Google Translate
-    """
     text      = (data.get("text") or "").strip()
     src       = data.get("from_lang", "auto")
     dest      = data.get("to_lang", "en")
@@ -501,11 +608,9 @@ async def translate_text(data: dict):
     if not text:
         return JSONResponse(status_code=400, content={"error": "No text provided"})
 
-    # Same-language shortcut
     if src == dest and src != "auto":
         return {"translated": text, "engine": "passthrough"}
 
-    # Cache check
     cache_key = f"{text}|||{src}|||{dest}"
     cached = cache_get(cache_key)
     if cached:
@@ -521,21 +626,17 @@ async def translate_text(data: dict):
     working_text = text
     working_src  = src
 
-    # ── Step A: Bhashini transliteration for romanized input ──────
     if is_romanized and bhashini_available():
         native = bhashini_transliterate(text, src)
         if native and not native.isascii():
             working_text = native
-            print(f"[Translate] Bhashini translit: '{text[:20]}' → '{native[:20]}'")
 
-    # ── Step B: Bhashini NMT (best for Indian→Indian pairs) ───────
     if bhashini_available() and working_src != "auto":
         result = bhashini_translate(working_text, working_src, dest)
         if result and result.strip():
             cache_set(cache_key, result)
             return {"translated": result, "engine": "bhashini"}
 
-    # ── Step C: Romanized Google waterfall (if Bhashini unavailable)
     if is_romanized:
         result = translate_romanized_robust(text, src, dest)
         if result and result.strip():
@@ -543,7 +644,6 @@ async def translate_text(data: dict):
             return {"translated": result, "engine": "google-romanized"}
         working_src = "auto"
 
-    # ── Step D: Google Translate fallback ────────────────────────
     try:
         chunks = split_text(working_text)
         parts  = [translate_chunk(c, working_src, dest) for c in chunks]
@@ -556,7 +656,6 @@ async def translate_text(data: dict):
 
 @app.post("/speak")
 async def speak(data: dict):
-    """TTS endpoint. Bhashini first (gender-aware), gTTS fallback."""
     text   = (data.get("text") or "").strip()
     lang   = data.get("lang", "en")
     gender = data.get("gender", "female")
@@ -567,9 +666,6 @@ async def speak(data: dict):
     if gender not in ("male", "female"):
         gender = "female"
 
-    print(f"[TTS] lang={lang} gender={gender} text='{text[:40]}'")
-
-    # Try Bhashini TTS first (human voice, gender-aware)
     audio_bytes = bhashini_tts(text, lang, gender)
     if audio_bytes and len(audio_bytes) > 100:
         return StreamingResponse(
@@ -583,7 +679,6 @@ async def speak(data: dict):
             }
         )
 
-    # gTTS fallback
     tts_lang = get_gtts_lang(lang)
     try:
         tts = gTTS(text=text, lang=tts_lang, slow=False)
@@ -595,7 +690,6 @@ async def speak(data: dict):
         )
     except Exception as e:
         print(f"[gTTS/{tts_lang}] {e}")
-        # Last resort: English gTTS
         try:
             tts = gTTS(text=text, lang="en")
             tts.save("/tmp/vaani_out.mp3")
@@ -607,7 +701,6 @@ async def speak(data: dict):
 
 @app.post("/asr")
 async def asr_endpoint(data: dict):
-    """Bhashini ASR endpoint for server-side speech recognition."""
     audio_b64 = data.get("audio_b64", "")
     lang      = data.get("lang", "hi")
     if not audio_b64:
@@ -625,61 +718,97 @@ async def image_translate(
     from_lang: str   = Form("en"),
     to_lang: str     = Form("en")
 ):
-    """OCR + translate. Enhanced preprocessing for Indian scripts."""
+    """
+    OCR + translate.
+    Priority: Google Vision API → Tesseract fallback
+    Preserves text structure, emojis, bullet points.
+    """
     contents = await file.read()
-    image    = Image.open(io.BytesIO(contents))
 
-    # Preprocess for better OCR accuracy
-    processed = preprocess_image_for_ocr(image)
-
-    tess_lang = TESS_LANG_MAP.get(from_lang, "eng")
-
-    # Try language-specific OCR first, then fall back to eng+script combo
     extracted_text = ""
-    for attempt_lang in [tess_lang, f"{tess_lang}+eng", "eng"]:
-        try:
-            text = pytesseract.image_to_string(processed, lang=attempt_lang,
-                                               config="--oem 3 --psm 6")
-            text = text.strip()
-            if text and len(text) > 2:
-                extracted_text = text
-                break
-        except Exception:
-            continue
+    ocr_engine = "unknown"
+
+    # ── Step 1: Try Google Vision API ────────────────────────────
+    vision_result = google_vision_ocr(contents, from_lang)
+    if vision_result and vision_result.get("text", "").strip():
+        extracted_text = vision_result["text"].strip()
+        ocr_engine = vision_result["engine"]
+        print(f"[OCR] Vision API extracted {len(extracted_text)} chars")
+    else:
+        # ── Step 2: Tesseract fallback ────────────────────────────
+        print(f"[OCR] Vision API unavailable, using Tesseract")
+        image = Image.open(io.BytesIO(contents))
+        processed = preprocess_image_for_ocr(image)
+        tess_lang = TESS_LANG_MAP.get(from_lang, "eng")
+
+        for attempt_lang in [tess_lang, f"{tess_lang}+eng", "eng"]:
+            try:
+                text = pytesseract.image_to_string(processed, lang=attempt_lang,
+                                                   config="--oem 3 --psm 6")
+                text = text.strip()
+                if text and len(text) > 2:
+                    extracted_text = text
+                    ocr_engine = "tesseract"
+                    break
+            except Exception:
+                continue
+
+        if not extracted_text:
+            try:
+                image = Image.open(io.BytesIO(contents))
+                extracted_text = pytesseract.image_to_string(image, lang="eng").strip()
+                ocr_engine = "tesseract-fallback"
+            except Exception:
+                pass
 
     if not extracted_text:
-        # Try original unprocessed image as last resort
-        try:
-            extracted_text = pytesseract.image_to_string(image, lang="eng").strip()
-        except Exception:
-            pass
+        return {"extracted": "", "translated": "No text detected in this image.", "engine": ocr_engine}
 
-    if not extracted_text:
-        return {"extracted": "", "translated": "No text detected in this image."}
-
-    # Translate extracted text
+    # ── Step 3: Translate extracted text ─────────────────────────
     try:
-        chunks = split_text(extracted_text)
-        parts  = [translate_chunk(c, from_lang, to_lang) for c in chunks]
-        return {"extracted": extracted_text, "translated": " ".join(parts)}
+        if from_lang == to_lang:
+            return {"extracted": extracted_text, "translated": extracted_text, "engine": ocr_engine}
+
+        # For structured text, translate paragraph by paragraph to preserve formatting
+        paragraphs = extracted_text.split("\n\n")
+        translated_paras = []
+        for para in paragraphs:
+            if para.strip():
+                # Translate line by line within paragraph to preserve bullets/structure
+                lines = para.split("\n")
+                translated_lines = []
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        translated_lines.append("")
+                        continue
+                    try:
+                        chunks = split_text(line)
+                        parts  = [translate_chunk(c, from_lang, to_lang) for c in chunks]
+                        translated_lines.append(" ".join(parts))
+                    except Exception:
+                        translated_lines.append(line)
+                translated_paras.append("\n".join(translated_lines))
+            else:
+                translated_paras.append("")
+
+        translated = "\n\n".join(translated_paras).strip()
+        return {"extracted": extracted_text, "translated": translated, "engine": ocr_engine}
     except Exception as e:
-        return {"extracted": extracted_text, "translated": f"Translation error: {e}"}
+        return {"extracted": extracted_text, "translated": f"Translation error: {e}", "engine": ocr_engine}
 
 
 @app.post("/transliterate")
 async def transliterate_endpoint(data: dict):
-    """Convert romanized Indian text to native script."""
     text = (data.get("text") or "").strip()
     lang = data.get("lang", "hi")
     if not text:
         return JSONResponse(status_code=400, content={"error": "No text"})
 
-    # Try Bhashini first
     native = bhashini_transliterate(text, lang)
     if native:
         return {"transliterated": native, "engine": "bhashini"}
 
-    # Google Input Tools fallback (word by word)
     gt_code = BHASHINI_LANG_MAP.get(lang, lang)
     words = text.split()
     results = []
@@ -702,8 +831,9 @@ async def transliterate_endpoint(data: dict):
 def ping():
     return {
         "status": "alive",
-        "version": "2.0",
+        "version": "3.0",
         "bhashini": "connected" if bhashini_available() else "not configured — using gTTS+Google fallback",
+        "vision_api": "configured" if GOOGLE_VISION_API_KEY else "not configured — using Tesseract fallback",
         "timestamp": int(time.time())
     }
 
@@ -711,7 +841,8 @@ def ping():
 def home():
     return {
         "app": "Vaani API",
-        "version": "2.0",
+        "version": "3.0",
         "bhashini": bhashini_available(),
+        "vision_api": bool(GOOGLE_VISION_API_KEY),
         "endpoints": ["/translate", "/speak", "/asr", "/image-translate", "/transliterate", "/ping"]
     }
