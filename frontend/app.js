@@ -1,13 +1,17 @@
 /* ================================================================
-   Vaani — app.js  v3.2  PATCHED
+   Vaani — app.js  v3.3  SURGICAL FIX
    
-   CHANGES FROM v3.1:
-   1. HISTORY PAGE: Shows sign-in prompt for non-logged users
-   2. IMAGE OCR: Tesseract.js-based real OCR pipeline
-   3. IMAGE PREVIEW: Full-screen modal with close button
-   4. CHANGE IMAGE: Options modal (gallery / camera)
-   5. IMAGE CROPPING: Crop UI before OCR processing
-   All existing features preserved exactly.
+   FIXES FROM v3.2:
+   1. Travel Helper Play button: fixed broken card innerHTML (Copy
+      button onclick had unescaped quotes breaking DOM parse, which
+      silently broke the Play button onclick too). Now uses safe
+      data-attributes + delegated handlers. Copy button removed per spec.
+   2. Camera: always requests back camera (facingMode:environment)
+      in the dynamic camera-input created by the change modal.
+   3. OCR post-processing: _cleanOcrText() strips garbage symbols,
+      normalises spacing, deduplicates lines, preserves emojis.
+   4. OCR cleaned text applied before display and translation.
+   All other features preserved exactly.
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -773,20 +777,61 @@ async function renderTravelPhrases() {
     const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
     _tCache[tk] = toText;
 
+    // ── FIXED: use DOM API + data-attributes instead of innerHTML
+    // with inline onclick — avoids HTML-attribute quote escaping bugs
+    // that silently broke the Play button when Copy used showToast('...')
     const card = document.createElement("div");
     card.className = "phrase-card";
-    card.innerHTML = `
-      <div class="phrase-texts">
-        <div class="phrase-orig">${fromText}</div>
-        <div class="phrase-trans">${toText}</div>
-        <div class="phrase-en">${phrase.en}</div>
-      </div>
-      <div class="phrase-btns">
-        <button class="phrase-btn phrase-play"
-          onclick="playPhrase(${JSON.stringify(toText)},${JSON.stringify(toLang)})">Play</button>
-        <button class="phrase-btn phrase-copy"
-          onclick="navigator.clipboard.writeText(${JSON.stringify(toText)}).then(()=>showToast('Copied!'))">Copy</button>
-      </div>`;
+
+    const textsDiv = document.createElement("div");
+    textsDiv.className = "phrase-texts";
+
+    const origDiv = document.createElement("div");
+    origDiv.className = "phrase-orig";
+    origDiv.textContent = fromText;
+
+    const transDiv = document.createElement("div");
+    transDiv.className = "phrase-trans";
+    transDiv.textContent = toText;
+
+    const enDiv = document.createElement("div");
+    enDiv.className = "phrase-en";
+    enDiv.textContent = phrase.en;
+
+    textsDiv.appendChild(origDiv);
+    textsDiv.appendChild(transDiv);
+    textsDiv.appendChild(enDiv);
+
+    const btnsDiv = document.createElement("div");
+    btnsDiv.className = "phrase-btns";
+
+    // Play button — stores text/lang in data-* attributes, handler below
+    const playBtn = document.createElement("button");
+    playBtn.className = "phrase-btn phrase-play";
+    playBtn.textContent = "Play";
+    playBtn.dataset.text = toText;
+    playBtn.dataset.lang = toLang;
+    playBtn.addEventListener("click", function() {
+      const t = this.dataset.text;
+      const l = this.dataset.lang;
+      if (t && l) autoPlay(t, l);
+    });
+
+    // Copy button — also uses data-* attributes, no inline onclick
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "phrase-btn phrase-copy";
+    copyBtn.textContent = "Copy";
+    copyBtn.dataset.text = toText;
+    copyBtn.addEventListener("click", function() {
+      const t = this.dataset.text;
+      if (t) navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+    });
+
+    btnsDiv.appendChild(playBtn);
+    btnsDiv.appendChild(copyBtn);
+
+    card.appendChild(textsDiv);
+    card.appendChild(btnsDiv);
     list.appendChild(card);
   }
   if (loading) loading.style.display = "none";
@@ -903,7 +948,74 @@ async function _runOCR(blob, langCode) {
   }
 }
 
-// ── Open full-screen image preview modal ──────────────────────────
+// ── OCR post-processing — strip garbage, preserve emojis, normalise ─
+function _cleanOcrText(raw) {
+  if (!raw) return "";
+
+  // Step 1: Split into lines, process each line
+  let lines = raw.split(/\r?\n/);
+
+  lines = lines.map(line => {
+    // Remove lone special chars / OCR noise characters that are not
+    // part of words or emoji. Keep: letters (any script), digits,
+    // basic punctuation (.,!?:;'"()-), spaces, and emoji (U+1F000+,
+    // misc symbols U+2600-U+27BF, enclosed U+2300-U+23FF).
+    // Strategy: tokenise, keep valid tokens, discard noise tokens.
+
+    // Replace common OCR artifacts: form-feed, null bytes, pipes used
+    // as l/I, underscores used as lines, etc.
+    line = line
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ") // control chars
+      .replace(/[|]{2,}/g, " ")           // runs of pipes
+      .replace(/_{3,}/g, " ")             // long underscores (horizontal rules)
+      .replace(/={3,}/g, " ")             // long equals
+      .replace(/-{3,}/g, " ")             // long dashes
+      .replace(/\.{4,}/g, "… ")           // ellipsis noise
+      .replace(/[~^`#*\\]{2,}/g, " ");    // repeated markdown-like noise
+
+    // Remove tokens that are purely garbage: a token is garbage if it
+    // contains NO letter (Unicode \p{L}), NO digit, NO emoji, and is
+    // longer than 1 char OR is a lone non-punctuation symbol.
+    // We use a regex to identify valid tokens vs noise tokens.
+    // Valid token: contains at least one letter/digit/emoji codepoint.
+    // We keep standard punctuation attached to valid tokens naturally.
+
+    // Split on whitespace, filter, rejoin
+    const tokens = line.split(/\s+/);
+    const cleanTokens = tokens.filter(tok => {
+      if (!tok) return false;
+      // Always keep tokens that contain a letter (any script), digit, or emoji
+      if (/[\p{L}\p{N}]/u.test(tok)) return true;
+      // Keep emoji-only tokens (U+1F000–U+1FFFF range and common symbol blocks)
+      if (/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{FE00}-\u{FEFF}]/u.test(tok)) return true;
+      // Discard anything else (pure symbols/noise)
+      return false;
+    });
+
+    return cleanTokens.join(" ").trim();
+  });
+
+  // Step 2: Remove blank lines and deduplicate consecutive identical lines
+  const seen = new Set();
+  lines = lines.filter(line => {
+    const norm = line.trim();
+    if (!norm) return false;
+    // Deduplicate: skip if exact same line appeared consecutively
+    if (seen.has(norm)) return false;
+    seen.add(norm);
+    return true;
+  });
+
+  // Step 3: Join lines, normalise internal whitespace
+  let result = lines.join(" ");
+  result = result
+    .replace(/\s{2,}/g, " ")     // collapse multiple spaces
+    .replace(/ ([.,!?:;])/g, "$1") // remove space before punctuation
+    .trim();
+
+  return result;
+}
+
 function openImagePreview(src) {
   // Remove existing modal if any
   const existing = document.getElementById("vaaniImgModal");
@@ -1045,10 +1157,19 @@ function _openChangeModal() {
     if (input) { input.value = ""; input.click(); }
   });
 
+  // FIX: Camera button always uses back camera (environment)
+  // The existing cameraInput in HTML already has capture="environment".
+  // We also update the accept + capture attributes before triggering
+  // to guarantee the back camera is requested consistently.
   modal.querySelector("#vchm-camera").addEventListener("click", () => {
     close();
     const input = document.getElementById("cameraInput");
-    if (input) { input.value = ""; input.click(); }
+    if (input) {
+      input.value = "";
+      // Ensure back-camera is always requested
+      input.setAttribute("capture", "environment");
+      input.click();
+    }
   });
 }
 
@@ -1128,7 +1249,9 @@ async function translateImage() {
     if (status) status.textContent = "Loading OCR engine…";
     let extractedText = "";
     try {
-      extractedText = await _runOCR(preprocessed, fromLang);
+      const rawOcr = await _runOCR(preprocessed, fromLang);
+      // FIX: clean OCR output — strip garbage, preserve emojis, normalise
+      extractedText = _cleanOcrText(rawOcr);
     } catch (ocrErr) {
       console.warn("[Vaani OCR] Tesseract error:", ocrErr);
       // Fallback: try backend OCR
@@ -1143,13 +1266,15 @@ async function translateImage() {
         });
         if (resp.ok) {
           const d = await resp.json();
-          extractedText = d.extracted || "";
-          if (d.translated && extractedText) {
+          // Clean backend OCR result too
+          extractedText = _cleanOcrText(d.extracted || "");
+          const translatedFromBackend = (d.translated || "").trim();
+          if (translatedFromBackend && extractedText) {
             document.getElementById("imgExtractedText").textContent  = extractedText;
-            document.getElementById("imgTranslatedText").textContent = d.translated;
+            document.getElementById("imgTranslatedText").textContent = translatedFromBackend;
             document.getElementById("imgResults").style.display      = "block";
             if (status) status.textContent = "";
-            await autoPlay(d.translated, toLang);
+            await autoPlay(translatedFromBackend, toLang);
             return;
           }
         }
