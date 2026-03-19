@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Vaani">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20250321">
+  <link rel="stylesheet" href="style.css?v=20250322">
 </head>
 <body>
 
@@ -32,14 +32,7 @@
     <button class="icon-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install app">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     </button>
-    <div class="gender-toggle">
-      <button class="gender-btn active" data-gender="female" onclick="setVoiceGender('female')" title="Female voice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M12 14v8M8 18h8"/></svg>
-      </button>
-      <button class="gender-btn" data-gender="male" onclick="setVoiceGender('male')" title="Male voice">
-        <svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="4"/><path d="M14 6l6-6M20 6V2h-4"/></svg>
-      </button>
-    </div>
+    <!-- GENDER TOGGLE REMOVED -->
     <button class="icon-btn" onclick="navigateTo('Settings')" title="Settings">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
@@ -54,7 +47,6 @@
 <div class="side-menu" id="sideMenu">
   <div class="menu-top">
     <div class="menu-brand">Vaani</div>
-    <!-- BUG #6 FIX: no version/branding tagline here -->
     <div class="menu-user" id="menuUser" style="display:none">
       <img class="menu-avatar" id="menuAvatar" src="" alt="">
       <div class="menu-user-info">
@@ -249,6 +241,21 @@
         </button>
       </div>
       <p class="rc-text rc-accent" id="translatedText">—</p>
+
+      <!-- ══ AUDIO TIMELINE ══════════════════════════════════════ -->
+      <div class="audio-timeline" id="audioTimeline" style="display:none">
+        <span class="tl-time" id="timelineCurrent">0:00</span>
+        <input
+          type="range"
+          id="timelineSeek"
+          class="tl-seek"
+          min="0" max="100" step="0.1" value="0"
+          aria-label="Audio seek bar"
+        >
+        <span class="tl-time" id="timelineTotal">0:00</span>
+      </div>
+      <!-- ══════════════════════════════════════════════════════ -->
+
       <div class="rc-actions" id="actionBtns" style="display:none">
         <button class="ac-btn ac-primary" id="playBtn" onclick="playAudio()">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
@@ -332,7 +339,6 @@
       <div class="lang-box"><label class="lang-label">Phrases In</label><select id="travelToLang" class="lang-select" onchange="loadTravelPhrases()"></select></div>
     </div>
   </div>
-  <!-- BUG #7 FIX: category tabs text-only (no emoji/icons in JS-rendered phrase cards) -->
   <div class="cat-tabs">
     <button class="cat-btn active" onclick="selectCategory('food',this)">Food</button>
     <button class="cat-btn" onclick="selectCategory('transport',this)">Transport</button>
@@ -418,11 +424,11 @@
   <div id="favouritesList" class="list-wrap"></div>
 </div>
 
-<!-- ══ SETTINGS PAGE (BUG #8 FIX) ═════════════════════════════════ -->
+<!-- ══ SETTINGS PAGE ═══════════════════════════════════════════════ -->
 <div id="pageSettings" class="page">
   <div class="page-header">
     <h2 class="page-title">Settings</h2>
-    <p class="page-sub">Customise language, voice and appearance</p>
+    <p class="page-sub">Customise language and appearance</p>
   </div>
   <div id="settingsContainer"></div>
 </div>
@@ -431,9 +437,9 @@
 <div id="toast" class="toast"></div>
 
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
-<script>window.VAANI_VERSION = "20250320";</script>
-<script type="module" src="firebase.js?v=20250321"></script>
-<script src="app.js?v=20250321"></script>
+<script>window.VAANI_VERSION = "20250322";</script>
+<script type="module" src="firebase.js?v=20250322"></script>
+<script src="app.js?v=20250322"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
