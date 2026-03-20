@@ -137,29 +137,14 @@ function _isPWA() {
 function _showPermissionDeniedGuide(type, onRetry) {
   document.getElementById("vaaniPermGuide")?.remove();
 
-  const isAudio = type === "audio";
-  const label   = isAudio ? "Microphone" : "Camera";
-  const icon    = isAudio
-    ? `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`
-    : `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
-
-  // Simple browser-level instructions only — no "App Settings" mention
-  const ios = _isIOS();
-  let instruction = "";
-  if (ios) {
-    instruction = `Tap the <strong>aA</strong> icon in Safari's address bar → <strong>Website Settings</strong> → allow ${label}.`;
-  } else {
-    instruction = `Tap the <strong>lock icon 🔒</strong> in your browser's address bar, find <strong>${label}</strong> and set it to <strong>Allow</strong>.`;
-  }
+  const label = type === "audio" ? "Microphone" : "Camera";
 
   const modal = document.createElement("div");
   modal.id = "vaaniPermGuide";
   modal.innerHTML = `
     <div class="vpg-backdrop"></div>
     <div class="vpg-sheet" role="dialog" aria-modal="true" aria-label="${label} Permission">
-      <div class="vpg-icon vpg-icon-denied">${icon}</div>
-      <div class="vpg-title">${label} Blocked</div>
-      <div class="vpg-sub">${instruction}</div>
+      <div class="vpg-title">Microphone or Camera access is required to use this feature.</div>
       <div class="vpg-actions">
         <button class="vpg-retry" id="vpgRetryBtn">Retry</button>
         <button class="vpg-dismiss" id="vpgDismissBtn">Cancel</button>
@@ -794,10 +779,9 @@ async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
 
-  // Toggle: if already listening, stop it
   if (ctx.state === MicState.LISTENING) {
     if (ctx.rec) {
-      ctx.rec.onend = null; // prevent double-processing
+      ctx.rec.onend = null;
       try { ctx.rec.stop(); } catch(_) {}
     }
     _killMic(ctx);
@@ -806,7 +790,6 @@ async function startListening() {
     return;
   }
 
-  // Kill any existing instance cleanly before creating new one
   _killMic(ctx);
   clearSingleResults();
 
@@ -829,41 +812,32 @@ async function startListening() {
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
 
-  // ── FIX 1: KEY SETTINGS ──────────────────────────────────────
   rec.lang            = speechCode;
-  rec.continuous      = false;       // Single utterance — cleaner on mobile
-  rec.interimResults  = false;       // FIX: Only fire on FINAL results — eliminates duplication
-  rec.maxAlternatives = 1;           // FIX: Only top result — no confusion
+  rec.continuous      = false;
+  rec.interimResults  = false;
+  rec.maxAlternatives = 1;
 
   ctx.rec        = rec;
   ctx.state      = MicState.LISTENING;
-  ctx.transcript = "";               // FIX: Clean slate for every session
+  ctx.transcript = "";
 
   micBtn?.classList.add("listening");
   setMicStatus("Listening… (tap again to stop)");
 
-  // ── FIX 1: onresult — only final results, set once, never appended ──
   rec.onresult = (e) => {
-    // Reset silence timer on each result
-    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-
-    // FIX: Collect ONLY truly final results from this event batch
     let finalText = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) {
-        finalText += e.results[i][0].transcript;
+        finalText = e.results[i][0].transcript;
       }
     }
-
-    // FIX: Only update if we got something new
     if (finalText.trim()) {
-      ctx.transcript = finalText.trim(); // FIX: SET, not append
+      ctx.transcript = finalText.trim();
       showOriginalText(ctx.transcript);
     }
   };
 
   rec.onspeechend = () => {
-    // Speech ended — stop recognition to trigger onend
     if (ctx.rec && ctx.state === MicState.LISTENING) {
       try { ctx.rec.stop(); } catch(_) {}
     }
@@ -871,9 +845,6 @@ async function startListening() {
 
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
-    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-
-    // Guard: if already killed, do nothing
     if (ctx.state === MicState.IDLE) return;
 
     const transcript = ctx.transcript.trim();
@@ -885,7 +856,6 @@ async function startListening() {
       return;
     }
 
-    // Skip duplicate (same as last recognized text)
     if (transcript === ctx.last) {
       ctx.state = MicState.IDLE;
       ctx.rec   = null;
@@ -918,7 +888,6 @@ async function startListening() {
     const prevState = ctx.state;
     _killMic(ctx);
     micBtn?.classList.remove("listening");
-
     if (e.error === "no-speech") {
       setMicStatus("No speech detected. Tap to try again.");
     } else if (e.error === "not-allowed") {
@@ -936,7 +905,6 @@ async function startListening() {
     }
   };
 
-  // FIX 5: Wrap in try-catch to handle mobile start failures
   try {
     rec.start();
   } catch (e) {
@@ -2429,17 +2397,6 @@ function renderSettingsPage() {
         <div class="stg-radios">
           <label class="stg-radio-lbl"><input type="radio" name="stgTheme" value="dark" ${theme === "dark" ? "checked" : ""} onchange="applyTheme('dark')"><span>Dark</span></label>
           <label class="stg-radio-lbl"><input type="radio" name="stgTheme" value="light" ${theme === "light" ? "checked" : ""} onchange="applyTheme('light')"><span>Light</span></label>
-        </div>
-      </div>
-    </div>
-    <div class="stg-section">
-      <div class="stg-title">Permissions</div>
-      <div class="stg-row" style="flex-direction:column;align-items:flex-start;gap:10px">
-        <span class="stg-label">Microphone &amp; Camera</span>
-        <span style="font-size:12px;color:var(--text3);line-height:1.5">Permissions are managed in your browser. Tap the lock icon 🔒 in the address bar to enable them.</span>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="handlePermission('audio','').then(ok=>showToast(ok?'Mic ready!':'Check browser settings'))">🎤 Test Microphone</button>
-          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="handlePermission('video','').then(ok=>showToast(ok?'Camera ready!':'Check browser settings'))">📷 Test Camera</button>
         </div>
       </div>
     </div>
