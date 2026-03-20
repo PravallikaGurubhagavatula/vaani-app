@@ -1,18 +1,22 @@
 /* ================================================================
-   Vaani — app.js  v5.1  STABILITY PATCH
+   Vaani — app.js  v5.2  FULL FIX PATCH
 
-   PATCHES APPLIED:
-   1. MIC PERMISSION  — explicit getUserMedia({audio:true}) before
-                        SpeechRecognition; handles Android PWA
-   2. AUDIO TIMELINE  — full rewrite: timeupdate listener, drag seek,
-                        replay reset, no duplicate listeners, persistent
-   3. HISTORY/FAVS    — always append (never overwrite), UI updates
-                        instantly, delete removes single item
-   4. AUTH SESSION    — localStorage persistence, restored on load,
-                        no re-login required across pages
-   5. LIVE UI UPDATE  — save/delete → immediate re-render, no reload
-   6. BACK NAVIGATION — proper pushState stack + popstate handler
-   7. PERFORMANCE     — all existing OCR/parallel optimisations kept
+   ALL 10 ISSUES FIXED:
+   1.  MIC PERMISSION      — explicit getUserMedia({audio:true}) before SR
+                             works on Android PWA, iOS Safari, Chrome
+   2.  PWA CACHE BUG       — handled in sw.js (network-first JS/CSS)
+   3.  HISTORY STORAGE     — array-based, append-only, instant re-render
+   4.  AUTH SESSION        — localStorage-backed, restored on load
+   5.  HISTORY/FAVS UI     — reactive: save/delete → immediate re-render
+   6.  BACK NAVIGATION     — pushState stack + popstate handler
+   7.  AUDIO TIMELINE      — full rewrite: timeupdate, drag seek, replay
+                             reset, no duplicate listeners
+   8.  SPEECH RECOGNITION  — continuous=true, interimResults=true,
+                             combines interim+final, timeout handling
+   9.  TTS PRONUNCIATION   — correct voice selected via speechSynthesis
+                             .getVoices() matching language code
+   10. CONVERSATION MODE   — re-translates last message on lang change,
+                             no duplicates, no delay
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -116,35 +120,148 @@ async function detectUserLocation() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 1: MICROPHONE PERMISSION — explicit getUserMedia before SR
+// FIX 1: MICROPHONE PERMISSION — explicit getUserMedia
+// Works on Android PWA, iOS Safari, Chrome desktop
 // ══════════════════════════════════════════════════════════════════
 
 let _micPermissionGranted = false;
 
 /**
- * Request microphone permission explicitly via getUserMedia.
- * Returns true if granted, false if denied/error.
- * Stops the stream immediately — we only need the permission grant.
+ * Explicitly request microphone permission via getUserMedia.
+ * This is required on mobile PWA before SpeechRecognition works.
+ * Stops stream immediately after grant — we only need the permission.
  */
 async function requestMicPermission() {
   if (_micPermissionGranted) return true;
+
+  // Check if API is available
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast("Microphone not supported on this device/browser.");
+    return false;
+  }
+
   try {
+    setMicStatus("Requesting microphone permission…");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    // Stop all tracks immediately — we only needed the permission
+    // Stop all tracks immediately — we only needed the permission grant
     stream.getTracks().forEach(t => t.stop());
     _micPermissionGranted = true;
+    console.log("[Vaani] Mic permission granted");
     return true;
   } catch (err) {
-    console.warn("[Vaani] Mic permission:", err.name, err.message);
+    console.warn("[Vaani] Mic permission error:", err.name, err.message);
+    _micPermissionGranted = false;
+
     if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-      showToast("Microphone access denied. Please allow it in browser/system settings.");
-    } else if (err.name === "NotFoundError") {
+      showToast("Microphone access denied. Enable in browser/system Settings.");
+      setMicStatus("Permission denied. Enable mic in Settings.");
+    } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
       showToast("No microphone found on this device.");
+      setMicStatus("No microphone found.");
+    } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+      showToast("Microphone is in use by another app.");
+      setMicStatus("Microphone busy. Close other apps.");
+    } else if (err.name === "SecurityError") {
+      showToast("Microphone blocked. Use HTTPS or allow in site settings.");
+      setMicStatus("Microphone blocked (HTTPS required).");
     } else {
-      showToast("Cannot access microphone: " + err.message);
+      showToast("Cannot access microphone: " + (err.message || err.name));
+      setMicStatus("Microphone error. Tap to retry.");
     }
     return false;
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FIX 9: TTS PRONUNCIATION — select correct voice from speechSynthesis
+// ══════════════════════════════════════════════════════════════════
+
+// Language code → BCP-47 locale for Web Speech API TTS voice selection
+const TTS_LOCALE_MAP = {
+  te: "te-IN", ta: "ta-IN", hi: "hi-IN", kn: "kn-IN", ml: "ml-IN",
+  mr: "mr-IN", bn: "bn-IN", gu: "gu-IN", pa: "pa-IN", ur: "ur-IN",
+  or: "or-IN", as: "as-IN", ne: "ne-NP", sa: "hi-IN", sd: "ur-IN",
+  mai: "hi-IN", doi: "hi-IN", kok: "mr-IN", gom: "mr-IN", bho: "hi-IN",
+  mwr: "hi-IN", tcy: "kn-IN", ks: "ur-IN", brx: "hi-IN", sat: "bn-IN",
+  "mni-Mtei": "bn-IN", lus: "en-IN", awa: "hi-IN", mag: "hi-IN",
+  hne: "hi-IN", bgc: "hi-IN", raj: "hi-IN", kha: "en-IN", lep: "ne-NP",
+  en: "en-US",
+};
+
+let _voicesLoaded = false;
+let _voiceList = [];
+
+function _loadVoices() {
+  return new Promise(resolve => {
+    const voices = speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      _voiceList = voices;
+      _voicesLoaded = true;
+      resolve(voices);
+      return;
+    }
+    // Voices load asynchronously on some browsers
+    const onVoicesChanged = () => {
+      _voiceList = speechSynthesis.getVoices();
+      _voicesLoaded = true;
+      speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+      resolve(_voiceList);
+    };
+    speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
+    // Fallback timeout
+    setTimeout(() => {
+      _voiceList = speechSynthesis.getVoices();
+      _voicesLoaded = true;
+      resolve(_voiceList);
+    }, 1500);
+  });
+}
+
+/**
+ * Get the best matching SpeechSynthesis voice for a language code.
+ * Exact locale match → language prefix match → first available → null
+ */
+async function _getBestVoice(langCode) {
+  if (!_voicesLoaded) await _loadVoices();
+  const locale = TTS_LOCALE_MAP[langCode] || "en-US";
+  const langPrefix = locale.split("-")[0].toLowerCase();
+
+  // 1. Exact locale match (e.g. "te-IN")
+  let voice = _voiceList.find(v => v.lang.toLowerCase() === locale.toLowerCase());
+  if (voice) return voice;
+
+  // 2. Language prefix match (e.g. "te" matches "te-IN")
+  voice = _voiceList.find(v => v.lang.toLowerCase().startsWith(langPrefix));
+  if (voice) return voice;
+
+  // 3. Fallback to en-US
+  voice = _voiceList.find(v => v.lang.toLowerCase().startsWith("en"));
+  return voice || null;
+}
+
+/**
+ * FIX 9: Browser TTS with correct voice selection.
+ * Used as fallback when backend /speak is unavailable.
+ */
+function _speakBrowser(text, langCode) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+
+  const speak = async () => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = await _getBestVoice(langCode);
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    } else {
+      utterance.lang = TTS_LOCALE_MAP[langCode] || "en-US";
+    }
+    utterance.rate = 0.9;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    window.speechSynthesis.speak(utterance);
+  };
+  speak().catch(e => console.warn("[Vaani] Browser TTS:", e));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -260,13 +377,15 @@ async function _pivotTranslate(text, fromLang, toLang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 2: AUDIO SYSTEM — full rewrite with proper timeline control
-// Rules:
-//  • timeupdate listener (not rAF) drives timeline — no duplicate listeners
-//  • drag seeks audio.currentTime; playing state preserved
-//  • replay resets currentTime=0 before play
-//  • timeline stays visible on end
-//  • no duplicate event listeners (use named bound handlers + removeEventListener)
+// FIX 7: AUDIO SYSTEM — full rewrite with proper timeline control
+//
+// RULES IMPLEMENTED:
+//  1. timeupdate listener (not rAF) drives timeline
+//  2. No duplicate listeners — named refs + removeEventListener
+//  3. drag seeks audio.currentTime; playing state preserved
+//  4. replay resets currentTime=0 before play
+//  5. timeline stays visible on end
+//  6. On end: bar resets to 0, buttons reset
 // ══════════════════════════════════════════════════════════════════
 
 let _curAudio          = null;
@@ -277,10 +396,9 @@ let _wordHighlightRAF   = null;
 let _wordHighlightStart = 0;
 let _wordHighlightDur   = 0;
 
-// Track which timeline suffix is active so we only update one
 let _activeTimelineSuffix = "";
 
-// Named handler references so we can remove them cleanly
+// Named handler references — prevent duplicate listeners
 let _boundTimeUpdate = null;
 let _boundAudioEnded = null;
 let _timelineSeeking = false;
@@ -298,8 +416,14 @@ function stopAudio() {
 
 function _detachAudioListeners() {
   if (_curAudio) {
-    if (_boundTimeUpdate) { _curAudio.removeEventListener("timeupdate", _boundTimeUpdate); _boundTimeUpdate = null; }
-    if (_boundAudioEnded) { _curAudio.removeEventListener("ended", _boundAudioEnded); _boundAudioEnded = null; }
+    if (_boundTimeUpdate) {
+      _curAudio.removeEventListener("timeupdate", _boundTimeUpdate);
+      _boundTimeUpdate = null;
+    }
+    if (_boundAudioEnded) {
+      _curAudio.removeEventListener("ended", _boundAudioEnded);
+      _boundAudioEnded = null;
+    }
   }
 }
 
@@ -363,8 +487,8 @@ function showTimeline(suffix) {
 }
 
 /**
- * Attach timeupdate listener to audio — drives the seek bar.
- * Removes any previous listener first to prevent duplicates.
+ * FIX 7: Attach timeupdate + ended listeners to audio.
+ * Removes any previous listeners first — ZERO duplicate listeners.
  */
 function _attachTimelineToAudio(audio, suffix) {
   const s     = suffix || "";
@@ -374,17 +498,19 @@ function _attachTimelineToAudio(audio, suffix) {
 
   if (!bar || !cur || !total) return;
 
-  // Remove existing
+  // Remove existing listeners before attaching new ones
   _detachAudioListeners();
 
-  // Set duration once metadata is available
+  // Set duration once metadata available
   const setDur = () => {
-    if (total) total.textContent = _fmtTime(audio.duration);
+    if (total && isFinite(audio.duration)) {
+      total.textContent = _fmtTime(audio.duration);
+    }
   };
   if (audio.readyState >= 1) setDur();
   else audio.addEventListener("loadedmetadata", setDur, { once: true });
 
-  // timeupdate handler — drives seek bar
+  // FIX 7: timeupdate drives seek bar — no rAF, no drift
   _boundTimeUpdate = () => {
     if (_timelineSeeking) return;
     const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -393,23 +519,23 @@ function _attachTimelineToAudio(audio, suffix) {
     cur.textContent = _fmtTime(audio.currentTime);
   };
 
-  // ended handler — timeline stays visible, buttons reset
+  // FIX 7: On end — timeline stays visible, bar resets to 0, buttons reset
   _boundAudioEnded = () => {
     _audioPlaying = false;
     _updateAllPlayPauseBtns();
     clearWordHighlight();
-    // Reset bar to 0 visually but keep timeline visible
     bar.value = 0;
     _updateSeekFill(bar, 0);
     if (cur) cur.textContent = "0:00";
+    // Keep timeline visible (don't hide it)
   };
 
   audio.addEventListener("timeupdate", _boundTimeUpdate);
-  audio.addEventListener("ended", _boundAudioEnded);
+  audio.addEventListener("ended",      _boundAudioEnded);
 }
 
 /**
- * Init seek bar drag controls for a given suffix.
+ * FIX 7: Init seek bar drag controls.
  * Called once per suffix — guarded by _vaaniInitialized flag.
  */
 function _initTimelineControls(suffix) {
@@ -420,31 +546,32 @@ function _initTimelineControls(suffix) {
 
   const cur = document.getElementById(`timelineCurrent${s}`);
 
-  // While dragging — update display time but don't seek yet
+  // While dragging — update visual but don't seek yet
   bar.addEventListener("input", () => {
     _timelineSeeking = true;
-    _updateSeekFill(bar, parseFloat(bar.value));
-    if (cur && _curAudio && _curAudio.duration) {
-      cur.textContent = _fmtTime((_curAudio.duration * parseFloat(bar.value)) / 100);
+    const pct = parseFloat(bar.value);
+    _updateSeekFill(bar, pct);
+    if (cur && _curAudio && isFinite(_curAudio.duration)) {
+      cur.textContent = _fmtTime((_curAudio.duration * pct) / 100);
     }
   });
 
-  // On release — seek audio; preserve play/pause state
+  // On release — seek audio, preserve play state
   bar.addEventListener("change", () => {
-    if (_curAudio && _curAudio.duration) {
+    if (_curAudio && isFinite(_curAudio.duration)) {
       _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     }
     _timelineSeeking = false;
-    // If was playing, ensure it continues
+    // If was playing, ensure it continues after seek
     if (_audioPlaying && _curAudio && _curAudio.paused) {
       _curAudio.play().catch(e => console.warn("[Vaani] seek-resume:", e.message));
     }
   });
 
-  // Touch support for mobile drag
+  // Mobile touch support
   bar.addEventListener("touchstart", () => { _timelineSeeking = true; }, { passive: true });
   bar.addEventListener("touchend", () => {
-    if (_curAudio && _curAudio.duration) {
+    if (_curAudio && isFinite(_curAudio.duration)) {
       _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     }
     _timelineSeeking = false;
@@ -515,9 +642,9 @@ function _startWordHighlightLoop(audio) {
   function tick() {
     if (!_curAudio || _curAudio !== audio || !_wordHighlightEl) return;
 
-    const dur = audio.duration || _wordHighlightDur || 1;
+    const dur      = audio.duration || _wordHighlightDur || 1;
     const progress = Math.min(audio.currentTime / dur, 1);
-    const idx = Math.min(Math.floor(progress * words.length), words.length - 1);
+    const idx      = Math.min(Math.floor(progress * words.length), words.length - 1);
 
     if (idx !== lastIdx) {
       const prev = el.querySelector(".wh-current");
@@ -572,17 +699,23 @@ async function speakText(text, lang) {
     audio.addEventListener("ended", revokeUrl, { once: true });
     audio.addEventListener("error", revokeUrl, { once: true });
     return audio;
-  } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
+  } catch (e) {
+    console.warn("[Vaani] speakText:", e.message);
+    return null;
+  }
 }
 
 /**
- * autoPlay — fully replaces previous audio, resets timeline, attaches listeners.
- * FIX: replay resets currentTime=0; no duplicate timeupdate listeners.
+ * FIX 7: autoPlay — fully replaces previous audio.
+ * - Stops previous audio completely
+ * - Resets timeline to 0 (handles replay)
+ * - Attaches timeupdate + ended listeners (no duplicates)
+ * - currentTime reset to 0 before every play (replay fix)
  */
 async function autoPlay(text, lang, timelineSuffix, highlightEl) {
   if (!text || text === "—" || text === "…" || !lang) return;
 
-  // Stop and clean up previous audio completely
+  // Fully stop and clean up previous audio
   stopAudio();
 
   const suffix = timelineSuffix || "";
@@ -591,21 +724,25 @@ async function autoPlay(text, lang, timelineSuffix, highlightEl) {
   _activeTimelineSuffix = suffix;
 
   const audio = await speakText(text, lang);
-  if (!audio) return;
+  if (!audio) {
+    // FIX 9: Fall back to browser TTS with correct voice
+    _speakBrowser(text, lang);
+    return;
+  }
 
   _curAudio = audio;
 
-  // Attach timeline (timeupdate + ended) — before play
+  // Attach timeline listeners (timeupdate + ended)
   _attachTimelineToAudio(audio, suffix);
 
-  // Word highlight — after canplay
+  // Word highlight — after canplay to ensure duration is set
   if (highlightEl) {
     audio.addEventListener("canplay", () => {
       startWordHighlight(highlightEl, text, audio);
     }, { once: true });
   }
 
-  // Reset to beginning before every play (handles replay)
+  // FIX 7: Reset to beginning before every play (handles replay)
   audio.currentTime = 0;
 
   try {
@@ -616,23 +753,35 @@ async function autoPlay(text, lang, timelineSuffix, highlightEl) {
     console.warn("[Vaani] play:", e.message);
     _audioPlaying = false;
     _updateAllPlayPauseBtns();
+    // Try browser TTS as final fallback
+    _speakBrowser(text, lang);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 1 CONTINUED: MIC STATE MACHINE — explicit permission first
+// FIX 1 + FIX 8: MIC STATE MACHINE
+//
+// FIX 1: Explicit getUserMedia permission before SpeechRecognition
+// FIX 8: continuous=true, interimResults=true, combines all results,
+//        timeout to prevent silent hang, prevents early stop
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 const _mic = {
-  single: { state: MicState.IDLE, rec: null, last: "" },
-  A:      { state: MicState.IDLE, rec: null, last: "" },
-  B:      { state: MicState.IDLE, rec: null, last: "" },
+  single: { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
+  A:      { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
+  B:      { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
 };
 
+// Silence timeout — auto-stop if no speech after 4s
+const SPEECH_SILENCE_TIMEOUT = 4000;
+
 function _killMic(ctx) {
+  if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
   if (ctx.rec) { try { ctx.rec.abort(); } catch(_){} ctx.rec = null; }
   ctx.state = MicState.IDLE;
   ctx.last  = "";
+  ctx.finalTranscript = "";
+  ctx.interimTranscript = "";
 }
 
 function setMicStatus(msg, id = "micStatus") {
@@ -640,15 +789,18 @@ function setMicStatus(msg, id = "micStatus") {
   if (el) el.textContent = msg;
 }
 
+// ── SINGLE MODE MIC ───────────────────────────────────────────────
+
 async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
 
+  // Toggle: if listening, stop
   if (ctx.state === MicState.LISTENING) {
     if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
     ctx.state = MicState.STOPPED;
     micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak again");
+    setMicStatus("Processing…");
     return;
   }
 
@@ -656,11 +808,11 @@ async function startListening() {
   clearSingleResults();
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-    showToast("Voice input not supported. Use Chrome.");
+    showToast("Voice input not supported. Use Chrome on Android/Desktop.");
     return;
   }
 
-  // FIX: Request mic permission explicitly before starting SR
+  // FIX 1: Explicitly request mic permission before SpeechRecognition
   setMicStatus("Requesting microphone…");
   const permitted = await requestMicPermission();
   if (!permitted) {
@@ -673,24 +825,80 @@ async function startListening() {
 
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
-  rec.lang = speechCode; rec.interimResults = false; rec.maxAlternatives = 3;
 
-  ctx.rec   = rec;
-  ctx.state = MicState.LISTENING;
+  // FIX 8: Enable continuous + interimResults for full sentence capture
+  rec.lang            = speechCode;
+  rec.continuous      = true;       // FIX 8: don't stop after first pause
+  rec.interimResults  = true;       // FIX 8: capture interim results too
+  rec.maxAlternatives = 3;
+
+  ctx.rec              = rec;
+  ctx.state            = MicState.LISTENING;
+  ctx.finalTranscript  = "";
+  ctx.interimTranscript = "";
+
   micBtn?.classList.add("listening");
-  setMicStatus("Listening…");
+  setMicStatus("Listening… (tap again to stop)");
 
-  rec.onresult = async (e) => {
-    let best = "", bestConf = -1;
-    for (let i = 0; i < e.results[0].length; i++) {
-      const a = e.results[0][i];
-      if (a.confidence > bestConf) { bestConf = a.confidence; best = a.transcript; }
+  // FIX 8: Combine interim + final results
+  rec.onresult = (e) => {
+    // Reset silence timer on each result
+    if (ctx._silenceTimer) clearTimeout(ctx._silenceTimer);
+
+    let interimText = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const result = e.results[i];
+      if (result.isFinal) {
+        ctx.finalTranscript += result[0].transcript;
+      } else {
+        interimText += result[0].transcript;
+      }
     }
-    const transcript = best.trim();
-    if (!transcript || transcript === ctx.last) return;
+    ctx.interimTranscript = interimText;
+
+    // Show combined live text
+    const combined = (ctx.finalTranscript + " " + ctx.interimTranscript).trim();
+    if (combined) showOriginalText(combined);
+
+    // Set silence timeout — process after 4s of no new results
+    ctx._silenceTimer = setTimeout(() => {
+      if (ctx.rec && ctx.state === MicState.LISTENING) {
+        try { ctx.rec.stop(); } catch(_){}
+      }
+    }, SPEECH_SILENCE_TIMEOUT);
+  };
+
+  rec.onspeechend = () => {
+    // Don't stop immediately — wait for continuous mode to finish
+    // (handled by silence timer or manual stop)
+  };
+
+  rec.onend = async () => {
+    micBtn?.classList.remove("listening");
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+
+    // Get best transcript: final (preferred) or combined
+    const transcript = (ctx.finalTranscript || ctx.interimTranscript || "").trim();
+
+    if (!transcript) {
+      if (ctx.state === MicState.LISTENING || ctx.state === MicState.STOPPED) {
+        ctx.state = MicState.IDLE;
+        setMicStatus("No speech detected. Tap to try again.");
+      }
+      ctx.rec = null;
+      return;
+    }
+
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("Tap to speak again");
+      return;
+    }
+
     ctx.last  = transcript;
     ctx.state = MicState.STOPPED;
-    micBtn?.classList.remove("listening");
+    ctx.rec   = null;
 
     const toLang = document.getElementById("toLang")?.value || "en";
     showOriginalText(transcript);
@@ -706,45 +914,51 @@ async function startListening() {
       const transEl = document.getElementById("translatedText");
       await autoPlay(translated, toLang, "", transEl);
     }
-    ctx.rec = null;
   };
 
   rec.onerror = (e) => {
-    ctx.state = MicState.IDLE; ctx.rec = null;
+    ctx.state = MicState.IDLE;
+    ctx.rec   = null;
     micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak");
-    if (e.error === "no-speech") showToast("No speech. Try again.");
-    else if (e.error === "not-allowed") {
-      _micPermissionGranted = false;
-      showToast("Microphone blocked. Enable in settings.");
-    }
-    else if (e.error !== "aborted") showToast("Mic: " + e.error);
-  };
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
 
-  rec.onend = () => {
-    micBtn?.classList.remove("listening");
-    if (ctx.state === MicState.LISTENING) {
-      ctx.state = MicState.IDLE;
+    if (e.error === "no-speech") {
+      setMicStatus("No speech detected. Tap to try again.");
+    } else if (e.error === "not-allowed") {
+      _micPermissionGranted = false;
+      showToast("Microphone blocked. Enable in browser/system settings.");
+      setMicStatus("Microphone blocked. Check settings.");
+    } else if (e.error === "aborted") {
+      setMicStatus("Tap to speak");
+    } else {
+      showToast("Mic error: " + e.error);
       setMicStatus("Tap to speak");
     }
-    ctx.rec = null;
   };
 
-  try { rec.start(); }
-  catch (e) {
+  try {
+    rec.start();
+  } catch (e) {
     _killMic(ctx);
     micBtn?.classList.remove("listening");
     setMicStatus("Tap to speak");
     showToast("Cannot start mic. Allow microphone access.");
+    console.warn("[Vaani] rec.start:", e.message);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// CONVERSATION MODE — with live re-translation on lang change
+// FIX 8 + FIX 10: CONVERSATION MODE
+// FIX 8: continuous + interimResults in conv mode too
+// FIX 10: re-translate on lang change immediately, no duplicates
 // ══════════════════════════════════════════════════════════════════
 
 const _convLastTranscript = { A: "", B: "" };
 const _convLastFromLang   = { A: "", B: "" };
+const _convLastToLang     = { A: "", B: "" };
+// FIX 10: guard against duplicate translation calls
+let _convTranslatingA = false;
+let _convTranslatingB = false;
 
 async function startConvListening(speaker) {
   const ctx      = _mic[speaker];
@@ -759,24 +973,27 @@ async function startConvListening(speaker) {
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
   const micBtn     = document.getElementById(micBtnId);
 
+  // Toggle: if already listening, stop
   if (ctx.state === MicState.LISTENING) {
     if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
     ctx.state = MicState.STOPPED;
     micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak again", statId);
+    setMicStatus("Processing…", statId);
     return;
   }
 
-  _killMic(ctx);
+  // Stop the other speaker's mic
   _killMic(_mic[otherSpk]);
   document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
   setMicStatus("Tap to speak", `micStatus${otherSpk}`);
+
+  _killMic(ctx);
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
     showToast("Voice not supported. Use Chrome."); return;
   }
 
-  // FIX: Request mic permission explicitly
+  // FIX 1: Explicit mic permission
   setMicStatus("Requesting microphone…", statId);
   const permitted = await requestMicPermission();
   if (!permitted) {
@@ -786,33 +1003,80 @@ async function startConvListening(speaker) {
 
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
-  rec.lang = speechCode; rec.interimResults = false; rec.maxAlternatives = 3;
 
-  ctx.rec = rec; ctx.state = MicState.LISTENING;
+  // FIX 8: continuous + interimResults
+  rec.lang            = speechCode;
+  rec.continuous      = true;
+  rec.interimResults  = true;
+  rec.maxAlternatives = 3;
+
+  ctx.rec              = rec;
+  ctx.state            = MicState.LISTENING;
+  ctx.finalTranscript  = "";
+  ctx.interimTranscript = "";
+
   micBtn?.classList.add("listening");
-  setMicStatus("Listening…", statId);
+  setMicStatus("Listening… (tap again to stop)", statId);
 
-  rec.onresult = async (e) => {
-    let best = "", bconf = -1;
-    for (let i = 0; i < e.results[0].length; i++) {
-      const a = e.results[0][i];
-      if (a.confidence > bconf) { bconf = a.confidence; best = a.transcript; }
+  const origEl  = document.getElementById(`originalText${speaker}`);
+  const transEl = document.getElementById(`translatedText${speaker}`);
+  const playBtn = document.getElementById(`playBtn${speaker}`);
+
+  // FIX 8: combine interim + final
+  rec.onresult = (e) => {
+    if (ctx._silenceTimer) clearTimeout(ctx._silenceTimer);
+
+    let interimText = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const result = e.results[i];
+      if (result.isFinal) {
+        ctx.finalTranscript += result[0].transcript;
+      } else {
+        interimText += result[0].transcript;
+      }
     }
-    const transcript = best.trim();
-    if (!transcript || transcript === ctx.last) return;
-    ctx.last = transcript; ctx.state = MicState.STOPPED;
+    ctx.interimTranscript = interimText;
+
+    const combined = (ctx.finalTranscript + " " + ctx.interimTranscript).trim();
+    if (origEl && combined) origEl.textContent = combined;
+
+    ctx._silenceTimer = setTimeout(() => {
+      if (ctx.rec && ctx.state === MicState.LISTENING) {
+        try { ctx.rec.stop(); } catch(_){}
+      }
+    }, SPEECH_SILENCE_TIMEOUT);
+  };
+
+  rec.onend = async () => {
     micBtn?.classList.remove("listening");
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+
+    const transcript = (ctx.finalTranscript || ctx.interimTranscript || "").trim();
+
+    if (!transcript) {
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("Tap to speak", statId);
+      return;
+    }
+
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("Tap to speak again", statId);
+      return;
+    }
+
+    ctx.last  = transcript;
+    ctx.state = MicState.STOPPED;
+    ctx.rec   = null;
+
     setMicStatus("Translating…", statId);
+    if (transEl) transEl.textContent = "…";
 
     _convLastTranscript[speaker] = transcript;
     _convLastFromLang[speaker]   = fromLang;
-
-    const origEl  = document.getElementById(`originalText${speaker}`);
-    const transEl = document.getElementById(`translatedText${speaker}`);
-    const playBtn = document.getElementById(`playBtn${speaker}`);
-
-    if (origEl)  origEl.textContent  = transcript;
-    if (transEl) transEl.textContent = "…";
+    _convLastToLang[speaker]     = toLang;
 
     const translated = await translateText(transcript, fromLang, toLang);
     if (transEl) transEl.textContent = translated || "—";
@@ -820,32 +1084,37 @@ async function startConvListening(speaker) {
     setMicStatus("Tap to speak again", statId);
 
     if (translated) await autoPlay(translated, toLang, "", transEl);
-    ctx.rec = null;
   };
 
   rec.onerror = (e) => {
-    ctx.state = MicState.IDLE; ctx.rec = null;
+    ctx.state = MicState.IDLE;
+    ctx.rec   = null;
     micBtn?.classList.remove("listening");
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
     setMicStatus("Tap to speak", statId);
     if (e.error === "not-allowed") {
       _micPermissionGranted = false;
       showToast("Microphone blocked. Enable in settings.");
-    } else if (e.error !== "aborted") showToast("Mic: " + e.error);
-  };
-
-  rec.onend = () => {
-    micBtn?.classList.remove("listening");
-    if (ctx.state === MicState.LISTENING) {
-      ctx.state = MicState.IDLE;
-      setMicStatus("Tap to speak", statId);
+    } else if (e.error !== "aborted") {
+      showToast("Mic: " + e.error);
     }
-    ctx.rec = null;
   };
 
   try { rec.start(); }
-  catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); }
+  catch (e) {
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak", statId);
+    console.warn("[Vaani] conv rec.start:", e.message);
+  }
 }
 
+/**
+ * FIX 10: On language change in conversation mode:
+ * - Re-translate last message instantly
+ * - Guard against duplicate concurrent calls
+ * - No delay
+ */
 async function onConvLangChange(speaker) {
   const fromSel = `convLang${speaker}`;
   const toSel   = speaker === "A" ? "convLangB" : "convLangA";
@@ -857,14 +1126,29 @@ async function onConvLangChange(speaker) {
   const origFrom   = _convLastFromLang[speaker];
   if (!transcript || !origFrom) return;
 
+  // FIX 10: guard against duplicate calls
+  if (speaker === "A" && _convTranslatingA) return;
+  if (speaker === "B" && _convTranslatingB) return;
+
+  if (speaker === "A") _convTranslatingA = true;
+  else                 _convTranslatingB = true;
+
   const transEl = document.getElementById(`translatedText${speaker}`);
   const playBtn = document.getElementById(`playBtn${speaker}`);
   if (transEl) transEl.textContent = "…";
 
-  const translated = await translateText(transcript, origFrom, toLang);
-  if (transEl) transEl.textContent = translated || "—";
-  if (playBtn) playBtn.style.display = translated ? "flex" : "none";
-  if (translated) await autoPlay(translated, toLang, "", transEl);
+  try {
+    const translated = await translateText(transcript, origFrom, toLang);
+    if (transEl) transEl.textContent = translated || "—";
+    if (playBtn) playBtn.style.display = translated ? "flex" : "none";
+
+    _convLastToLang[speaker] = toLang;
+
+    if (translated) await autoPlay(translated, toLang, "", transEl);
+  } finally {
+    if (speaker === "A") _convTranslatingA = false;
+    else                 _convTranslatingB = false;
+  }
 }
 
 // ── SINGLE RESULT DISPLAY HELPERS ─────────────────────────────────
@@ -1002,29 +1286,29 @@ function switchInputMode(mode) {
 // ── PLAY BUTTONS ─────────────────────────────────────────────────
 async function playAudio() {
   if (_curAudio) { toggleAudio(); return; }
-  const t = document.getElementById("translatedText")?.textContent;
-  const l = document.getElementById("toLang")?.value;
+  const t  = document.getElementById("translatedText")?.textContent;
+  const l  = document.getElementById("toLang")?.value;
   const el = document.getElementById("translatedText");
   if (t && t !== "—" && t !== "…") await autoPlay(t, l, "", el);
 }
 async function playAudioA() {
   if (_curAudio) { toggleAudio(); return; }
-  const t = document.getElementById("translatedTextA")?.textContent;
-  const l = document.getElementById("convLangB")?.value;
+  const t  = document.getElementById("translatedTextA")?.textContent;
+  const l  = document.getElementById("convLangB")?.value;
   const el = document.getElementById("translatedTextA");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
 async function playAudioB() {
   if (_curAudio) { toggleAudio(); return; }
-  const t = document.getElementById("translatedTextB")?.textContent;
-  const l = document.getElementById("convLangA")?.value;
+  const t  = document.getElementById("translatedTextB")?.textContent;
+  const l  = document.getElementById("convLangA")?.value;
   const el = document.getElementById("translatedTextB");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
 async function playImgAudio() {
   if (_curAudio) { toggleAudio(); return; }
-  const t = document.getElementById("imgTranslatedText")?.textContent;
-  const l = document.getElementById("imgToLang")?.value;
+  const t  = document.getElementById("imgTranslatedText")?.textContent;
+  const l  = document.getElementById("imgToLang")?.value;
   const el = document.getElementById("imgTranslatedText");
   if (t && t !== "—") await autoPlay(t, l, "Img", el);
 }
@@ -1056,7 +1340,12 @@ function buildLangOptions(sel) {
 }
 
 function initLanguageSelects() {
-  const defaults = { fromLang:"te", toLang:"ta", travelFromLang:"te", travelToLang:"hi", imgFromLang:"te", imgToLang:"en", convLangA:"te", convLangB:"ta" };
+  const defaults = {
+    fromLang:"te", toLang:"ta",
+    travelFromLang:"te", travelToLang:"hi",
+    imgFromLang:"te", imgToLang:"en",
+    convLangA:"te", convLangB:"ta"
+  };
   Object.entries(defaults).forEach(([id, def]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -1080,7 +1369,7 @@ function initLanguageSelects() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// TRAVEL HELPER — with custom sentences, delete, custom categories
+// TRAVEL HELPER
 // ══════════════════════════════════════════════════════════════════
 let _cat = "food";
 let _tCache = {};
@@ -1604,7 +1893,7 @@ function _cleanOcrText(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// IMAGE EDITING — Rotation + Improved Cropping
+// IMAGE EDITING — Rotation + Cropping
 // ══════════════════════════════════════════════════════════════════
 
 let _imgCurrentFile  = null;
@@ -1785,9 +2074,7 @@ function _openChangeModal() {
   });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// BACK CAMERA CAPTURE
-// ══════════════════════════════════════════════════════════════════
+// ── BACK CAMERA CAPTURE ───────────────────────────────────────────
 
 let _cameraStream  = null;
 let _cameraModal   = null;
@@ -2001,9 +2288,7 @@ async function confirmAndTranslate() {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// MAIN IMAGE TRANSLATE — Parallel OCR + Translation + Audio
-// ══════════════════════════════════════════════════════════════════
+// ── MAIN IMAGE TRANSLATE ──────────────────────────────────────────
 
 async function translateImage() {
   const fromLang = document.getElementById("imgFromLang")?.value || "en";
@@ -2141,19 +2426,20 @@ async function translateImage() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 3 & 5: HISTORY — ARRAY-BASED, APPEND, INSTANT UI UPDATE
+// FIX 3 & 5: HISTORY — ARRAY-BASED, APPEND-ONLY, INSTANT UI UPDATE
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * Read history array from localStorage.
- * Always returns an array (never null/undefined).
+ * FIX 3: Read history as ARRAY from localStorage.
+ * Always returns array — never null/undefined.
+ * Handles legacy single-object format gracefully.
  */
 function _readHistory() {
   try {
     const raw = localStorage.getItem("vaani_history");
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    // Defensive: if legacy data was a single object, wrap it
+    // FIX 3: If legacy data was a single object, wrap it in array
     if (Array.isArray(parsed)) return parsed;
     if (parsed && typeof parsed === "object" && parsed.original) return [parsed];
     return [];
@@ -2165,33 +2451,38 @@ function _writeHistory(arr) {
 }
 
 /**
- * Save to history — APPENDS to array, caps at 200, re-renders instantly.
- * FIX: never overwrites; skips exact duplicate (same orig + toLang).
+ * FIX 3: Save to history — APPENDS to array, never overwrites.
+ * FIX 5: Re-renders UI immediately after save.
+ * Caps at 200 items to avoid localStorage bloat.
  */
 function saveToHistory(orig, trans, fromLang, toLang) {
+  if (!orig || !trans) return;
   const h = _readHistory();
-  // Skip if top item is identical
+  // Skip exact duplicate (same original + same target language at top)
   if (h.length && h[0].original === orig && h[0].toLang === toLang) return;
+  // FIX 3: PUSH/UNSHIFT new item — never overwrite
   h.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
   if (h.length > 200) h.splice(200);
   _writeHistory(h);
-  // FIX 5: instant UI update — re-render if history page is active
+  // FIX 5: Immediate re-render if history page is active
   const histPage = document.getElementById("pageHistory");
   if (histPage && histPage.classList.contains("active")) renderHistory();
 }
 
 /**
- * Delete a single history item by index, re-render instantly.
+ * FIX 3: Delete single history item by index.
+ * FIX 5: Re-renders immediately.
  */
 function deleteHistory(i) {
   const h = _readHistory();
+  if (i < 0 || i >= h.length) return;
   h.splice(i, 1);
   _writeHistory(h);
   renderHistory(); // FIX 5: immediate re-render
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 3 & 5: FAVOURITES — ARRAY-BASED, APPEND, INSTANT UI UPDATE
+// FIX 3 & 5: FAVOURITES — ARRAY-BASED, APPEND-ONLY, INSTANT UPDATE
 // ══════════════════════════════════════════════════════════════════
 
 function _readFavs() {
@@ -2219,7 +2510,8 @@ function saveSingleToFavourites() {
 }
 
 /**
- * Save favourite — appends to array, no overwrite, instant re-render.
+ * FIX 3: Appends favourite — no overwrite.
+ * FIX 5: Instantly re-renders favourites page.
  */
 function saveFavourite(orig, trans, fromLang, toLang) {
   const favs = _readFavs();
@@ -2229,16 +2521,18 @@ function saveFavourite(orig, trans, fromLang, toLang) {
   favs.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
   _writeFavs(favs);
   showToast("Saved to favourites");
-  // FIX 5: instant re-render if favs page active
+  // FIX 5: Instant re-render if favs page active
   const favsPage = document.getElementById("pageFavourites");
   if (favsPage && favsPage.classList.contains("active")) renderFavourites();
 }
 
 /**
- * Delete a single favourite by index, re-render instantly.
+ * FIX 3: Delete single favourite by index.
+ * FIX 5: Instantly re-renders.
  */
 function deleteFavourite(i) {
   const favs = _readFavs();
+  if (i < 0 || i >= favs.length) return;
   favs.splice(i, 1);
   _writeFavs(favs);
   renderFavourites(); // FIX 5: immediate re-render
@@ -2315,7 +2609,7 @@ function renderFavourites() {
 const SESSION_KEY = "vaani_user_session";
 
 /**
- * Persist user session to localStorage.
+ * FIX 4: Persist user session to localStorage.
  * Called by firebase.js auth change handler.
  */
 function _persistUserSession(user) {
@@ -2335,8 +2629,9 @@ function _persistUserSession(user) {
 }
 
 /**
- * Restore user session from localStorage on app load.
- * Returns persisted user object or null.
+ * FIX 4: Restore session from localStorage on app load.
+ * Prevents login state loss on page reload / PWA open.
+ * Sessions expire after 30 days.
  */
 function _restoreUserSession() {
   try {
@@ -2353,20 +2648,19 @@ function _restoreUserSession() {
 }
 
 function _applyUserToUI(user) {
-  if (!user) {
-    const card   = document.getElementById("menuSigninCard");
-    const out    = document.getElementById("menuSignout");
-    const uEl    = document.getElementById("menuUser");
-    if (card) card.style.display = "block";
-    if (out)  out.style.display  = "none";
-    if (uEl)  uEl.style.display  = "none";
-    return;
-  }
   const card   = document.getElementById("menuSigninCard");
   const out    = document.getElementById("menuSignout");
   const uEl    = document.getElementById("menuUser");
   const avatar = document.getElementById("menuAvatar");
   const name   = document.getElementById("menuUserName");
+
+  if (!user) {
+    if (card) card.style.display = "block";
+    if (out)  out.style.display  = "none";
+    if (uEl)  uEl.style.display  = "none";
+    return;
+  }
+
   if (card)   card.style.display   = "none";
   if (out)    out.style.display    = "block";
   if (uEl)    uEl.style.display    = "flex";
@@ -2440,10 +2734,10 @@ function renderSettingsPage() {
     <div class="stg-section">
       <div class="stg-title">About</div>
       <div class="stg-about">
-        <div>Vaani — Indian Language Translator v5.1</div>
+        <div>Vaani — Indian Language Translator v5.2</div>
         <div>OCR: Google Vision API + Tesseract fallback</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
-        <div>Speech: Bhashini TTS + gTTS fallback</div>
+        <div>Speech: Bhashini TTS + gTTS + Browser TTS fallback</div>
         <div>Camera: getUserMedia back-camera capture</div>
         <div>30+ Indian languages supported</div>
       </div>
@@ -2489,7 +2783,7 @@ function stgResetAll() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 6: BACK NAVIGATION — proper pushState stack + popstate handler
+// FIX 6: BACK NAVIGATION — pushState stack + popstate handler
 // ══════════════════════════════════════════════════════════════════
 
 const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
@@ -2500,15 +2794,15 @@ const _navStack = [];
 function navigateTo(page) {
   if (!PAGES.includes(page)) page = "Home";
 
+  // Activate correct page + menu item
   PAGES.forEach(p => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
   closeMenu();
 
-  // FIX 6: Push to history stack with page state
-  // Use replaceState for first visit to avoid empty initial entry
-  const currentHash = location.hash.replace("#", "");
+  // FIX 6: Push page to browser history stack
+  const currentHash = location.hash.replace("#", "").toLowerCase();
   const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
 
   if (currentPage !== page) {
@@ -2522,33 +2816,36 @@ function navigateTo(page) {
   }
 
   // Page-specific init
-  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
-  if (page === "History")    renderHistory();
-  if (page === "Favourites") renderFavourites();
-  if (page === "Settings")   renderSettingsPage();
+  _onPageActivate(page);
 
-  // Kill active mics on page change
+  // Kill all active mics on page change
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
   );
 }
 
-// FIX 6: popstate — restore page from history state
+function _onPageActivate(page) {
+  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
+  if (page === "History")    renderHistory();
+  if (page === "Favourites") renderFavourites();
+  if (page === "Settings")   renderSettingsPage();
+}
+
+// FIX 6: popstate — back/forward button restores page from history state
 window.addEventListener("popstate", (e) => {
   const page = e.state?.page || "Home";
-  // Update active page without pushing new history entry
+
+  // Activate page without pushing new entry
   PAGES.forEach(p => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
   closeMenu();
 
-  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
-  if (page === "History")    renderHistory();
-  if (page === "Favourites") renderFavourites();
-  if (page === "Settings")   renderSettingsPage();
+  _onPageActivate(page);
 
+  // Kill mics on navigation
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
@@ -2585,31 +2882,35 @@ function showToast(msg) {
 // ── KEEP-ALIVE ────────────────────────────────────────────────────
 function pingBackend() {
   fetch(`${API_URL}/ping`, { signal: AbortSignal.timeout(10000) })
-    .then(r => r.json()).then(d => console.log("[Vaani] ping:", d.status)).catch(() => {});
+    .then(r => r.json())
+    .then(d => console.log("[Vaani] ping:", d.status))
+    .catch(() => {});
 }
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
 // ── FIREBASE / AUTH STUBS ─────────────────────────────────────────
-if (typeof window.signInWithGoogle === "undefined") window.signInWithGoogle = () => showToast("Sign-in coming soon");
-if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => {
-  window._vaaniCurrentUser = null;
-  _persistUserSession(null);
-  _applyUserToUI(null);
-  showToast("Signed out");
-  // Re-render history page if open
-  const histPage = document.getElementById("pageHistory");
-  if (histPage && histPage.classList.contains("active")) renderHistory();
-};
+if (typeof window.signInWithGoogle === "undefined") {
+  window.signInWithGoogle = () => showToast("Sign-in coming soon");
+}
+if (typeof window.signOutUser === "undefined") {
+  window.signOutUser = () => {
+    window._vaaniCurrentUser = null;
+    _persistUserSession(null);
+    _applyUserToUI(null);
+    showToast("Signed out");
+    const histPage = document.getElementById("pageHistory");
+    if (histPage && histPage.classList.contains("active")) renderHistory();
+  };
+}
 
 window._vaaniCurrentUser = null;
 
-// FIX 4: Auth change handler — persist session + update UI immediately
+// FIX 4: Auth change handler — persist session + update UI
 window._vaaniOnAuthChange = function(user) {
   window._vaaniCurrentUser = user || null;
   _persistUserSession(user);
   _applyUserToUI(user);
-
   // Re-render history if page is open
   const histPage = document.getElementById("pageHistory");
   if (histPage && histPage.classList.contains("active")) {
@@ -2622,7 +2923,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Apply saved theme
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
 
-  // FIX 4: Restore auth session from localStorage before firebase loads
+  // FIX 4: Restore auth session before firebase loads
   const restoredSession = _restoreUserSession();
   if (restoredSession) {
     window._vaaniCurrentUser = restoredSession;
@@ -2631,9 +2932,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   initLanguageSelects();
 
-  // FIX 2: Init timeline controls for all suffixes
+  // FIX 7: Init timeline controls for all suffixes
   _initTimelineControls("");
   _initTimelineControls("Img");
+
+  // FIX 9: Pre-load voices so first TTS is instant
+  if (window.speechSynthesis) {
+    _loadVoices().catch(() => {});
+  }
 
   // Image change button
   const changeBtn = document.getElementById("imgChangeBtn");
@@ -2644,8 +2950,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Camera source button — FIX: request mic perm not needed here, but
-  // getUserMedia for camera is handled inside _captureBackCamera
+  // Camera source button
   const camSrcBtn = document.getElementById("cameraSrcBtn");
   if (camSrcBtn) {
     camSrcBtn.addEventListener("click", async (e) => {
@@ -2660,8 +2965,8 @@ document.addEventListener("DOMContentLoaded", () => {
     cameraInput.addEventListener("change", handleImageUpload);
   }
 
-  // FIX 6: Determine initial page from hash
-  const hash = location.hash.replace("#", "");
+  // FIX 6: Determine initial page from URL hash
+  const hash = location.hash.replace("#", "").toLowerCase();
   const initialPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
 
   // Set initial history state so back button works from first page
@@ -2673,12 +2978,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
 
-  if (initialPage === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
-  if (initialPage === "History")    renderHistory();
-  if (initialPage === "Favourites") renderFavourites();
-  if (initialPage === "Settings")   renderSettingsPage();
+  _onPageActivate(initialPage);
 
-  // Initial renders
+  // Always render history + favs to warm up data
   renderHistory();
   renderFavourites();
 
