@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Vaani">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20250324">
+  <link rel="stylesheet" href="style.css?v=20250324b">
 </head>
 <body>
 
@@ -240,14 +240,14 @@
         </button>
       </div>
       <p class="rc-text rc-accent" id="translatedText">—</p>
-      <!-- AUDIO TIMELINE -->
+      <!-- AUDIO TIMELINE — always visible after first play -->
       <div class="audio-timeline" id="audioTimeline" style="display:none">
         <span class="tl-time" id="timelineCurrent">0:00</span>
         <input type="range" id="timelineSeek" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Audio seek bar">
         <span class="tl-time" id="timelineTotal">0:00</span>
       </div>
       <div class="rc-actions" id="actionBtns" style="display:none">
-        <button class="ac-btn ac-primary" id="playBtn" onclick="playAudio()">
+        <button class="ac-btn ac-primary" id="playBtn" data-playpause="labeled" onclick="playAudio()">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
         </button>
         <button class="ac-btn" onclick="copyTranslation()">
@@ -271,7 +271,8 @@
     <div class="conv-panel">
       <div class="conv-top">
         <span class="conv-label conv-label-a">Person A</span>
-        <select id="convLangA" class="lang-select lang-select-sm"></select>
+        <!-- onchange triggers re-translation of existing text -->
+        <select id="convLangA" class="lang-select lang-select-sm" onchange="onConvLangChange('A')"></select>
       </div>
       <div class="mic-wrap mic-wrap-sm">
         <button class="mic-btn mic-btn-sm mic-a" id="micBtnA" onclick="startConvListening('A')">
@@ -285,7 +286,7 @@
           <button class="sm-btn" onclick="copyText('translatedTextA')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <p class="rc-text rc-accent rc-sm" id="translatedTextA">—</p>
-        <button class="ac-btn ac-primary" id="playBtnA" onclick="playAudioA()" style="display:none">
+        <button class="ac-btn ac-primary" id="playBtnA" data-playpause="labeled" onclick="playAudioA()" style="display:none">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
         </button>
       </div>
@@ -294,7 +295,7 @@
     <div class="conv-panel">
       <div class="conv-top">
         <span class="conv-label conv-label-b">Person B</span>
-        <select id="convLangB" class="lang-select lang-select-sm"></select>
+        <select id="convLangB" class="lang-select lang-select-sm" onchange="onConvLangChange('B')"></select>
       </div>
       <div class="mic-wrap mic-wrap-sm">
         <button class="mic-btn mic-btn-sm mic-b" id="micBtnB" onclick="startConvListening('B')">
@@ -308,7 +309,7 @@
           <button class="sm-btn" onclick="copyText('translatedTextB')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <p class="rc-text rc-accent rc-sm" id="translatedTextB">—</p>
-        <button class="ac-btn ac-primary" id="playBtnB" onclick="playAudioB()" style="display:none">
+        <button class="ac-btn ac-primary" id="playBtnB" data-playpause="labeled" onclick="playAudioB()" style="display:none">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
         </button>
       </div>
@@ -329,14 +330,8 @@
       <div class="lang-box"><label class="lang-label">Phrases In</label><select id="travelToLang" class="lang-select" onchange="loadTravelPhrases()"></select></div>
     </div>
   </div>
-  <div class="cat-tabs">
-    <button class="cat-btn active" onclick="selectCategory('food',this)">Food</button>
-    <button class="cat-btn" onclick="selectCategory('transport',this)">Transport</button>
-    <button class="cat-btn" onclick="selectCategory('hotel',this)">Hotel</button>
-    <button class="cat-btn" onclick="selectCategory('emergency',this)">Emergency</button>
-    <button class="cat-btn" onclick="selectCategory('shopping',this)">Shopping</button>
-    <button class="cat-btn" onclick="selectCategory('greetings',this)">Greetings</button>
-  </div>
+  <!-- Category tabs rendered by JS (_renderCatTabs) -->
+  <div id="catTabs" class="cat-tabs"></div>
   <div id="travelLoading" class="loading-wrap" style="display:none"><div class="spinner"></div><span>Translating phrases…</span></div>
   <div id="phrasesList" class="phrases-list"></div>
 </div>
@@ -345,7 +340,7 @@
 <div id="pageImage" class="page">
   <div class="page-header">
     <h2 class="page-title">Image Translation</h2>
-    <p class="page-sub">Upload a photo — crop, extract and translate the text inside</p>
+    <p class="page-sub">Upload a photo — crop, rotate, extract and translate the text inside</p>
   </div>
   <div class="glass-card">
     <div class="lang-row">
@@ -371,32 +366,13 @@
     <button class="img-src-btn" onclick="document.getElementById('imageInput').click()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload Photo
     </button>
-    <!-- Camera button now uses getUserMedia back camera -->
     <button class="img-src-btn img-src-camera" id="cameraSrcBtn">
       <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Take Photo
     </button>
-    <!-- Hidden file input fallback for non-getUserMedia browsers -->
     <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
   </div>
 
-  <!-- Live Camera Translation Button -->
-  <div class="live-cam-bar">
-    <button class="btn-ghost live-cam-toggle" id="liveCamBtn" onclick="startLiveCamera()">
-      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-      🎥 Live Camera Translation
-    </button>
-  </div>
-
-  <!-- Live camera container -->
-  <div id="liveCamContainer" class="live-cam-container" style="display:none">
-    <!-- video element injected by JS -->
-    <div class="live-cam-overlay-wrap">
-      <div class="live-cam-overlay" id="liveCamOverlay" style="display:none"></div>
-    </div>
-    <p class="live-cam-status" id="liveCamStatus">Camera active…</p>
-  </div>
-
-  <!-- Preview box — image is clickable for full-screen, Change button opens modal -->
+  <!-- Preview box -->
   <div id="imgPreviewBox" class="img-preview" style="display:none">
     <img id="imgPreview" src="" alt="Preview" title="Tap to view full screen" style="cursor:zoom-in">
     <button class="change-btn" id="imgChangeBtn">
@@ -410,26 +386,52 @@
   <p class="status-text" id="imgStatus"></p>
 
   <div id="imgResults" style="display:none">
+    <!-- Editable extracted text -->
     <div class="result-card">
-      <div class="rc-header"><span class="rc-label">Text found in image</span>
-        <button class="sm-btn" onclick="copyText('imgExtractedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      <div class="rc-header">
+        <span class="rc-label">Text found in image</span>
+        <button class="sm-btn" onclick="copyText('imgExtractedTextEdit')" title="Copy extracted">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
       </div>
-      <p class="rc-text" id="imgExtractedText" style="white-space:pre-wrap">—</p>
+      <!-- Editable textarea for extracted text -->
+      <textarea
+        id="imgExtractedTextEdit"
+        class="text-area img-extracted-edit"
+        rows="5"
+        placeholder="Extracted text will appear here — you can edit before translating"
+        style="display:none"
+      ></textarea>
+      <!-- Confirm & Translate button -->
+      <button
+        id="imgConfirmTranslateBtn"
+        class="btn-primary btn-full"
+        onclick="confirmAndTranslate()"
+        style="display:none;margin-top:10px"
+      >
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        Confirm &amp; Translate
+      </button>
     </div>
+
     <div class="result-card result-translated">
       <div class="rc-header"><span class="rc-label">Translation</span>
         <button class="sm-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
       <p class="rc-text rc-accent" id="imgTranslatedText" style="white-space:pre-wrap">—</p>
-      <!-- ✅ AUDIO TIMELINE FOR IMAGE PAGE -->
+      <!-- AUDIO TIMELINE for image page — always visible after first play -->
       <div class="audio-timeline" id="audioTimelineImg" style="display:none">
         <span class="tl-time" id="timelineCurrentImg">0:00</span>
         <input type="range" id="timelineSeekImg" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Image audio seek bar">
         <span class="tl-time" id="timelineTotalImg">0:00</span>
       </div>
       <div class="rc-actions">
-        <button class="ac-btn ac-primary" onclick="playImgAudio()"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play</button>
-        <button class="ac-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>
+        <button class="ac-btn ac-primary" data-playpause="labeled" onclick="playImgAudio()">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
+        </button>
+        <button class="ac-btn" onclick="copyText('imgTranslatedText')">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy
+        </button>
       </div>
     </div>
   </div>
@@ -461,13 +463,11 @@
 
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
 <script>
-  window.VAANI_VERSION = "20250324";
-  // ── Set your Google Vision API key here (or via environment) ──
-  // window.VAANI_VISION_KEY = "YOUR_GOOGLE_VISION_API_KEY";
+  window.VAANI_VERSION = "20250324b";
   window.VAANI_VISION_KEY = "";
 </script>
-<script type="module" src="firebase.js?v=20250324"></script>
-<script src="app.js?v=20250324"></script>
+<script type="module" src="firebase.js?v=20250324b"></script>
+<script src="app.js?v=20250324b"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
