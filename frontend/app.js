@@ -1115,39 +1115,50 @@ async function startConvListening(speaker) {
  * - Guard against duplicate concurrent calls
  * - No delay
  */
+
 async function onConvLangChange(speaker) {
-  const fromSel = `convLang${speaker}`;
-  const toSel   = speaker === "A" ? "convLangB" : "convLangA";
-  const toLang  = document.getElementById(toSel)?.value || "en";
+  // Save the new language preference
+  const selectId = `convLang${speaker}`;
+  const newLang  = document.getElementById(selectId)?.value || "en";
+  localStorage.setItem(`vaani_lang_${selectId}`, newLang);
 
-  localStorage.setItem(`vaani_lang_convLang${speaker}`, document.getElementById(fromSel)?.value || "en");
+  // The OPPOSITE speaker produced the content that needs re-translating.
+  // convLangB changing → re-translate A's last message into new B lang.
+  // convLangA changing → re-translate B's last message into new A lang.
+  const sourceSpeak = speaker === "B" ? "A" : "B";
 
-  const transcript = _convLastTranscript[speaker];
-  const origFrom   = _convLastFromLang[speaker];
+  const transcript = _convLastTranscript[sourceSpeak];
+  const origFrom   = _convLastFromLang[sourceSpeak];
+
+  // No previous message from source speaker → do nothing
   if (!transcript || !origFrom) return;
 
-  // FIX 10: guard against duplicate calls
-  if (speaker === "A" && _convTranslatingA) return;
-  if (speaker === "B" && _convTranslatingB) return;
+  // Same language selected → do nothing
+  if (_convLastToLang[sourceSpeak] === newLang) return;
 
-  if (speaker === "A") _convTranslatingA = true;
-  else                 _convTranslatingB = true;
+  // Guard against duplicate concurrent calls
+  if (sourceSpeak === "A" && _convTranslatingA) return;
+  if (sourceSpeak === "B" && _convTranslatingB) return;
 
-  const transEl = document.getElementById(`translatedText${speaker}`);
-  const playBtn = document.getElementById(`playBtn${speaker}`);
+  if (sourceSpeak === "A") _convTranslatingA = true;
+  else                     _convTranslatingB = true;
+
+  const transEl = document.getElementById(`translatedText${sourceSpeak}`);
+  const playBtn = document.getElementById(`playBtn${sourceSpeak}`);
   if (transEl) transEl.textContent = "…";
 
   try {
-    const translated = await translateText(transcript, origFrom, toLang);
+    // Re-translate using ORIGINAL speech text, NOT the previously translated text
+    const translated = await translateText(transcript, origFrom, newLang);
     if (transEl) transEl.textContent = translated || "—";
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
 
-    _convLastToLang[speaker] = toLang;
+    _convLastToLang[sourceSpeak] = newLang;
 
-    if (translated) await autoPlay(translated, toLang, "", transEl);
+    if (translated) await autoPlay(translated, newLang, "", transEl);
   } finally {
-    if (speaker === "A") _convTranslatingA = false;
-    else                 _convTranslatingB = false;
+    if (sourceSpeak === "A") _convTranslatingA = false;
+    else                     _convTranslatingB = false;
   }
 }
 
