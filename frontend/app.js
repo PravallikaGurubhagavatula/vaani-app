@@ -1,20 +1,18 @@
 /* ================================================================
-   Vaani — app.js  v5.0  PATCHED
+   Vaani — app.js  v5.1  STABILITY PATCH
 
-   CHANGES FROM v4.0:
-   1. OCR BULLET POINT FIX — detects •-*1. etc, preserves correctly
-   2. LIVE CAMERA REMOVED — all live-cam code stripped
-   3. IMAGE EDITING — rotation left/right + improved crop (free crop,
-      touch support, smooth handles via Cropper.js aspectRatio:NaN)
-   4. PERFORMANCE — parallel OCR→translate→audio pipeline,
-      optimized image resize before OCR, non-blocking async
-   5. EDITABLE EXTRACTED TEXT — textarea + "Confirm & Translate" btn
-   6. AUDIO CONTROLS — pause/resume, timeline always visible,
-      draggable seek bar everywhere
-   7. CONVERSATION MODE FIX — lang change triggers re-translation
-   8. WORD HIGHLIGHTING — synced via per-word timestamp estimation
-   9. TRAVEL HELPER — custom sentences, delete, custom categories,
-      all persisted in localStorage
+   PATCHES APPLIED:
+   1. MIC PERMISSION  — explicit getUserMedia({audio:true}) before
+                        SpeechRecognition; handles Android PWA
+   2. AUDIO TIMELINE  — full rewrite: timeupdate listener, drag seek,
+                        replay reset, no duplicate listeners, persistent
+   3. HISTORY/FAVS    — always append (never overwrite), UI updates
+                        instantly, delete removes single item
+   4. AUTH SESSION    — localStorage persistence, restored on load,
+                        no re-login required across pages
+   5. LIVE UI UPDATE  — save/delete → immediate re-render, no reload
+   6. BACK NAVIGATION — proper pushState stack + popstate handler
+   7. PERFORMANCE     — all existing OCR/parallel optimisations kept
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -115,6 +113,38 @@ async function detectUserLocation() {
       }
     }
   } catch (_) {}
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FIX 1: MICROPHONE PERMISSION — explicit getUserMedia before SR
+// ══════════════════════════════════════════════════════════════════
+
+let _micPermissionGranted = false;
+
+/**
+ * Request microphone permission explicitly via getUserMedia.
+ * Returns true if granted, false if denied/error.
+ * Stops the stream immediately — we only need the permission grant.
+ */
+async function requestMicPermission() {
+  if (_micPermissionGranted) return true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    // Stop all tracks immediately — we only needed the permission
+    stream.getTracks().forEach(t => t.stop());
+    _micPermissionGranted = true;
+    return true;
+  } catch (err) {
+    console.warn("[Vaani] Mic permission:", err.name, err.message);
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      showToast("Microphone access denied. Please allow it in browser/system settings.");
+    } else if (err.name === "NotFoundError") {
+      showToast("No microphone found on this device.");
+    } else {
+      showToast("Cannot access microphone: " + err.message);
+    }
+    return false;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -230,27 +260,47 @@ async function _pivotTranslate(text, fromLang, toLang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUDIO SYSTEM — pause/resume, always-visible timeline, word-highlight
+// FIX 2: AUDIO SYSTEM — full rewrite with proper timeline control
+// Rules:
+//  • timeupdate listener (not rAF) drives timeline — no duplicate listeners
+//  • drag seeks audio.currentTime; playing state preserved
+//  • replay resets currentTime=0 before play
+//  • timeline stays visible on end
+//  • no duplicate event listeners (use named bound handlers + removeEventListener)
 // ══════════════════════════════════════════════════════════════════
+
 let _curAudio          = null;
 let _audioPlaying      = false;
-let _timelineRAF       = null;
-let _timelineSeeking   = false;
 let _wordHighlightWords = [];
 let _wordHighlightEl    = null;
 let _wordHighlightRAF   = null;
 let _wordHighlightStart = 0;
 let _wordHighlightDur   = 0;
 
+// Track which timeline suffix is active so we only update one
+let _activeTimelineSuffix = "";
+
+// Named handler references so we can remove them cleanly
+let _boundTimeUpdate = null;
+let _boundAudioEnded = null;
+let _timelineSeeking = false;
+
 function stopAudio() {
-  if (_timelineRAF)     { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
-  if (_wordHighlightRAF){ cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
+  _detachAudioListeners();
+  if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
   if (_curAudio) {
     try { _curAudio.pause(); _curAudio.currentTime = 0; } catch (_) {}
     _curAudio = null;
   }
   _audioPlaying = false;
   _updateAllPlayPauseBtns();
+}
+
+function _detachAudioListeners() {
+  if (_curAudio) {
+    if (_boundTimeUpdate) { _curAudio.removeEventListener("timeupdate", _boundTimeUpdate); _boundTimeUpdate = null; }
+    if (_boundAudioEnded) { _curAudio.removeEventListener("ended", _boundAudioEnded); _boundAudioEnded = null; }
+  }
 }
 
 function pauseAudio() {
@@ -287,23 +337,6 @@ function _updateAllPlayPauseBtns() {
 }
 
 // ── Timeline helpers ───────────────────────────────────────────────
-function resetTimeline(suffix) {
-  const s = suffix || "";
-  const wrap = document.getElementById(`audioTimeline${s}`);
-  if (!wrap) return;
-  // Keep visible after first use; only reset values
-  const bar   = document.getElementById(`timelineSeek${s}`);
-  const cur   = document.getElementById(`timelineCurrent${s}`);
-  if (bar)   { bar.value = 0; _updateSeekFill(bar, 0); }
-  if (cur)   cur.textContent = "0:00";
-}
-
-function showTimeline(suffix) {
-  const s = suffix || "";
-  const wrap = document.getElementById(`audioTimeline${s}`);
-  if (wrap) wrap.style.display = "flex";
-}
-
 function _fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -315,55 +348,109 @@ function _updateSeekFill(bar, pct) {
   bar.style.setProperty("--seek-pct", `${Math.max(0, Math.min(100, pct))}%`);
 }
 
-function _startTimelineLoop(audio, suffix) {
+function resetTimeline(suffix) {
+  const s = suffix || "";
+  const bar = document.getElementById(`timelineSeek${s}`);
+  const cur = document.getElementById(`timelineCurrent${s}`);
+  if (bar) { bar.value = 0; _updateSeekFill(bar, 0); }
+  if (cur) cur.textContent = "0:00";
+}
+
+function showTimeline(suffix) {
+  const s = suffix || "";
+  const wrap = document.getElementById(`audioTimeline${s}`);
+  if (wrap) wrap.style.display = "flex";
+}
+
+/**
+ * Attach timeupdate listener to audio — drives the seek bar.
+ * Removes any previous listener first to prevent duplicates.
+ */
+function _attachTimelineToAudio(audio, suffix) {
   const s     = suffix || "";
-  const wrap  = document.getElementById(`audioTimeline${s}`);
   const bar   = document.getElementById(`timelineSeek${s}`);
   const cur   = document.getElementById(`timelineCurrent${s}`);
   const total = document.getElementById(`timelineTotal${s}`);
-  if (!wrap || !bar || !cur || !total) return;
 
-  wrap.style.display = "flex";
+  if (!bar || !cur || !total) return;
 
-  function tick() {
-    if (!_curAudio || _curAudio !== audio) return;
-    if (!_timelineSeeking) {
-      const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-      bar.value = pct;
-      _updateSeekFill(bar, pct);
-      cur.textContent = _fmtTime(audio.currentTime);
-    }
-    _timelineRAF = requestAnimationFrame(tick);
-  }
+  // Remove existing
+  _detachAudioListeners();
 
-  const setDuration = () => { total.textContent = _fmtTime(audio.duration); };
-  if (audio.readyState >= 1) setDuration();
-  else audio.addEventListener("loadedmetadata", setDuration, { once: true });
+  // Set duration once metadata is available
+  const setDur = () => {
+    if (total) total.textContent = _fmtTime(audio.duration);
+  };
+  if (audio.readyState >= 1) setDur();
+  else audio.addEventListener("loadedmetadata", setDur, { once: true });
 
-  if (_timelineRAF) cancelAnimationFrame(_timelineRAF);
-  _timelineRAF = requestAnimationFrame(tick);
+  // timeupdate handler — drives seek bar
+  _boundTimeUpdate = () => {
+    if (_timelineSeeking) return;
+    const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    bar.value = pct;
+    _updateSeekFill(bar, pct);
+    cur.textContent = _fmtTime(audio.currentTime);
+  };
+
+  // ended handler — timeline stays visible, buttons reset
+  _boundAudioEnded = () => {
+    _audioPlaying = false;
+    _updateAllPlayPauseBtns();
+    clearWordHighlight();
+    // Reset bar to 0 visually but keep timeline visible
+    bar.value = 0;
+    _updateSeekFill(bar, 0);
+    if (cur) cur.textContent = "0:00";
+  };
+
+  audio.addEventListener("timeupdate", _boundTimeUpdate);
+  audio.addEventListener("ended", _boundAudioEnded);
 }
 
+/**
+ * Init seek bar drag controls for a given suffix.
+ * Called once per suffix — guarded by _vaaniInitialized flag.
+ */
 function _initTimelineControls(suffix) {
   const s   = suffix || "";
   const bar = document.getElementById(`timelineSeek${s}`);
   if (!bar || bar._vaaniInitialized) return;
   bar._vaaniInitialized = true;
 
+  const cur = document.getElementById(`timelineCurrent${s}`);
+
+  // While dragging — update display time but don't seek yet
   bar.addEventListener("input", () => {
     _timelineSeeking = true;
     _updateSeekFill(bar, parseFloat(bar.value));
-    const cur = document.getElementById(`timelineCurrent${s}`);
     if (cur && _curAudio && _curAudio.duration) {
       cur.textContent = _fmtTime((_curAudio.duration * parseFloat(bar.value)) / 100);
     }
   });
 
+  // On release — seek audio; preserve play/pause state
   bar.addEventListener("change", () => {
     if (_curAudio && _curAudio.duration) {
       _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     }
     _timelineSeeking = false;
+    // If was playing, ensure it continues
+    if (_audioPlaying && _curAudio && _curAudio.paused) {
+      _curAudio.play().catch(e => console.warn("[Vaani] seek-resume:", e.message));
+    }
+  });
+
+  // Touch support for mobile drag
+  bar.addEventListener("touchstart", () => { _timelineSeeking = true; }, { passive: true });
+  bar.addEventListener("touchend", () => {
+    if (_curAudio && _curAudio.duration) {
+      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
+    }
+    _timelineSeeking = false;
+    if (_audioPlaying && _curAudio && _curAudio.paused) {
+      _curAudio.play().catch(() => {});
+    }
   });
 }
 
@@ -405,7 +492,7 @@ function startWordHighlight(el, text, audio) {
 
   _wordHighlightEl    = el;
   _wordHighlightWords = words;
-  _wordHighlightDur   = 0; // will be set once audio duration is known
+  _wordHighlightDur   = 0;
 
   el.innerHTML = _buildHighlightHtml(text);
   el.classList.add("wh-active");
@@ -480,39 +567,60 @@ async function speakText(text, lang) {
     const blob  = await r.blob();
     const url   = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      _audioPlaying = false;
-      _updateAllPlayPauseBtns();
-      clearWordHighlight();
-      // Keep timeline visible but stop updating
-      if (_timelineRAF) { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
-    };
+    // Revoke object URL when audio ends or errors
+    const revokeUrl = () => { try { URL.revokeObjectURL(url); } catch(_){} };
+    audio.addEventListener("ended", revokeUrl, { once: true });
+    audio.addEventListener("error", revokeUrl, { once: true });
     return audio;
   } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
 }
 
+/**
+ * autoPlay — fully replaces previous audio, resets timeline, attaches listeners.
+ * FIX: replay resets currentTime=0; no duplicate timeupdate listeners.
+ */
 async function autoPlay(text, lang, timelineSuffix, highlightEl) {
   if (!text || text === "—" || text === "…" || !lang) return;
+
+  // Stop and clean up previous audio completely
   stopAudio();
-  showTimeline(timelineSuffix || "");
+
+  const suffix = timelineSuffix || "";
+  showTimeline(suffix);
+  resetTimeline(suffix);
+  _activeTimelineSuffix = suffix;
+
   const audio = await speakText(text, lang);
-  if (audio) {
-    _curAudio = audio;
+  if (!audio) return;
+
+  _curAudio = audio;
+
+  // Attach timeline (timeupdate + ended) — before play
+  _attachTimelineToAudio(audio, suffix);
+
+  // Word highlight — after canplay
+  if (highlightEl) {
+    audio.addEventListener("canplay", () => {
+      startWordHighlight(highlightEl, text, audio);
+    }, { once: true });
+  }
+
+  // Reset to beginning before every play (handles replay)
+  audio.currentTime = 0;
+
+  try {
+    await audio.play();
     _audioPlaying = true;
     _updateAllPlayPauseBtns();
-    _startTimelineLoop(audio, timelineSuffix || "");
-    if (highlightEl) {
-      audio.addEventListener("canplay", () => {
-        startWordHighlight(highlightEl, text, audio);
-      }, { once: true });
-    }
-    audio.play().catch(e => console.warn("[Vaani] play:", e.message));
+  } catch (e) {
+    console.warn("[Vaani] play:", e.message);
+    _audioPlaying = false;
+    _updateAllPlayPauseBtns();
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// MIC STATE MACHINE
+// FIX 1 CONTINUED: MIC STATE MACHINE — explicit permission first
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 const _mic = {
@@ -532,7 +640,7 @@ function setMicStatus(msg, id = "micStatus") {
   if (el) el.textContent = msg;
 }
 
-function startListening() {
+async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
 
@@ -549,6 +657,14 @@ function startListening() {
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
     showToast("Voice input not supported. Use Chrome.");
+    return;
+  }
+
+  // FIX: Request mic permission explicitly before starting SR
+  setMicStatus("Requesting microphone…");
+  const permitted = await requestMicPermission();
+  if (!permitted) {
+    setMicStatus("Tap to speak");
     return;
   }
 
@@ -598,6 +714,10 @@ function startListening() {
     micBtn?.classList.remove("listening");
     setMicStatus("Tap to speak");
     if (e.error === "no-speech") showToast("No speech. Try again.");
+    else if (e.error === "not-allowed") {
+      _micPermissionGranted = false;
+      showToast("Microphone blocked. Enable in settings.");
+    }
     else if (e.error !== "aborted") showToast("Mic: " + e.error);
   };
 
@@ -623,7 +743,6 @@ function startListening() {
 // CONVERSATION MODE — with live re-translation on lang change
 // ══════════════════════════════════════════════════════════════════
 
-// Store last spoken text per panel for re-translation
 const _convLastTranscript = { A: "", B: "" };
 const _convLastFromLang   = { A: "", B: "" };
 
@@ -655,6 +774,14 @@ async function startConvListening(speaker) {
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
     showToast("Voice not supported. Use Chrome."); return;
+  }
+
+  // FIX: Request mic permission explicitly
+  setMicStatus("Requesting microphone…", statId);
+  const permitted = await requestMicPermission();
+  if (!permitted) {
+    setMicStatus("Tap to speak", statId);
+    return;
   }
 
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -700,7 +827,10 @@ async function startConvListening(speaker) {
     ctx.state = MicState.IDLE; ctx.rec = null;
     micBtn?.classList.remove("listening");
     setMicStatus("Tap to speak", statId);
-    if (e.error !== "aborted") showToast("Mic: " + e.error);
+    if (e.error === "not-allowed") {
+      _micPermissionGranted = false;
+      showToast("Microphone blocked. Enable in settings.");
+    } else if (e.error !== "aborted") showToast("Mic: " + e.error);
   };
 
   rec.onend = () => {
@@ -716,7 +846,6 @@ async function startConvListening(speaker) {
   catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); }
 }
 
-// Re-translate when conversation language changes
 async function onConvLangChange(speaker) {
   const fromSel = `convLang${speaker}`;
   const toSel   = speaker === "A" ? "convLangB" : "convLangA";
@@ -748,7 +877,7 @@ function clearSingleResults() {
   if (o) o.textContent = "—";
   if (t) t.textContent = "—";
   if (a) a.style.display = "none";
-  resetTimeline();
+  resetTimeline("");
 }
 
 function showOriginalText(text) {
@@ -909,7 +1038,8 @@ function copyTranslation() {
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
 }
 function copyText(id) {
-  const t = document.getElementById(id)?.textContent;
+  const el = document.getElementById(id);
+  const t = el?.tagName === "TEXTAREA" ? el.value : el?.textContent;
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
 }
 
@@ -939,7 +1069,6 @@ function initLanguageSelects() {
   document.getElementById("fromLang")?.addEventListener("change", onLanguageChange);
   document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
 
-  // Conversation lang change with re-translation
   document.getElementById("convLangA")?.addEventListener("change", () => onConvLangChange("A"));
   document.getElementById("convLangB")?.addEventListener("change", () => onConvLangChange("B"));
 
@@ -996,7 +1125,6 @@ const TRAVEL_PHRASES_DEFAULT = {
   ],
 };
 
-// Storage helpers for custom travel data
 function _getTravelCustom() {
   try { return JSON.parse(localStorage.getItem("vaani_travel_custom") || "{}"); } catch(_){ return {}; }
 }
@@ -1004,7 +1132,6 @@ function _saveTravelCustom(data) {
   localStorage.setItem("vaani_travel_custom", JSON.stringify(data));
 }
 function _getTravelCategories() {
-  // Returns ordered list of category keys
   const custom = _getTravelCustom();
   const defaultKeys = Object.keys(TRAVEL_PHRASES_DEFAULT);
   const customKeys  = Object.keys(custom).filter(k => !defaultKeys.includes(k));
@@ -1058,9 +1185,7 @@ async function renderTravelPhrases() {
   list.innerHTML = "";
   if (loading) loading.style.display = "flex";
 
-  const custom       = _getTravelCustom();
-  const defaultKeys  = Object.keys(TRAVEL_PHRASES_DEFAULT);
-  const isBuiltin    = (phrase) => (TRAVEL_PHRASES_DEFAULT[_cat] || []).some(p => p.en === phrase.en);
+  const isBuiltin = (phrase) => (TRAVEL_PHRASES_DEFAULT[_cat] || []).some(p => p.en === phrase.en);
 
   for (const phrase of phrases) {
     const fk = `${phrase.en}|${fromLang}`;
@@ -1120,7 +1245,6 @@ async function renderTravelPhrases() {
     btnsDiv.appendChild(playBtn);
     btnsDiv.appendChild(copyBtn);
 
-    // Delete button for custom phrases
     if (isCustomPhrase) {
       const delBtn = document.createElement("button");
       delBtn.className = "phrase-btn phrase-del";
@@ -1138,7 +1262,6 @@ async function renderTravelPhrases() {
     list.appendChild(card);
   }
 
-  // "Add sentence" button at bottom
   const addRow = document.createElement("div");
   addRow.className = "phrase-add-row";
   addRow.innerHTML = `
@@ -1195,29 +1318,14 @@ function addTravelCategory() {
 // OCR BULLET POINT FIX
 // ══════════════════════════════════════════════════════════════════
 
-/**
- * Normalize OCR'd bullet characters.
- * Tesseract often misreads • ● ■ ▪ → "e" or "|" or "o"
- * This heuristic detects list-like lines and restores bullets.
- */
 function _fixBullets(text) {
   if (!text) return text;
   const lines = text.split(/\r?\n/);
-  const fixed = lines.map((line, idx) => {
+  const fixed = lines.map((line) => {
     let l = line;
-
-    // Replace known OCR bullet misreads at start of line
-    // Pattern: line starts with isolated "e", "o", "|", "·", "•", "●", "■", "▪", "-", "*"
-    // followed by a space and actual text
-    l = l.replace(/^([e|o·•●■▪◦‣⁃➢➤►▶→]\s+)/, (match, bullet) => "• ");
+    l = l.replace(/^([e|o·•●■▪◦‣⁃➢➤►▶→]\s+)/, () => "• ");
     l = l.replace(/^([\-\*]\s+)/, "• ");
-
-    // Numbered list: "1." "2." etc — preserve
-    // Already fine, no change needed
-
-    // Double-"e" bullet artifact: "e e Item" → "• Item"
     l = l.replace(/^(e\s+e\s+)/, "• ");
-
     return l;
   });
   return fixed.join("\n");
@@ -1380,7 +1488,6 @@ const TESS_LANG_MAP = {
   hne:"hin", en:"eng",
 };
 
-// ── Optimized image resize for OCR (target ~1200px max dimension) ──
 function _optimizeImageForOCR(file) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -1390,7 +1497,6 @@ function _optimizeImageForOCR(file) {
       const MAX = 1400;
       let { width: w, height: h } = img;
 
-      // Only scale up if too small; scale down if too large
       if (w > MAX || h > MAX) {
         const scale = MAX / Math.max(w, h);
         w = Math.round(w * scale);
@@ -1407,7 +1513,6 @@ function _optimizeImageForOCR(file) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, w, h);
 
-      // Contrast enhancement
       const imageData = ctx.getImageData(0, 0, w, h);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -1424,12 +1529,10 @@ function _optimizeImageForOCR(file) {
   });
 }
 
-// ── Preprocess image for Tesseract (legacy compat) ────────────────
 function _preprocessImage(file) {
   return _optimizeImageForOCR(file);
 }
 
-// ── Run Tesseract OCR ──────────────────────────────────────────────
 async function _runOCR(blob, langCode) {
   const Tesseract = await _loadTesseract();
   const tessLang  = TESS_LANG_MAP[langCode] || "eng";
@@ -1455,7 +1558,6 @@ async function _runOCR(blob, langCode) {
   }
 }
 
-// ── OCR post-processing with bullet fix ───────────────────────────
 function _cleanOcrText(raw) {
   if (!raw) return "";
 
@@ -1597,14 +1699,13 @@ async function _openCropModal(file, onConfirm) {
       zoomable: true,
       rotatable: true,
       scalable: true,
-      aspectRatio: NaN,        // FREE crop — no fixed ratio
+      aspectRatio: NaN,
       cropBoxResizable: true,
       cropBoxMovable: true,
       toggleDragModeOnDblclick: true,
     });
   };
 
-  // Rotation buttons
   modal.querySelector("#vcmRotLeft").addEventListener("click", () => {
     _cropRotation = (_cropRotation - 90 + 360) % 360;
     _cropperInstance?.rotate(-90);
@@ -1639,7 +1740,6 @@ async function _openCropModal(file, onConfirm) {
   });
 }
 
-// ── Show "Change" options modal ───────────────────────────────────
 function _openChangeModal() {
   const existing = document.getElementById("vaaniChangeModal");
   if (existing) existing.remove();
@@ -1686,7 +1786,7 @@ function _openChangeModal() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// BACK CAMERA CAPTURE via getUserMedia
+// BACK CAMERA CAPTURE
 // ══════════════════════════════════════════════════════════════════
 
 let _cameraStream  = null;
@@ -1788,7 +1888,6 @@ function _stopCameraStream() {
   }
 }
 
-// ── Show preview with click-to-expand ─────────────────────────────
 function _showPreviewBox(objectUrl) {
   const pb = document.getElementById("imgPreviewBox");
   const p  = document.getElementById("imgPreview");
@@ -1835,7 +1934,6 @@ function handleImageUpload(e) {
   if (f) processImageFile(f);
 }
 
-// ── Editable extracted text helpers ───────────────────────────────
 function _resetEditableExtracted() {
   const ta = document.getElementById("imgExtractedTextEdit");
   if (ta) ta.value = "";
@@ -1924,26 +2022,20 @@ async function translateImage() {
   resetTimeline("Img");
 
   try {
-    // ── Step 1: Optimize image in background (non-blocking) ───────
     const optimizedBlobPromise = _optimizeImageForOCR(sourceBlob);
 
-    // ── Step 2: Try Vision OCR (runs in parallel with optimization) ─
     if (status) status.textContent = "Running OCR…";
 
     let extractedText = "";
     let ocrEngine = "unknown";
 
-    // Run Vision API on original blob immediately (no need to wait for optimization)
     const visionPromise = _googleVisionOCR(sourceBlob, fromLang);
-
-    // Wait for both
     const [visionResult, optimizedBlob] = await Promise.all([visionPromise, optimizedBlobPromise]);
 
     if (visionResult && visionResult.length > 2) {
       extractedText = visionResult;
       ocrEngine = "Google Vision";
     } else {
-      // ── Step 3: Backend OCR (parallel with client fallback setup) ──
       if (status) status.textContent = "Running server OCR…";
 
       const backendPromise = (async () => {
@@ -1969,7 +2061,6 @@ async function translateImage() {
 
       if (backendResult && backendResult.extracted && backendResult.extracted.length > 2) {
         if (backendResult.translated && backendResult.translated.trim()) {
-          // Backend did OCR + translation together — fast path
           const extracted = backendResult.extracted;
           const translatedFromBackend = backendResult.translated.trim();
 
@@ -1979,7 +2070,6 @@ async function translateImage() {
           if (transEl) transEl.textContent = translatedFromBackend;
           if (status) status.textContent = `OCR: ${backendResult.engine || "server"} ✓`;
           showTimeline("Img");
-          // Start audio in background without blocking UI
           autoPlay(translatedFromBackend, toLang, "Img", transEl);
           return;
         }
@@ -1988,7 +2078,6 @@ async function translateImage() {
       }
 
       if (!extractedText) {
-        // ── Step 4: Tesseract.js client fallback ───────────────────
         if (status) status.textContent = "Loading Tesseract OCR…";
         try {
           const rawOcr = await _runOCR(optimizedBlob || sourceBlob, fromLang);
@@ -2000,7 +2089,6 @@ async function translateImage() {
       }
     }
 
-    // ── Step 5: Show extracted (editable) ────────────────────────
     if (!extractedText || extractedText.length < 2) {
       _showEditableExtracted("");
       document.getElementById("imgTranslatedText").textContent = "No text detected in this image.";
@@ -2012,7 +2100,6 @@ async function translateImage() {
     _showEditableExtracted(extractedText);
     if (status) status.textContent = `OCR: ${ocrEngine} ✓ — Translating…`;
 
-    // ── Step 6: Translate (paragraph-aware) + start audio in parallel ─
     let translated = "";
     if (fromLang === toLang) {
       translated = extractedText;
@@ -2042,7 +2129,6 @@ async function translateImage() {
     showTimeline("Img");
 
     if (translated && translated !== extractedText) {
-      // Fire audio without awaiting — non-blocking
       autoPlay(translated, toLang, "Img", transEl);
     }
   } catch (e) {
@@ -2054,20 +2140,111 @@ async function translateImage() {
   }
 }
 
-// ── HISTORY & FAVOURITES ──────────────────────────────────────────
-function saveToHistory(orig, trans, fromLang, toLang) {
+// ══════════════════════════════════════════════════════════════════
+// FIX 3 & 5: HISTORY — ARRAY-BASED, APPEND, INSTANT UI UPDATE
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Read history array from localStorage.
+ * Always returns an array (never null/undefined).
+ */
+function _readHistory() {
   try {
-    const h = JSON.parse(localStorage.getItem("vaani_history") || "[]");
-    if (h.length && h[0].original === orig && h[0].toLang === toLang) return;
-    h.unshift({ original:orig, translated:trans, fromLang, toLang, ts:Date.now() });
-    if (h.length > 200) h.splice(200);
-    localStorage.setItem("vaani_history", JSON.stringify(h));
-  } catch(_){}
+    const raw = localStorage.getItem("vaani_history");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    // Defensive: if legacy data was a single object, wrap it
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.original) return [parsed];
+    return [];
+  } catch (_) { return []; }
+}
+
+function _writeHistory(arr) {
+  try { localStorage.setItem("vaani_history", JSON.stringify(arr)); } catch (_) {}
+}
+
+/**
+ * Save to history — APPENDS to array, caps at 200, re-renders instantly.
+ * FIX: never overwrites; skips exact duplicate (same orig + toLang).
+ */
+function saveToHistory(orig, trans, fromLang, toLang) {
+  const h = _readHistory();
+  // Skip if top item is identical
+  if (h.length && h[0].original === orig && h[0].toLang === toLang) return;
+  h.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
+  if (h.length > 200) h.splice(200);
+  _writeHistory(h);
+  // FIX 5: instant UI update — re-render if history page is active
+  const histPage = document.getElementById("pageHistory");
+  if (histPage && histPage.classList.contains("active")) renderHistory();
+}
+
+/**
+ * Delete a single history item by index, re-render instantly.
+ */
+function deleteHistory(i) {
+  const h = _readHistory();
+  h.splice(i, 1);
+  _writeHistory(h);
+  renderHistory(); // FIX 5: immediate re-render
 }
 
 // ══════════════════════════════════════════════════════════════════
-// HISTORY PAGE
+// FIX 3 & 5: FAVOURITES — ARRAY-BASED, APPEND, INSTANT UI UPDATE
 // ══════════════════════════════════════════════════════════════════
+
+function _readFavs() {
+  try {
+    const raw = localStorage.getItem("vaani_favs");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.original) return [parsed];
+    return [];
+  } catch (_) { return []; }
+}
+
+function _writeFavs(arr) {
+  try { localStorage.setItem("vaani_favs", JSON.stringify(arr)); } catch (_) {}
+}
+
+function saveSingleToFavourites() {
+  const o  = document.getElementById("originalText")?.textContent;
+  const t  = document.getElementById("translatedText")?.textContent;
+  const f  = document.getElementById("fromLang")?.value;
+  const tl = document.getElementById("toLang")?.value;
+  if (!t || t === "—" || t === "…") return;
+  saveFavourite(o, t, f, tl);
+}
+
+/**
+ * Save favourite — appends to array, no overwrite, instant re-render.
+ */
+function saveFavourite(orig, trans, fromLang, toLang) {
+  const favs = _readFavs();
+  if (favs.some(f => f.original === orig && f.toLang === toLang)) {
+    showToast("Already saved!"); return;
+  }
+  favs.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
+  _writeFavs(favs);
+  showToast("Saved to favourites");
+  // FIX 5: instant re-render if favs page active
+  const favsPage = document.getElementById("pageFavourites");
+  if (favsPage && favsPage.classList.contains("active")) renderFavourites();
+}
+
+/**
+ * Delete a single favourite by index, re-render instantly.
+ */
+function deleteFavourite(i) {
+  const favs = _readFavs();
+  favs.splice(i, 1);
+  _writeFavs(favs);
+  renderFavourites(); // FIX 5: immediate re-render
+}
+
+// ── RENDER HISTORY ────────────────────────────────────────────────
 function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
@@ -2090,16 +2267,16 @@ function renderHistory() {
     return;
   }
 
-  const hist = JSON.parse(localStorage.getItem("vaani_history") || "[]");
+  const hist = _readHistory();
   if (!hist.length) {
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
     return;
   }
-  list.innerHTML = hist.map((h,i) => `
+  list.innerHTML = hist.map((h, i) => `
     <div class="hist-card">
       <div class="hist-langs">${LANG_NAMES[h.fromLang]||h.fromLang} → ${LANG_NAMES[h.toLang]||h.toLang}</div>
-      <div class="hist-orig">${h.original}</div>
-      <div class="hist-trans">${h.translated}</div>
+      <div class="hist-orig">${_escHtml(h.original)}</div>
+      <div class="hist-trans">${_escHtml(h.translated)}</div>
       <div class="hist-actions">
         <button class="hist-btn" onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
         <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
@@ -2109,44 +2286,20 @@ function renderHistory() {
     </div>`).join("");
 }
 
-function deleteHistory(i) {
-  const h = JSON.parse(localStorage.getItem("vaani_history") || "[]");
-  h.splice(i,1); localStorage.setItem("vaani_history", JSON.stringify(h)); renderHistory();
-}
-
-function saveSingleToFavourites() {
-  const o = document.getElementById("originalText")?.textContent;
-  const t = document.getElementById("translatedText")?.textContent;
-  const f = document.getElementById("fromLang")?.value;
-  const tl = document.getElementById("toLang")?.value;
-  if (!t || t === "—" || t === "…") return;
-  saveFavourite(o, t, f, tl);
-}
-
-function saveFavourite(orig, trans, fromLang, toLang) {
-  try {
-    const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
-    if (favs.some(f => f.original === orig && f.toLang === toLang)) { showToast("Already saved!"); return; }
-    favs.unshift({ original:orig, translated:trans, fromLang, toLang, ts:Date.now() });
-    localStorage.setItem("vaani_favs", JSON.stringify(favs));
-    showToast("Saved to favourites");
-    renderFavourites();
-  } catch(_){}
-}
-
+// ── RENDER FAVOURITES ────────────────────────────────────────────
 function renderFavourites() {
-  const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
+  const favs = _readFavs();
   const list = document.getElementById("favouritesList");
   if (!list) return;
   if (!favs.length) {
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
     return;
   }
-  list.innerHTML = favs.map((f,i) => `
+  list.innerHTML = favs.map((f, i) => `
     <div class="hist-card fav-card">
       <div class="hist-langs">${LANG_NAMES[f.fromLang]||f.fromLang} → ${LANG_NAMES[f.toLang]||f.toLang}</div>
-      <div class="hist-orig">${f.original}</div>
-      <div class="hist-trans">${f.translated}</div>
+      <div class="hist-orig">${_escHtml(f.original)}</div>
+      <div class="hist-trans">${_escHtml(f.translated)}</div>
       <div class="hist-actions">
         <button class="hist-btn" onclick="autoPlay(${JSON.stringify(f.translated)},${JSON.stringify(f.toLang)})">Play</button>
         <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(f.translated)}).then(()=>showToast('Copied!'))">Copy</button>
@@ -2155,9 +2308,70 @@ function renderFavourites() {
     </div>`).join("");
 }
 
-function deleteFavourite(i) {
-  const favs = JSON.parse(localStorage.getItem("vaani_favs") || "[]");
-  favs.splice(i,1); localStorage.setItem("vaani_favs", JSON.stringify(favs)); renderFavourites();
+// ══════════════════════════════════════════════════════════════════
+// FIX 4: AUTH SESSION PERSISTENCE — localStorage-backed
+// ══════════════════════════════════════════════════════════════════
+
+const SESSION_KEY = "vaani_user_session";
+
+/**
+ * Persist user session to localStorage.
+ * Called by firebase.js auth change handler.
+ */
+function _persistUserSession(user) {
+  if (user) {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        uid:         user.uid,
+        displayName: user.displayName || "",
+        email:       user.email || "",
+        photoURL:    user.photoURL || "",
+        ts:          Date.now()
+      }));
+    } catch (_) {}
+  } else {
+    try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+  }
+}
+
+/**
+ * Restore user session from localStorage on app load.
+ * Returns persisted user object or null.
+ */
+function _restoreUserSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    // Expire sessions older than 30 days
+    if (Date.now() - (session.ts || 0) > 30 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+    return session;
+  } catch (_) { return null; }
+}
+
+function _applyUserToUI(user) {
+  if (!user) {
+    const card   = document.getElementById("menuSigninCard");
+    const out    = document.getElementById("menuSignout");
+    const uEl    = document.getElementById("menuUser");
+    if (card) card.style.display = "block";
+    if (out)  out.style.display  = "none";
+    if (uEl)  uEl.style.display  = "none";
+    return;
+  }
+  const card   = document.getElementById("menuSigninCard");
+  const out    = document.getElementById("menuSignout");
+  const uEl    = document.getElementById("menuUser");
+  const avatar = document.getElementById("menuAvatar");
+  const name   = document.getElementById("menuUserName");
+  if (card)   card.style.display   = "none";
+  if (out)    out.style.display    = "block";
+  if (uEl)    uEl.style.display    = "flex";
+  if (avatar) avatar.src           = user.photoURL || "";
+  if (name)   name.textContent     = user.displayName || user.email || "User";
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2226,7 +2440,7 @@ function renderSettingsPage() {
     <div class="stg-section">
       <div class="stg-title">About</div>
       <div class="stg-about">
-        <div>Vaani — Indian Language Translator v5.0</div>
+        <div>Vaani — Indian Language Translator v5.1</div>
         <div>OCR: Google Vision API + Tesseract fallback</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
         <div>Speech: Bhashini TTS + gTTS fallback</div>
@@ -2274,27 +2488,72 @@ function stgResetAll() {
   setTimeout(() => location.reload(), 800);
 }
 
-// ── NAVIGATION ────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// FIX 6: BACK NAVIGATION — proper pushState stack + popstate handler
+// ══════════════════════════════════════════════════════════════════
+
 const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
+
+// Navigation stack for back-button support
+const _navStack = [];
 
 function navigateTo(page) {
   if (!PAGES.includes(page)) page = "Home";
+
   PAGES.forEach(p => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
   closeMenu();
-  history.pushState({ page }, "", `#${page.toLowerCase()}`);
+
+  // FIX 6: Push to history stack with page state
+  // Use replaceState for first visit to avoid empty initial entry
+  const currentHash = location.hash.replace("#", "");
+  const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
+
+  if (currentPage !== page) {
+    history.pushState({ page }, "", `#${page.toLowerCase()}`);
+    _navStack.push(page);
+  } else {
+    history.replaceState({ page }, "", `#${page.toLowerCase()}`);
+    if (!_navStack.length || _navStack[_navStack.length - 1] !== page) {
+      _navStack.push(page);
+    }
+  }
+
+  // Page-specific init
   if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
+
+  // Kill active mics on page change
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
   );
 }
-window.addEventListener("popstate", e => navigateTo(e.state?.page || "Home"));
+
+// FIX 6: popstate — restore page from history state
+window.addEventListener("popstate", (e) => {
+  const page = e.state?.page || "Home";
+  // Update active page without pushing new history entry
+  PAGES.forEach(p => {
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
+  });
+  closeMenu();
+
+  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
+  if (page === "History")    renderHistory();
+  if (page === "Favourites") renderFavourites();
+  if (page === "Settings")   renderSettingsPage();
+
+  Object.values(_mic).forEach(ctx => { _killMic(ctx); });
+  ["micBtn","micBtnA","micBtnB"].forEach(id =>
+    document.getElementById(id)?.classList.remove("listening")
+  );
+});
 
 // ── MENU ──────────────────────────────────────────────────────────
 function toggleMenu() {
@@ -2331,13 +2590,27 @@ function pingBackend() {
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
-// Firebase stubs
+// ── FIREBASE / AUTH STUBS ─────────────────────────────────────────
 if (typeof window.signInWithGoogle === "undefined") window.signInWithGoogle = () => showToast("Sign-in coming soon");
-if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => showToast("Signed out");
+if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => {
+  window._vaaniCurrentUser = null;
+  _persistUserSession(null);
+  _applyUserToUI(null);
+  showToast("Signed out");
+  // Re-render history page if open
+  const histPage = document.getElementById("pageHistory");
+  if (histPage && histPage.classList.contains("active")) renderHistory();
+};
 
 window._vaaniCurrentUser = null;
+
+// FIX 4: Auth change handler — persist session + update UI immediately
 window._vaaniOnAuthChange = function(user) {
   window._vaaniCurrentUser = user || null;
+  _persistUserSession(user);
+  _applyUserToUI(user);
+
+  // Re-render history if page is open
   const histPage = document.getElementById("pageHistory");
   if (histPage && histPage.classList.contains("active")) {
     renderHistory();
@@ -2346,12 +2619,23 @@ window._vaaniOnAuthChange = function(user) {
 
 // ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // Apply saved theme
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
+
+  // FIX 4: Restore auth session from localStorage before firebase loads
+  const restoredSession = _restoreUserSession();
+  if (restoredSession) {
+    window._vaaniCurrentUser = restoredSession;
+    _applyUserToUI(restoredSession);
+  }
+
   initLanguageSelects();
 
+  // FIX 2: Init timeline controls for all suffixes
   _initTimelineControls("");
   _initTimelineControls("Img");
 
+  // Image change button
   const changeBtn = document.getElementById("imgChangeBtn");
   if (changeBtn) {
     changeBtn.addEventListener("click", (e) => {
@@ -2360,6 +2644,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Camera source button — FIX: request mic perm not needed here, but
+  // getUserMedia for camera is handled inside _captureBackCamera
   const camSrcBtn = document.getElementById("cameraSrcBtn");
   if (camSrcBtn) {
     camSrcBtn.addEventListener("click", async (e) => {
@@ -2374,8 +2660,25 @@ document.addEventListener("DOMContentLoaded", () => {
     cameraInput.addEventListener("change", handleImageUpload);
   }
 
-  const hash = location.hash.replace("#","");
-  navigateTo(PAGES.find(p => p.toLowerCase() === hash) || "Home");
+  // FIX 6: Determine initial page from hash
+  const hash = location.hash.replace("#", "");
+  const initialPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
+
+  // Set initial history state so back button works from first page
+  history.replaceState({ page: initialPage }, "", `#${initialPage.toLowerCase()}`);
+  _navStack.push(initialPage);
+
+  PAGES.forEach(p => {
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
+  });
+
+  if (initialPage === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
+  if (initialPage === "History")    renderHistory();
+  if (initialPage === "Favourites") renderFavourites();
+  if (initialPage === "Settings")   renderSettingsPage();
+
+  // Initial renders
   renderHistory();
   renderFavourites();
 
