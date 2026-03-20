@@ -1247,6 +1247,20 @@ async function playAudio() {
   const el = document.getElementById("translatedText");
   if (t && t !== "—" && t !== "…") await autoPlay(t, l, "", el);
 }
+// ── FAVORITES PLAY ─────────────────────────────────────────
+
+async function playFavorite(text, lang) {
+  if (!text || text === "—") return;
+
+  // If already playing → toggle
+  if (_curAudio) {
+    toggleAudio();
+    return;
+  }
+
+  // Safe playback
+  await autoPlay(text, lang);
+}
 async function playAudioA() {
   if (_curAudio) { toggleAudio(); return; }
   const t  = document.getElementById("translatedTextA")?.textContent;
@@ -2471,8 +2485,9 @@ function renderFavourites() {
     playBtn.className = "hist-btn";
     playBtn.textContent = "Play";
     playBtn.addEventListener("click", () => {
-      autoPlay(f.translated, f.toLang);
+       playFavorite(f.translated, f.toLang);
     });
+    
 
     // Copy button
     const copyBtn = document.createElement("button");
