@@ -2804,9 +2804,11 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
-  _onPageActivate(initialPage);
+  //_onPageActivate(initialPage);
+  function _onPageActivate(page) {
+     if (page === "Favourites") renderFavourites();
+  }
   renderHistory();
-  renderFavourites();
   detectUserLocation();
 
   // FIX 4 & 5: Silently cache permission state — no UI, no popup on load
