@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Vaani">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20250324b">
+  <link rel="stylesheet" href="style.css?v=20250325a">
 </head>
 <body>
 
@@ -213,7 +213,7 @@
         <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
       </button>
       <p class="mic-hint" id="micStatus">Tap to speak</p>
-      <p class="mic-sub-hint">Tap once · tap again to stop · tap once more for new recording</p>
+      <p class="mic-sub-hint">Tap once to start · tap again to stop · tap once more for new recording</p>
     </div>
   </div>
 
@@ -240,7 +240,6 @@
         </button>
       </div>
       <p class="rc-text rc-accent" id="translatedText">—</p>
-      <!-- AUDIO TIMELINE — always visible after first play -->
       <div class="audio-timeline" id="audioTimeline" style="display:none">
         <span class="tl-time" id="timelineCurrent">0:00</span>
         <input type="range" id="timelineSeek" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Audio seek bar">
@@ -271,8 +270,7 @@
     <div class="conv-panel">
       <div class="conv-top">
         <span class="conv-label conv-label-a">Person A</span>
-        <!-- onchange triggers re-translation of existing text -->
-        <select id="convLangA" class="lang-select lang-select-sm" onchange="onConvLangChange('A')"></select>
+        <select id="convLangA" class="lang-select lang-select-sm"></select>
       </div>
       <div class="mic-wrap mic-wrap-sm">
         <button class="mic-btn mic-btn-sm mic-a" id="micBtnA" onclick="startConvListening('A')">
@@ -295,7 +293,7 @@
     <div class="conv-panel">
       <div class="conv-top">
         <span class="conv-label conv-label-b">Person B</span>
-        <select id="convLangB" class="lang-select lang-select-sm" onchange="onConvLangChange('B')"></select>
+        <select id="convLangB" class="lang-select lang-select-sm"></select>
       </div>
       <div class="mic-wrap mic-wrap-sm">
         <button class="mic-btn mic-btn-sm mic-b" id="micBtnB" onclick="startConvListening('B')">
@@ -330,7 +328,6 @@
       <div class="lang-box"><label class="lang-label">Phrases In</label><select id="travelToLang" class="lang-select" onchange="loadTravelPhrases()"></select></div>
     </div>
   </div>
-  <!-- Category tabs rendered by JS (_renderCatTabs) -->
   <div id="catTabs" class="cat-tabs"></div>
   <div id="travelLoading" class="loading-wrap" style="display:none"><div class="spinner"></div><span>Translating phrases…</span></div>
   <div id="phrasesList" class="phrases-list"></div>
@@ -350,7 +347,6 @@
     </div>
   </div>
 
-  <!-- Upload zone -->
   <div class="upload-zone" id="uploadArea" onclick="document.getElementById('imageInput').click()"
        ondragover="event.preventDefault();this.classList.add('drag-over')"
        ondragleave="this.classList.remove('drag-over')"
@@ -361,7 +357,6 @@
     <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
   </div>
 
-  <!-- Source buttons -->
   <div class="img-source-btns">
     <button class="img-src-btn" onclick="document.getElementById('imageInput').click()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload Photo
@@ -372,7 +367,6 @@
     <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
   </div>
 
-  <!-- Preview box -->
   <div id="imgPreviewBox" class="img-preview" style="display:none">
     <img id="imgPreview" src="" alt="Preview" title="Tap to view full screen" style="cursor:zoom-in">
     <button class="change-btn" id="imgChangeBtn">
@@ -386,7 +380,6 @@
   <p class="status-text" id="imgStatus"></p>
 
   <div id="imgResults" style="display:none">
-    <!-- Editable extracted text -->
     <div class="result-card">
       <div class="rc-header">
         <span class="rc-label">Text found in image</span>
@@ -394,7 +387,6 @@
           <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
       </div>
-      <!-- Editable textarea for extracted text -->
       <textarea
         id="imgExtractedTextEdit"
         class="text-area img-extracted-edit"
@@ -402,7 +394,6 @@
         placeholder="Extracted text will appear here — you can edit before translating"
         style="display:none"
       ></textarea>
-      <!-- Confirm & Translate button -->
       <button
         id="imgConfirmTranslateBtn"
         class="btn-primary btn-full"
@@ -419,7 +410,6 @@
         <button class="sm-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
       <p class="rc-text rc-accent" id="imgTranslatedText" style="white-space:pre-wrap">—</p>
-      <!-- AUDIO TIMELINE for image page — always visible after first play -->
       <div class="audio-timeline" id="audioTimelineImg" style="display:none">
         <span class="tl-time" id="timelineCurrentImg">0:00</span>
         <input type="range" id="timelineSeekImg" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Image audio seek bar">
@@ -463,38 +453,71 @@
 
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
 <script>
-  window.VAANI_VERSION = "20250324b";
+  window.VAANI_VERSION = "20250325a";
   window.VAANI_VISION_KEY = "";
 </script>
-<script type="module" src="firebase.js?v=20250324b"></script>
-<script src="app.js?v=20250324b"></script>
+<script type="module" src="firebase.js?v=20250325a"></script>
+<script src="app.js?v=20250325a"></script>
 <script>
+  // ── FIX 2: SERVICE WORKER — network-first, auto-update on new version ──
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
-        .then(reg => {
-          setInterval(() => reg.update(), 30000);
-          document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update(); });
-          reg.addEventListener('updatefound', () => {
-            const sw = reg.installing;
-            if (!sw) return;
-            sw.addEventListener('statechange', () => { if (sw.state === 'installed') sw.postMessage('SKIP_WAITING'); });
-          });
-        }).catch(e => console.warn('[Vaani] SW:', e));
+      navigator.serviceWorker.register('/sw.js', {
+        updateViaCache: 'none'  // Never serve sw.js from cache
+      })
+      .then(reg => {
+        console.log('[Vaani] SW registered:', reg.scope);
 
+        // Check for updates immediately and every 30s
+        reg.update().catch(() => {});
+        setInterval(() => reg.update().catch(() => {}), 30000);
+
+        // Check on tab focus
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            reg.update().catch(() => {});
+          }
+        });
+
+        // When a new SW is found installing
+        reg.addEventListener('updatefound', () => {
+          const newSW = reg.installing;
+          if (!newSW) return;
+          newSW.addEventListener('statechange', () => {
+            if (newSW.state === 'installed') {
+              // FIX 2: Tell new SW to skip waiting immediately
+              newSW.postMessage('SKIP_WAITING');
+            }
+          });
+        });
+      })
+      .catch(e => console.warn('[Vaani] SW registration failed:', e));
+
+      // FIX 2: Listen for SW_UPDATED message → reload page
       navigator.serviceWorker.addEventListener('message', e => {
-        if (e.data?.type === 'SW_UPDATED') window.location.reload(true);
+        if (e.data?.type === 'SW_UPDATED') {
+          console.log('[Vaani] New version available, reloading…');
+          window.location.reload(true);
+        }
       });
-      let reloading = false;
+
+      // FIX 2: Controller change → reload (new SW took control)
+      let _reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!reloading) { reloading = true; window.location.reload(true); }
+        if (!_reloading) {
+          _reloading = true;
+          console.log('[Vaani] SW controller changed, reloading…');
+          window.location.reload(true);
+        }
       });
     });
   }
 
+  // ── PWA INSTALL PROMPT ──
   let deferredPrompt;
   window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault(); deferredPrompt = e;
+    e.preventDefault();
+    deferredPrompt = e;
     document.getElementById('installBtn').style.display = 'flex';
   });
   window.addEventListener('appinstalled', () => {
@@ -502,7 +525,10 @@
     deferredPrompt = null;
   });
   window.installApp = function() {
-    if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.then(() => { deferredPrompt = null; }); }
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+    }
   };
 </script>
 </body>
