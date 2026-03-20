@@ -1,29 +1,29 @@
 /* ================================================================
-   Vaani Service Worker v4.0
-   - Bumped version → forces cache invalidation on all devices
-   - skipWaiting on install (immediate activation, no waiting)
+   Vaani Service Worker v5.0  — FIX 4: INSTANT UPDATES
+   - skipWaiting on install AND on message (belt + suspenders)
+   - clients.claim() immediately on activate
    - Delete ALL old caches on activate
-   - Network-first for JS/CSS (never serve stale app code)
-   - Notify clients to reload via SW_UPDATED message
-   - No user action required — automatic update
+   - Network-first for JS/CSS/HTML — never stale code
+   - Reload notification via SW_UPDATED message
+   - Bump CACHE_VERSION to bust all existing caches now
 ================================================================ */
-const CACHE_VERSION = "vaani-v16";
+const CACHE_VERSION = "vaani-v20";
 const CACHE_NAME    = CACHE_VERSION;
 
 // ── INSTALL: skip waiting immediately ──────────────────────────
 self.addEventListener("install", event => {
   console.log("[SW] Installing", CACHE_VERSION);
-  // Always activate immediately — never queue behind old SW
+  // FIX 4: skipWaiting immediately — never queue behind old SW
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
       return cache.addAll(["/", "/index.html", "/manifest.json"])
-        .catch(() => {/* Non-fatal */});
+        .catch(() => {/* Non-fatal — offline pre-cache best-effort */});
     })
   );
 });
 
-// ── ACTIVATE: delete ALL old caches, claim clients, notify reload
+// ── ACTIVATE: delete ALL old caches, claim all clients ────────
 self.addEventListener("activate", event => {
   console.log("[SW] Activating", CACHE_VERSION);
   event.waitUntil(
@@ -34,9 +34,11 @@ self.addEventListener("activate", event => {
           return caches.delete(k);
         })
       ))
+      // FIX 4: claim() immediately — no page reload needed for first activation
       .then(() => self.clients.claim())
       .then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
       .then(clients => {
+        // Notify all open tabs to reload for the new version
         clients.forEach(client => {
           client.postMessage({ type: "SW_UPDATED", version: CACHE_VERSION });
         });
@@ -44,14 +46,14 @@ self.addEventListener("activate", event => {
   );
 });
 
-// ── FETCH: strategy by resource type ──────────────────────────
+// ── FETCH: network-first for app code, cache-first for images ──
 self.addEventListener("fetch", event => {
   const req = event.request;
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
 
-  // Skip cross-origin (API, CDN, fonts, Firebase, etc.)
+  // Skip cross-origin (API, CDN, fonts, Firebase)
   if (url.origin !== self.location.origin) return;
 
   const path = url.pathname;
@@ -68,7 +70,7 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // JS and CSS → NETWORK-FIRST (prevents stale permission logic)
+  // JS and CSS → NETWORK-FIRST (FIX 4: never serve stale app code)
   if (ext === "js" || ext === "css") {
     event.respondWith(
       fetch(req, { cache: "no-store" })
@@ -90,7 +92,7 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // Images / icons → cache-first (static assets)
+  // Images / icons → cache-first (truly static assets)
   if (["png","jpg","jpeg","webp","ico","svg"].includes(ext)) {
     event.respondWith(
       caches.match(req).then(cached => {
@@ -115,9 +117,10 @@ self.addEventListener("fetch", event => {
 });
 
 // ── MESSAGE: handle SKIP_WAITING from page ─────────────────────
+// FIX 4: Respond to both "SKIP_WAITING" string and object form
 self.addEventListener("message", event => {
-  if (event.data === "SKIP_WAITING") {
-    console.log("[SW] SKIP_WAITING received");
+  if (event.data === "SKIP_WAITING" || event.data?.type === "SKIP_WAITING") {
+    console.log("[SW] SKIP_WAITING received — activating now");
     self.skipWaiting();
   }
 });
