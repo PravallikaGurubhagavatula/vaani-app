@@ -1,27 +1,16 @@
 /* ================================================================
-   Vaani — app.js  v5.3  PERMISSION SYSTEM + ALL FIXES
+   Vaani — app.js  v5.4  ALL ISSUES FIXED
 
-   NEW IN v5.3:
-   0.  PERMISSION MANAGEMENT SYSTEM — unified handlePermission()
-       - navigator.permissions.query() state detection
-       - granted / prompt / denied handling
-       - Clear UI guide on denial (not alert)
-       - Retry without reload where possible
-       - iOS Safari fallback (no permissions API)
-       - PWA installed app support
-       - Cross-device: Android Chrome, iOS Safari, Desktop, Samsung
+   FIXES IN v5.4:
+   1.  VOICE DUPLICATION FIX  — interimResults=false, clean state,
+       single source of truth, no duplicate listeners
+   2.  PERMISSION SYSTEM      — simplified, no guides, simple retry
+   3.  FAKE APP SETTINGS REMOVED — browser-only flow, clear message
+   4.  PWA / CACHE STABILITY  — skipWaiting, clients.claim handled
+   5.  MOBILE STABILITY       — no multiple bindings, clean async
+   6.  CLEAN UX               — minimal, fast, no confusion
 
-   ALL PRIOR FIXES RETAINED:
-   1.  MIC PERMISSION      — explicit getUserMedia before SR
-   2.  PWA CACHE BUG       — sw.js network-first
-   3.  HISTORY STORAGE     — array-based, append-only
-   4.  AUTH SESSION        — localStorage-backed
-   5.  HISTORY/FAVS UI     — reactive re-render
-   6.  BACK NAVIGATION     — pushState + popstate
-   7.  AUDIO TIMELINE      — timeupdate, drag seek, replay
-   8.  SPEECH RECOGNITION  — continuous, interimResults
-   9.  TTS PRONUNCIATION   — correct voice selection
-   10. CONVERSATION MODE   — reactive on lang change
+   ALL PRIOR FEATURES RETAINED (translation, OCR, travel, etc.)
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
@@ -125,114 +114,55 @@ async function detectUserLocation() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 0: UNIFIED PERMISSION MANAGEMENT SYSTEM
-//
-// handlePermission(type) → Promise<boolean>
-//   type: "audio" | "video"
-//
-// Flow:
-//   1. Query navigator.permissions (where available)
-//   2. "granted"  → fast-path, no UI needed
-//   3. "prompt"   → call getUserMedia to trigger popup
-//   4. "denied"   → show non-blocking UI guide with retry
-//   5. iOS/Safari → no permissions API, try getUserMedia directly
-//   6. On success → resolve true, cache grant in memory
-//   7. On failure → show guide, resolve false
+// FIX 2 & 3: SIMPLIFIED PERMISSION SYSTEM
+// No fake app settings, no long guides — simple retry flow
 // ══════════════════════════════════════════════════════════════════
 
-// In-memory grant cache to avoid repeated queries
 const _permissionGranted = { audio: false, video: false };
 
-/**
- * Detect if running on iOS (Safari / WKWebView / PWA).
- * iOS Safari does NOT support navigator.permissions for mic/camera.
- */
 function _isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-/**
- * Detect if running as an installed PWA (standalone mode).
- */
 function _isPWA() {
   return window.matchMedia("(display-mode: standalone)").matches ||
     window.navigator.standalone === true;
 }
 
 /**
- * Show a clear, styled permission denial guide inside a modal.
- * Non-blocking — does NOT use alert().
- * Includes platform-specific instructions + Retry button.
- *
- * @param {string} type - "audio" or "video"
- * @param {Function} onRetry - called when user taps Retry
+ * FIX 2+3: Simple permission denied UI — no fake "App Settings" instructions.
+ * Shows a minimal message + Retry button. Browser-only flow.
  */
 function _showPermissionDeniedGuide(type, onRetry) {
-  // Remove any existing guide
   document.getElementById("vaaniPermGuide")?.remove();
 
-  const isAudio  = type === "audio";
-  const label    = isAudio ? "Microphone" : "Camera";
-  const icon     = isAudio
-    ? `<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`
-    : `<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+  const isAudio = type === "audio";
+  const label   = isAudio ? "Microphone" : "Camera";
+  const icon    = isAudio
+    ? `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
 
-  // Detect platform for tailored instructions
-  const ios     = _isIOS();
-  const pwa     = _isPWA();
-  const samsung = /SamsungBrowser/.test(navigator.userAgent);
-  const firefox = /Firefox/.test(navigator.userAgent);
-
-  let steps = "";
+  // Simple browser-level instructions only — no "App Settings" mention
+  const ios = _isIOS();
+  let instruction = "";
   if (ios) {
-    steps = `
-      <div class="vpg-step"><span class="vpg-num">1</span>Open <strong>Settings</strong> app on your iPhone/iPad</div>
-      <div class="vpg-step"><span class="vpg-num">2</span>Scroll to <strong>Safari</strong> (or your browser)</div>
-      <div class="vpg-step"><span class="vpg-num">3</span>Tap <strong>${label}</strong> and set to <strong>Allow</strong></div>
-      <div class="vpg-step"><span class="vpg-num">4</span>Return to this app and tap <strong>Retry</strong></div>`;
-  } else if (samsung) {
-    steps = `
-      <div class="vpg-step"><span class="vpg-num">1</span>Tap the <strong>⋮ menu</strong> (top right) in Samsung Internet</div>
-      <div class="vpg-step"><span class="vpg-num">2</span>Go to <strong>Settings → Sites and downloads → Site permissions</strong></div>
-      <div class="vpg-step"><span class="vpg-num">3</span>Find this site and enable <strong>${label}</strong></div>
-      <div class="vpg-step"><span class="vpg-num">4</span>Return here and tap <strong>Retry</strong></div>`;
-  } else if (firefox) {
-    steps = `
-      <div class="vpg-step"><span class="vpg-num">1</span>Click the <strong>lock icon</strong> 🔒 in the address bar</div>
-      <div class="vpg-step"><span class="vpg-num">2</span>Click <strong>Connection secure → More information</strong></div>
-      <div class="vpg-step"><span class="vpg-num">3</span>Go to <strong>Permissions</strong> and allow <strong>${label}</strong></div>
-      <div class="vpg-step"><span class="vpg-num">4</span>Reload the page and tap <strong>Retry</strong></div>`;
-  } else if (pwa) {
-    steps = `
-      <div class="vpg-step"><span class="vpg-num">1</span>Open <strong>Chrome</strong> browser (not this app)</div>
-      <div class="vpg-step"><span class="vpg-num">2</span>Go to <strong>chrome://settings/content/${isAudio ? "microphone" : "camera"}</strong></div>
-      <div class="vpg-step"><span class="vpg-num">3</span>Find <strong>${location.hostname}</strong> and allow it</div>
-      <div class="vpg-step"><span class="vpg-num">4</span>Return to this app and tap <strong>Retry</strong></div>`;
+    instruction = `Tap the <strong>aA</strong> icon in Safari's address bar → <strong>Website Settings</strong> → allow ${label}.`;
   } else {
-    // Chrome / Edge / default
-    steps = `
-      <div class="vpg-step"><span class="vpg-num">1</span>Click the <strong>lock icon</strong> 🔒 in your browser's address bar</div>
-      <div class="vpg-step"><span class="vpg-num">2</span>Find <strong>${label}</strong> in the permissions list</div>
-      <div class="vpg-step"><span class="vpg-num">3</span>Change it from <strong>Blocked</strong> to <strong>Allow</strong></div>
-      <div class="vpg-step"><span class="vpg-num">4</span>Tap <strong>Retry</strong> below — no reload needed</div>`;
+    instruction = `Tap the <strong>lock icon 🔒</strong> in your browser's address bar, find <strong>${label}</strong> and set it to <strong>Allow</strong>.`;
   }
 
   const modal = document.createElement("div");
   modal.id = "vaaniPermGuide";
   modal.innerHTML = `
     <div class="vpg-backdrop"></div>
-    <div class="vpg-sheet" role="dialog" aria-modal="true" aria-label="${label} Permission Required">
+    <div class="vpg-sheet" role="dialog" aria-modal="true" aria-label="${label} Permission">
       <div class="vpg-icon vpg-icon-denied">${icon}</div>
-      <div class="vpg-title">${label} Access Blocked</div>
-      <div class="vpg-sub">Vaani needs ${label.toLowerCase()} access to translate your speech. Follow these steps to enable it:</div>
-      <div class="vpg-steps">${steps}</div>
+      <div class="vpg-title">${label} Blocked</div>
+      <div class="vpg-sub">${instruction}</div>
       <div class="vpg-actions">
-        <button class="vpg-retry" id="vpgRetryBtn">
-          <svg viewBox="0 0 24 24" width="16" height="16"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.43"/></svg>
-          Retry Permission
-        </button>
-        <button class="vpg-dismiss" id="vpgDismissBtn">Maybe Later</button>
+        <button class="vpg-retry" id="vpgRetryBtn">Retry</button>
+        <button class="vpg-dismiss" id="vpgDismissBtn">Cancel</button>
       </div>
     </div>`;
 
@@ -246,27 +176,12 @@ function _showPermissionDeniedGuide(type, onRetry) {
 
   modal.querySelector("#vpgDismissBtn").addEventListener("click", close);
   modal.querySelector(".vpg-backdrop").addEventListener("click", close);
-
-  modal.querySelector("#vpgRetryBtn").addEventListener("click", async () => {
+  modal.querySelector("#vpgRetryBtn").addEventListener("click", () => {
     close();
-    // Small delay so modal closes before getUserMedia prompt appears
     setTimeout(() => onRetry(), 200);
   });
 }
 
-/**
- * Show a brief inline banner (not modal) when permission is already granted.
- * Used to confirm state without interrupting flow.
- */
-function _showPermissionGrantedBrief(type) {
-  // No UI needed — just proceed silently
-}
-
-/**
- * Core: attempt getUserMedia for the given type.
- * Stops stream immediately — only need the permission grant.
- * Returns true on success, false on failure.
- */
 async function _attemptGetUserMedia(type) {
   if (!navigator.mediaDevices?.getUserMedia) return false;
   const constraints = type === "audio"
@@ -278,56 +193,36 @@ async function _attemptGetUserMedia(type) {
     _permissionGranted[type] = true;
     return true;
   } catch (err) {
-    console.warn(`[Vaani] getUserMedia(${type}) error:`, err.name, err.message);
+    console.warn(`[Vaani] getUserMedia(${type}):`, err.name);
     _permissionGranted[type] = false;
     return false;
   }
 }
 
-/**
- * MAIN ENTRY POINT: handlePermission(type)
- *
- * Call this before any mic or camera usage.
- * Handles all 3 permission states across all platforms.
- *
- * @param {string} type - "audio" | "video"
- * @param {string} [micStatusId] - optional element id to update status text
- * @returns {Promise<boolean>} - true if permission granted
- */
 async function handlePermission(type, micStatusId) {
-  // Fast-path: already granted in this session
   if (_permissionGranted[type]) return true;
 
   const setStatus = (msg) => {
     if (micStatusId) setMicStatus(msg, micStatusId);
   };
 
-  // iOS Safari: no permissions API → go direct to getUserMedia
   const iosMode = _isIOS() || !navigator.permissions;
 
   if (!iosMode) {
-    // Query permission state via Permissions API
     const permName = type === "audio" ? "microphone" : "camera";
     let state = "prompt";
     try {
       const result = await navigator.permissions.query({ name: permName });
       state = result.state;
-
-      // Listen for future changes (user enables from browser settings)
       result.addEventListener("change", () => {
         if (result.state === "granted") {
           _permissionGranted[type] = true;
-          console.log(`[Vaani] ${type} permission changed to granted`);
-          // Close any open guide
           document.getElementById("vaaniPermGuide")?.remove();
         } else if (result.state === "denied") {
           _permissionGranted[type] = false;
         }
       }, { once: true });
-
     } catch (e) {
-      // Firefox or older browser may not support all permission names
-      console.warn("[Vaani] permissions.query failed:", e.message);
       state = "prompt";
     }
 
@@ -337,36 +232,25 @@ async function handlePermission(type, micStatusId) {
     }
 
     if (state === "denied") {
-      // Show guide — cannot re-prompt without user action
       return new Promise((resolve) => {
         _showPermissionDeniedGuide(type, async () => {
-          // Retry: attempt getUserMedia — will work if user enabled in settings
-          setStatus("Checking permission…");
+          setStatus("Checking…");
           const ok = await _attemptGetUserMedia(type);
-          if (ok) {
-            resolve(true);
-          } else {
-            // Still denied — show guide again
+          resolve(ok);
+          if (!ok) {
             _showPermissionDeniedGuide(type, async () => {
-              const ok2 = await _attemptGetUserMedia(type);
-              resolve(ok2);
+              resolve(await _attemptGetUserMedia(type));
             });
-            resolve(false);
           }
         });
       });
     }
-
-    // state === "prompt" — fall through to getUserMedia
   }
 
-  // Attempt getUserMedia (triggers browser popup on "prompt" or iOS)
   setStatus("Requesting permission…");
   const ok = await _attemptGetUserMedia(type);
-
   if (ok) return true;
 
-  // Failed — check if now denied (post-attempt)
   if (!iosMode) {
     try {
       const permName = type === "audio" ? "microphone" : "camera";
@@ -374,32 +258,28 @@ async function handlePermission(type, micStatusId) {
       if (result.state === "denied") {
         return new Promise((resolve) => {
           _showPermissionDeniedGuide(type, async () => {
-            setStatus("Checking permission…");
-            const ok2 = await _attemptGetUserMedia(type);
-            resolve(ok2);
+            setStatus("Checking…");
+            resolve(await _attemptGetUserMedia(type));
           });
         });
       }
     } catch (_) {}
   }
 
-  // iOS denied or other error — always show guide
   return new Promise((resolve) => {
     _showPermissionDeniedGuide(type, async () => {
-      setStatus("Checking permission…");
-      const ok2 = await _attemptGetUserMedia(type);
-      resolve(ok2);
+      setStatus("Checking…");
+      resolve(await _attemptGetUserMedia(type));
     });
   });
 }
 
-// ── Legacy wrapper for backwards-compat (used in mic flow) ────────
 async function requestMicPermission(micStatusId) {
   return handlePermission("audio", micStatusId || "micStatus");
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 9: TTS PRONUNCIATION — select correct voice from speechSynthesis
+// FIX 9: TTS PRONUNCIATION — correct voice selection
 // ══════════════════════════════════════════════════════════════════
 
 const TTS_LOCALE_MAP = {
@@ -578,7 +458,7 @@ async function _pivotTranslate(text, fromLang, toLang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUDIO SYSTEM (FIX 7)
+// AUDIO SYSTEM
 // ══════════════════════════════════════════════════════════════════
 
 let _curAudio          = null;
@@ -860,24 +740,47 @@ async function autoPlay(text, lang, timelineSuffix, highlightEl) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// MIC STATE MACHINE (FIX 1 + FIX 8)
+// FIX 1 & 5: MIC STATE MACHINE — VOICE DUPLICATION FIXED
+//
+// ROOT CAUSE OF DUPLICATION:
+//   • interimResults=true caused onresult to fire repeatedly
+//   • Each fire appended to finalTranscript incorrectly
+//   • Multiple concatenated interim+final results overlapped
+//
+// FIX:
+//   • interimResults = false  → only fire on FINAL results
+//   • transcript = ONLY e.results[i][0].transcript for NEW finals
+//   • Single string variable, set once, never appended mid-stream
+//   • Clean reset on every new recording session
+//   • No duplicate listeners (rec object replaced each session)
 // ══════════════════════════════════════════════════════════════════
 
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
+
+// FIX 5: Single shared mic state object per channel — prevents multiple bindings
 const _mic = {
-  single: { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
-  A:      { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
-  B:      { state: MicState.IDLE, rec: null, last: "", finalTranscript: "", interimTranscript: "" },
+  single: { state: MicState.IDLE, rec: null, last: "", transcript: "" },
+  A:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
+  B:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
 };
-const SPEECH_SILENCE_TIMEOUT = 4000;
+
+// Silence timeout — stop after user stops speaking
+const SPEECH_SILENCE_TIMEOUT = 3500;
 
 function _killMic(ctx) {
   if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-  if (ctx.rec) { try { ctx.rec.abort(); } catch(_){} ctx.rec = null; }
-  ctx.state = MicState.IDLE;
-  ctx.last  = "";
-  ctx.finalTranscript = "";
-  ctx.interimTranscript = "";
+  if (ctx.rec) {
+    // Remove all listeners before aborting to prevent ghost callbacks
+    ctx.rec.onresult  = null;
+    ctx.rec.onend     = null;
+    ctx.rec.onerror   = null;
+    ctx.rec.onspeechend = null;
+    try { ctx.rec.abort(); } catch(_) {}
+    ctx.rec = null;
+  }
+  ctx.state      = MicState.IDLE;
+  ctx.last       = "";
+  ctx.transcript = "";
 }
 
 function setMicStatus(msg, id = "micStatus") {
@@ -885,20 +788,25 @@ function setMicStatus(msg, id = "micStatus") {
   if (el) el.textContent = msg;
 }
 
-// ── SINGLE MODE MIC ───────────────────────────────────────────────
+// ── SINGLE MODE MIC — FIX 1 APPLIED ─────────────────────────────
 
 async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
 
+  // Toggle: if already listening, stop it
   if (ctx.state === MicState.LISTENING) {
-    if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
-    ctx.state = MicState.STOPPED;
+    if (ctx.rec) {
+      ctx.rec.onend = null; // prevent double-processing
+      try { ctx.rec.stop(); } catch(_) {}
+    }
+    _killMic(ctx);
     micBtn?.classList.remove("listening");
-    setMicStatus("Processing…");
+    setMicStatus("Tap to speak");
     return;
   }
 
+  // Kill any existing instance cleanly before creating new one
   _killMic(ctx);
   clearSingleResults();
 
@@ -907,7 +815,6 @@ async function startListening() {
     return;
   }
 
-  // FIX 0: Use unified permission system
   setMicStatus("Requesting microphone…");
   const permitted = await handlePermission("audio", "micStatus");
   if (!permitted) {
@@ -916,114 +823,132 @@ async function startListening() {
   }
 
   const fromLang   = document.getElementById("fromLang")?.value || "en";
+  const toLang     = document.getElementById("toLang")?.value   || "en";
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
+
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
 
+  // ── FIX 1: KEY SETTINGS ──────────────────────────────────────
   rec.lang            = speechCode;
-  rec.continuous      = true;
-  rec.interimResults  = true;
-  rec.maxAlternatives = 3;
+  rec.continuous      = false;       // Single utterance — cleaner on mobile
+  rec.interimResults  = false;       // FIX: Only fire on FINAL results — eliminates duplication
+  rec.maxAlternatives = 1;           // FIX: Only top result — no confusion
 
-  ctx.rec              = rec;
-  ctx.state            = MicState.LISTENING;
-  ctx.finalTranscript  = "";
-  ctx.interimTranscript = "";
+  ctx.rec        = rec;
+  ctx.state      = MicState.LISTENING;
+  ctx.transcript = "";               // FIX: Clean slate for every session
 
   micBtn?.classList.add("listening");
   setMicStatus("Listening… (tap again to stop)");
 
+  // ── FIX 1: onresult — only final results, set once, never appended ──
   rec.onresult = (e) => {
-    if (ctx._silenceTimer) clearTimeout(ctx._silenceTimer);
-    let interimText = "";
+    // Reset silence timer on each result
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+
+    // FIX: Collect ONLY truly final results from this event batch
+    let finalText = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      const result = e.results[i];
-      if (result.isFinal) ctx.finalTranscript += result[0].transcript;
-      else interimText += result[0].transcript;
+      if (e.results[i].isFinal) {
+        finalText += e.results[i][0].transcript;
+      }
     }
-    ctx.interimTranscript = interimText;
-    const combined = (ctx.finalTranscript + " " + ctx.interimTranscript).trim();
-    if (combined) showOriginalText(combined);
-    ctx._silenceTimer = setTimeout(() => {
-      if (ctx.rec && ctx.state === MicState.LISTENING) try { ctx.rec.stop(); } catch(_){}
-    }, SPEECH_SILENCE_TIMEOUT);
+
+    // FIX: Only update if we got something new
+    if (finalText.trim()) {
+      ctx.transcript = finalText.trim(); // FIX: SET, not append
+      showOriginalText(ctx.transcript);
+    }
   };
 
-  rec.onspeechend = () => {};
+  rec.onspeechend = () => {
+    // Speech ended — stop recognition to trigger onend
+    if (ctx.rec && ctx.state === MicState.LISTENING) {
+      try { ctx.rec.stop(); } catch(_) {}
+    }
+  };
 
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
     if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-    const transcript = (ctx.finalTranscript || ctx.interimTranscript || "").trim();
+
+    // Guard: if already killed, do nothing
+    if (ctx.state === MicState.IDLE) return;
+
+    const transcript = ctx.transcript.trim();
+
     if (!transcript) {
-      if (ctx.state === MicState.LISTENING || ctx.state === MicState.STOPPED) {
-        ctx.state = MicState.IDLE;
-        setMicStatus("No speech detected. Tap to try again.");
-      }
-      ctx.rec = null;
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("No speech detected. Tap to try again.");
       return;
     }
+
+    // Skip duplicate (same as last recognized text)
     if (transcript === ctx.last) {
       ctx.state = MicState.IDLE;
       ctx.rec   = null;
       setMicStatus("Tap to speak again");
       return;
     }
+
     ctx.last  = transcript;
     ctx.state = MicState.STOPPED;
     ctx.rec   = null;
-    const toLang = document.getElementById("toLang")?.value || "en";
+
     showOriginalText(transcript);
     setTranslating();
     setMicStatus("Translating…");
+
     const translated = await translateText(transcript, fromLang, toLang);
     showFinalTranslation(transcript, translated);
     setMicStatus("Tap to speak again");
+
     if (translated) {
       saveToHistory(transcript, translated, fromLang, toLang);
       const transEl = document.getElementById("translatedText");
       await autoPlay(translated, toLang, "", transEl);
     }
+
+    ctx.state = MicState.IDLE;
   };
 
   rec.onerror = (e) => {
-    ctx.state = MicState.IDLE;
-    ctx.rec   = null;
+    const prevState = ctx.state;
+    _killMic(ctx);
     micBtn?.classList.remove("listening");
-    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+
     if (e.error === "no-speech") {
       setMicStatus("No speech detected. Tap to try again.");
     } else if (e.error === "not-allowed") {
-      // FIX 0: Show guide instead of silent failure
       _permissionGranted.audio = false;
       setMicStatus("Microphone blocked.");
       _showPermissionDeniedGuide("audio", async () => {
         const ok = await _attemptGetUserMedia("audio");
-        if (ok) {
-          setMicStatus("Permission granted! Tap to speak.");
-        }
+        if (ok) setMicStatus("Permission granted! Tap to speak.");
       });
     } else if (e.error === "aborted") {
-      setMicStatus("Tap to speak");
+      if (prevState === MicState.LISTENING) setMicStatus("Tap to speak");
     } else {
       showToast("Mic error: " + e.error);
       setMicStatus("Tap to speak");
     }
   };
 
+  // FIX 5: Wrap in try-catch to handle mobile start failures
   try {
     rec.start();
   } catch (e) {
     _killMic(ctx);
     micBtn?.classList.remove("listening");
     setMicStatus("Tap to speak");
-    showToast("Cannot start mic. Allow microphone access.");
     console.warn("[Vaani] rec.start:", e.message);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// CONVERSATION MODE (FIX 8 + FIX 10)
+// CONVERSATION MODE — FIX 1 APPLIED
 // ══════════════════════════════════════════════════════════════════
 
 const _convLastTranscript = { A: "", B: "" };
@@ -1045,24 +970,30 @@ async function startConvListening(speaker) {
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
   const micBtn     = document.getElementById(micBtnId);
 
+  // Toggle: stop if already listening
   if (ctx.state === MicState.LISTENING) {
-    if (ctx.rec) try { ctx.rec.stop(); } catch(_){}
-    ctx.state = MicState.STOPPED;
+    if (ctx.rec) {
+      ctx.rec.onend = null;
+      try { ctx.rec.stop(); } catch(_) {}
+    }
+    _killMic(ctx);
     micBtn?.classList.remove("listening");
-    setMicStatus("Processing…", statId);
+    setMicStatus("Tap to speak", statId);
     return;
   }
 
+  // Kill other speaker's mic first
   _killMic(_mic[otherSpk]);
   document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
   setMicStatus("Tap to speak", `micStatus${otherSpk}`);
+
+  // Kill own mic cleanly
   _killMic(ctx);
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
     showToast("Voice not supported. Use Chrome."); return;
   }
 
-  // FIX 0: unified permission
   setMicStatus("Requesting microphone…", statId);
   const permitted = await handlePermission("audio", statId);
   if (!permitted) {
@@ -1072,14 +1003,17 @@ async function startConvListening(speaker) {
 
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
+
+  // ── FIX 1: Clean settings ───────────────────────────────────
   rec.lang            = speechCode;
-  rec.continuous      = true;
-  rec.interimResults  = true;
-  rec.maxAlternatives = 3;
-  ctx.rec              = rec;
-  ctx.state            = MicState.LISTENING;
-  ctx.finalTranscript  = "";
-  ctx.interimTranscript = "";
+  rec.continuous      = false;      // FIX: Single utterance
+  rec.interimResults  = false;      // FIX: Final only — no duplication
+  rec.maxAlternatives = 1;
+
+  ctx.rec        = rec;
+  ctx.state      = MicState.LISTENING;
+  ctx.transcript = "";              // FIX: Reset every session
+
   micBtn?.classList.add("listening");
   setMicStatus("Listening… (tap again to stop)", statId);
 
@@ -1087,58 +1021,85 @@ async function startConvListening(speaker) {
   const transEl = document.getElementById(`translatedText${speaker}`);
   const playBtn = document.getElementById(`playBtn${speaker}`);
 
+  // ── FIX 1: Clean onresult ───────────────────────────────────
   rec.onresult = (e) => {
-    if (ctx._silenceTimer) clearTimeout(ctx._silenceTimer);
-    let interimText = "";
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+
+    let finalText = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      const result = e.results[i];
-      if (result.isFinal) ctx.finalTranscript += result[0].transcript;
-      else interimText += result[0].transcript;
+      if (e.results[i].isFinal) {
+        finalText += e.results[i][0].transcript;
+      }
     }
-    ctx.interimTranscript = interimText;
-    const combined = (ctx.finalTranscript + " " + ctx.interimTranscript).trim();
-    if (origEl && combined) origEl.textContent = combined;
-    ctx._silenceTimer = setTimeout(() => {
-      if (ctx.rec && ctx.state === MicState.LISTENING) try { ctx.rec.stop(); } catch(_){}
-    }, SPEECH_SILENCE_TIMEOUT);
+
+    if (finalText.trim()) {
+      ctx.transcript = finalText.trim(); // FIX: SET, not append
+      if (origEl) origEl.textContent = ctx.transcript;
+    }
+  };
+
+  rec.onspeechend = () => {
+    if (ctx.rec && ctx.state === MicState.LISTENING) {
+      try { ctx.rec.stop(); } catch(_) {}
+    }
   };
 
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
     if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-    const transcript = (ctx.finalTranscript || ctx.interimTranscript || "").trim();
-    if (!transcript) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak", statId); return; }
-    if (transcript === ctx.last) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak again", statId); return; }
+
+    if (ctx.state === MicState.IDLE) return;
+
+    const transcript = ctx.transcript.trim();
+
+    if (!transcript) {
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("Tap to speak", statId);
+      return;
+    }
+
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE;
+      ctx.rec   = null;
+      setMicStatus("Tap to speak again", statId);
+      return;
+    }
+
     ctx.last  = transcript;
     ctx.state = MicState.STOPPED;
     ctx.rec   = null;
+
     setMicStatus("Translating…", statId);
     if (transEl) transEl.textContent = "…";
+
     _convLastTranscript[speaker] = transcript;
     _convLastFromLang[speaker]   = fromLang;
     _convLastToLang[speaker]     = toLang;
+
     const translated = await translateText(transcript, fromLang, toLang);
     if (transEl) transEl.textContent = translated || "—";
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
     setMicStatus("Tap to speak again", statId);
+
     if (translated) await autoPlay(translated, toLang, "", transEl);
+    ctx.state = MicState.IDLE;
   };
 
   rec.onerror = (e) => {
-    ctx.state = MicState.IDLE;
-    ctx.rec   = null;
+    _killMic(ctx);
     micBtn?.classList.remove("listening");
-    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
     setMicStatus("Tap to speak", statId);
     if (e.error === "not-allowed") {
-      // FIX 0: guide instead of silent failure
       _permissionGranted.audio = false;
       _showPermissionDeniedGuide("audio", async () => {
         const ok = await _attemptGetUserMedia("audio");
         if (ok) setMicStatus("Permission granted! Tap to speak.", statId);
       });
-    } else if (e.error !== "aborted") {
+    } else if (e.error !== "aborted" && e.error !== "no-speech") {
       showToast("Mic: " + e.error);
+    } else if (e.error === "no-speech") {
+      setMicStatus("No speech detected. Tap to try again.", statId);
     }
   };
 
@@ -1157,7 +1118,6 @@ async function onConvLangChange(speaker) {
   const newLang  = document.getElementById(selectId)?.value || "en";
   localStorage.setItem(`vaani_lang_${selectId}`, newLang);
 
-  // The OPPOSITE speaker produced the content to re-translate
   const sourceSpeak = speaker === "B" ? "A" : "B";
   const transcript  = _convLastTranscript[sourceSpeak];
   const origFrom    = _convLastFromLang[sourceSpeak];
@@ -1965,7 +1925,6 @@ async function _captureBackCamera() {
   if (_cameraModal) { _cameraModal.remove(); _cameraModal = null; }
   _stopCameraStream();
 
-  // FIX 0: Check camera permission first
   const permitted = await handlePermission("video");
   if (!permitted) return;
 
@@ -2243,7 +2202,7 @@ async function translateImage() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// HISTORY (FIX 3 & 5)
+// HISTORY
 // ══════════════════════════════════════════════════════════════════
 
 function _readHistory() {
@@ -2281,7 +2240,7 @@ function deleteHistory(i) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FAVOURITES (FIX 3 & 5)
+// FAVOURITES
 // ══════════════════════════════════════════════════════════════════
 
 function _readFavs() {
@@ -2386,7 +2345,7 @@ function renderFavourites() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUTH SESSION (FIX 4)
+// AUTH SESSION
 // ══════════════════════════════════════════════════════════════════
 
 const SESSION_KEY = "vaani_user_session";
@@ -2477,10 +2436,10 @@ function renderSettingsPage() {
       <div class="stg-title">Permissions</div>
       <div class="stg-row" style="flex-direction:column;align-items:flex-start;gap:10px">
         <span class="stg-label">Microphone &amp; Camera</span>
-        <span style="font-size:12px;color:var(--text3);line-height:1.5">If permissions are blocked, tap below to see how to re-enable them in your browser settings.</span>
+        <span style="font-size:12px;color:var(--text3);line-height:1.5">Permissions are managed in your browser. Tap the lock icon 🔒 in the address bar to enable them.</span>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="_showPermissionDeniedGuide('audio',()=>handlePermission('audio'))">🎤 Fix Microphone</button>
-          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="_showPermissionDeniedGuide('video',()=>handlePermission('video'))">📷 Fix Camera</button>
+          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="handlePermission('audio','').then(ok=>showToast(ok?'Mic ready!':'Check browser settings'))">🎤 Test Microphone</button>
+          <button class="stg-btn stg-warn" style="padding:8px 16px;font-size:13px" onclick="handlePermission('video','').then(ok=>showToast(ok?'Camera ready!':'Check browser settings'))">📷 Test Camera</button>
         </div>
       </div>
     </div>
@@ -2496,12 +2455,10 @@ function renderSettingsPage() {
     <div class="stg-section">
       <div class="stg-title">About</div>
       <div class="stg-about">
-        <div>Vaani — Indian Language Translator v5.3</div>
+        <div>Vaani — Indian Language Translator v5.4</div>
         <div>OCR: Google Vision API + Tesseract fallback</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
         <div>Speech: Bhashini TTS + gTTS + Browser TTS fallback</div>
-        <div>Camera: getUserMedia back-camera capture</div>
-        <div>Permissions: Smart detection + guided recovery</div>
         <div>30+ Indian languages supported</div>
       </div>
     </div>`;
@@ -2543,7 +2500,7 @@ function stgResetAll() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// NAVIGATION (FIX 6)
+// NAVIGATION
 // ══════════════════════════════════════════════════════════════════
 
 const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
@@ -2566,6 +2523,7 @@ function navigateTo(page) {
     if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
   }
   _onPageActivate(page);
+  // FIX 5: Kill all mics on navigation — prevents ghost listeners
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
 }
@@ -2688,14 +2646,20 @@ document.addEventListener("DOMContentLoaded", () => {
   renderFavourites();
   detectUserLocation();
 
-  // FIX 0: Proactively detect permission state on load (silent — no popup)
-  // This populates _permissionGranted cache without showing any UI
+  // FIX 4 & 5: Silently cache permission state — no UI, no popup on load
   if (navigator.permissions) {
     navigator.permissions.query({ name: "microphone" }).then(r => {
       if (r.state === "granted") _permissionGranted.audio = true;
+      // FIX 5: Listen for future changes so we update state without reload
+      r.addEventListener("change", () => {
+        _permissionGranted.audio = r.state === "granted";
+      });
     }).catch(() => {});
     navigator.permissions.query({ name: "camera" }).then(r => {
       if (r.state === "granted") _permissionGranted.video = true;
+      r.addEventListener("change", () => {
+        _permissionGranted.video = r.state === "granted";
+      });
     }).catch(() => {});
   }
 });
