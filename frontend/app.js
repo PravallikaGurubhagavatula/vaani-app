@@ -1,24 +1,24 @@
 /* ================================================================
-   Vaani — app.js  v4.0  PRODUCTION UPGRADE
+   Vaani — app.js  v5.0  PATCHED
 
-   UPGRADES FROM v3.3:
-   1. IMAGE OCR: Google Vision API (client-side via backend) with
-      structure preservation (paragraphs, bullets, emojis)
-   2. CAMERA: Always back camera via getUserMedia with exact constraint
-      + canvas capture → removes need for file input for camera
-   3. AUDIO TIMELINE: Added to Image Translation page (was missing)
-   4. WORD HIGHLIGHTING: Highlight current playing word in translated text
-   5. LIVE CAMERA TRANSLATION: Real-time camera feed with text overlay
-   6. DIALECT-AWARE TRANSLATION: Location-based tone adjustment
-   7. REAL-TIME STREAMING TRANSLATION: Continuous speech → translation
-   All existing features (mic, swap, travel, history, favourites,
-   settings, conversation mode, etc.) preserved exactly.
+   CHANGES FROM v4.0:
+   1. OCR BULLET POINT FIX — detects •-*1. etc, preserves correctly
+   2. LIVE CAMERA REMOVED — all live-cam code stripped
+   3. IMAGE EDITING — rotation left/right + improved crop (free crop,
+      touch support, smooth handles via Cropper.js aspectRatio:NaN)
+   4. PERFORMANCE — parallel OCR→translate→audio pipeline,
+      optimized image resize before OCR, non-blocking async
+   5. EDITABLE EXTRACTED TEXT — textarea + "Confirm & Translate" btn
+   6. AUDIO CONTROLS — pause/resume, timeline always visible,
+      draggable seek bar everywhere
+   7. CONVERSATION MODE FIX — lang change triggers re-translation
+   8. WORD HIGHLIGHTING — synced via per-word timestamp estimation
+   9. TRAVEL HELPER — custom sentences, delete, custom categories,
+      all persisted in localStorage
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
-// ── GOOGLE VISION API KEY (set via window.VAANI_VISION_KEY in HTML) ──
-// If not set, falls back to Tesseract.js client-side OCR
 const VISION_API_KEY = window.VAANI_VISION_KEY || "";
 const VISION_URL = "https://vision.googleapis.com/v1/images:annotate";
 
@@ -70,22 +70,22 @@ const LANG_GROUPS = [
   { label:"English",                langs:["en"] }
 ];
 
-// ── DIALECT TONE MAP (location → tone hint for translation) ────────
+// ── DIALECT TONE MAP ───────────────────────────────────────────────
 const DIALECT_TONE_MAP = {
-  "TN":   { lang:"ta", tone:"Chennai colloquial Tamil" },
-  "KA":   { lang:"kn", tone:"Bengaluru Kannada" },
-  "AP":   { lang:"te", tone:"Andhra coastal Telugu" },
-  "TS":   { lang:"te", tone:"Hyderabad Telugu" },
-  "KL":   { lang:"ml", tone:"Kerala formal Malayalam" },
-  "MH":   { lang:"mr", tone:"Mumbai Marathi" },
-  "GJ":   { lang:"gu", tone:"Ahmedabad Gujarati" },
-  "PB":   { lang:"pa", tone:"Punjab Punjabi" },
-  "UP":   { lang:"hi", tone:"Awadhi-influenced Hindi" },
-  "DL":   { lang:"hi", tone:"Delhi Hindi" },
-  "RJ":   { lang:"hi", tone:"Rajasthani-influenced Hindi" },
-  "WB":   { lang:"bn", tone:"Kolkata Bengali" },
-  "OR":   { lang:"or", tone:"Odia formal" },
-  "AS":   { lang:"as", tone:"Assamese regional" },
+  "TN":{ lang:"ta", tone:"Chennai colloquial Tamil" },
+  "KA":{ lang:"kn", tone:"Bengaluru Kannada" },
+  "AP":{ lang:"te", tone:"Andhra coastal Telugu" },
+  "TS":{ lang:"te", tone:"Hyderabad Telugu" },
+  "KL":{ lang:"ml", tone:"Kerala formal Malayalam" },
+  "MH":{ lang:"mr", tone:"Mumbai Marathi" },
+  "GJ":{ lang:"gu", tone:"Ahmedabad Gujarati" },
+  "PB":{ lang:"pa", tone:"Punjab Punjabi" },
+  "UP":{ lang:"hi", tone:"Awadhi-influenced Hindi" },
+  "DL":{ lang:"hi", tone:"Delhi Hindi" },
+  "RJ":{ lang:"hi", tone:"Rajasthani-influenced Hindi" },
+  "WB":{ lang:"bn", tone:"Kolkata Bengali" },
+  "OR":{ lang:"or", tone:"Odia formal" },
+  "AS":{ lang:"as", tone:"Assamese regional" },
 };
 
 // ── TRANSLATION CACHE ──────────────────────────────────────────────
@@ -97,9 +97,8 @@ function cacheSet(k, v) {
 }
 function cacheClear() { _transCache.clear(); }
 
-// ── USER LOCATION STATE ────────────────────────────────────────────
-let _userStateCode = null;  // e.g. "TN", "KA"
-let _dialectTone   = null;  // e.g. "Chennai colloquial Tamil"
+let _userStateCode = null;
+let _dialectTone   = null;
 
 async function detectUserLocation() {
   try {
@@ -119,7 +118,7 @@ async function detectUserLocation() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// TRANSLITERATION PIPELINE (unchanged)
+// TRANSLITERATION PIPELINE
 // ══════════════════════════════════════════════════════════════════
 
 function isRomanized(text, fromLang) {
@@ -153,7 +152,6 @@ async function transliterateToNative(text, fromLang) {
   return native;
 }
 
-// ── CORE TRANSLATE ────────────────────────────────────────────────
 async function translateText(text, fromLang, toLang) {
   const q = (text || "").trim();
   if (!q || fromLang === toLang) return q || "";
@@ -232,15 +230,17 @@ async function _pivotTranslate(text, fromLang, toLang) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUDIO SYSTEM — Single instance + Timeline seek bar + Word Highlight
+// AUDIO SYSTEM — pause/resume, always-visible timeline, word-highlight
 // ══════════════════════════════════════════════════════════════════
 let _curAudio          = null;
+let _audioPlaying      = false;
 let _timelineRAF       = null;
 let _timelineSeeking   = false;
-let _wordHighlightWords = [];   // tokenized words from translated text
-let _wordHighlightEl    = null; // element containing highlighted text
+let _wordHighlightWords = [];
+let _wordHighlightEl    = null;
 let _wordHighlightRAF   = null;
-let _wordHighlightStart = 0;    // audio.currentTime when highlight started
+let _wordHighlightStart = 0;
+let _wordHighlightDur   = 0;
 
 function stopAudio() {
   if (_timelineRAF)     { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
@@ -249,8 +249,41 @@ function stopAudio() {
     try { _curAudio.pause(); _curAudio.currentTime = 0; } catch (_) {}
     _curAudio = null;
   }
-  resetTimeline();
-  clearWordHighlight();
+  _audioPlaying = false;
+  _updateAllPlayPauseBtns();
+}
+
+function pauseAudio() {
+  if (_curAudio && _audioPlaying) {
+    _curAudio.pause();
+    _audioPlaying = false;
+    _updateAllPlayPauseBtns();
+    if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
+  }
+}
+
+function resumeAudio() {
+  if (_curAudio && !_audioPlaying) {
+    _curAudio.play().catch(e => console.warn("[Vaani] resume:", e.message));
+    _audioPlaying = true;
+    _updateAllPlayPauseBtns();
+    if (_wordHighlightEl) _startWordHighlightLoop(_curAudio);
+  }
+}
+
+function toggleAudio() {
+  if (!_curAudio) return;
+  if (_audioPlaying) pauseAudio();
+  else resumeAudio();
+}
+
+function _updateAllPlayPauseBtns() {
+  document.querySelectorAll("[data-playpause]").forEach(btn => {
+    const icon = _audioPlaying
+      ? `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+      : `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    btn.innerHTML = icon + (btn.dataset.playpause === "labeled" ? (_audioPlaying ? "Pause" : "Play") : "");
+  });
 }
 
 // ── Timeline helpers ───────────────────────────────────────────────
@@ -258,13 +291,17 @@ function resetTimeline(suffix) {
   const s = suffix || "";
   const wrap = document.getElementById(`audioTimeline${s}`);
   if (!wrap) return;
-  wrap.style.display = "none";
+  // Keep visible after first use; only reset values
   const bar   = document.getElementById(`timelineSeek${s}`);
   const cur   = document.getElementById(`timelineCurrent${s}`);
-  const total = document.getElementById(`timelineTotal${s}`);
   if (bar)   { bar.value = 0; _updateSeekFill(bar, 0); }
   if (cur)   cur.textContent = "0:00";
-  if (total) total.textContent = "0:00";
+}
+
+function showTimeline(suffix) {
+  const s = suffix || "";
+  const wrap = document.getElementById(`audioTimeline${s}`);
+  if (wrap) wrap.style.display = "flex";
 }
 
 function _fmtTime(sec) {
@@ -303,6 +340,7 @@ function _startTimelineLoop(audio, suffix) {
   if (audio.readyState >= 1) setDuration();
   else audio.addEventListener("loadedmetadata", setDuration, { once: true });
 
+  if (_timelineRAF) cancelAnimationFrame(_timelineRAF);
   _timelineRAF = requestAnimationFrame(tick);
 }
 
@@ -330,24 +368,15 @@ function _initTimelineControls(suffix) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// WORD HIGHLIGHTING
+// WORD HIGHLIGHTING — synced with audio currentTime
 // ══════════════════════════════════════════════════════════════════
 
-/**
- * Tokenize text into words, preserving emojis and punctuation.
- * Returns array of {word, isWord} objects.
- */
 function _tokenizeForHighlight(text) {
   if (!text) return [];
-  // Split by whitespace, keep each token
   const raw = text.split(/(\s+)/);
   return raw.map(t => ({ word: t, isWord: /\S/.test(t) }));
 }
 
-/**
- * Build highlighted HTML for the translated text element.
- * Each word gets a <span data-wi="N"> for targeting.
- */
 function _buildHighlightHtml(text) {
   const tokens = _tokenizeForHighlight(text);
   let html = "";
@@ -367,12 +396,6 @@ function _escHtml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
-/**
- * Start word-by-word highlight loop synced to audio.
- * @param {HTMLElement} el - Element to inject highlighted HTML into
- * @param {string} text - Translated text
- * @param {Audio} audio - Currently playing audio object
- */
 function startWordHighlight(el, text, audio) {
   if (!el || !text || !audio) return;
   clearWordHighlight();
@@ -382,37 +405,39 @@ function startWordHighlight(el, text, audio) {
 
   _wordHighlightEl    = el;
   _wordHighlightWords = words;
+  _wordHighlightDur   = 0; // will be set once audio duration is known
 
-  // Inject word spans
   el.innerHTML = _buildHighlightHtml(text);
   el.classList.add("wh-active");
 
-  _wordHighlightStart = audio.currentTime;
+  const setDur = () => { _wordHighlightDur = audio.duration || 0; };
+  if (audio.readyState >= 1) setDur();
+  else audio.addEventListener("loadedmetadata", setDur, { once: true });
+
+  _startWordHighlightLoop(audio);
+}
+
+function _startWordHighlightLoop(audio) {
+  if (_wordHighlightRAF) cancelAnimationFrame(_wordHighlightRAF);
+  const words = _wordHighlightWords;
+  const el    = _wordHighlightEl;
+  if (!el || !words.length) return;
 
   let lastIdx = -1;
 
   function tick() {
     if (!_curAudio || _curAudio !== audio || !_wordHighlightEl) return;
 
-    const elapsed  = audio.currentTime - _wordHighlightStart;
-    const duration = audio.duration || 1;
-    const progress = Math.min(elapsed / duration, 1);
-
-    // Estimate current word index proportionally
-    const idx = Math.min(
-      Math.floor(progress * words.length),
-      words.length - 1
-    );
+    const dur = audio.duration || _wordHighlightDur || 1;
+    const progress = Math.min(audio.currentTime / dur, 1);
+    const idx = Math.min(Math.floor(progress * words.length), words.length - 1);
 
     if (idx !== lastIdx) {
-      // Remove previous highlight
       const prev = el.querySelector(".wh-current");
       if (prev) prev.classList.remove("wh-current");
-      // Add new highlight
       const span = el.querySelector(`[data-wi="${idx}"]`);
       if (span) {
         span.classList.add("wh-current");
-        // Scroll into view if needed
         try { span.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch(_){}
       }
       lastIdx = idx;
@@ -428,7 +453,6 @@ function clearWordHighlight() {
   if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
   if (_wordHighlightEl) {
     _wordHighlightEl.classList.remove("wh-active");
-    // Restore plain text to avoid stale span markup
     const spans = _wordHighlightEl.querySelectorAll(".wh-word");
     if (spans.length > 0) {
       _wordHighlightEl.innerHTML = _wordHighlightEl.textContent;
@@ -436,6 +460,7 @@ function clearWordHighlight() {
     _wordHighlightEl = null;
   }
   _wordHighlightWords = [];
+  _wordHighlightDur   = 0;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -457,26 +482,25 @@ async function speakText(text, lang) {
     const audio = new Audio(url);
     audio.onended = () => {
       URL.revokeObjectURL(url);
-      resetTimeline();
+      _audioPlaying = false;
+      _updateAllPlayPauseBtns();
       clearWordHighlight();
+      // Keep timeline visible but stop updating
+      if (_timelineRAF) { cancelAnimationFrame(_timelineRAF); _timelineRAF = null; }
     };
     return audio;
   } catch (e) { console.warn("[Vaani] speakText:", e.message); return null; }
 }
 
-/**
- * autoPlay: play audio, start timeline + word highlight.
- * @param {string} text - Text to speak
- * @param {string} lang - Language code
- * @param {string} [timelineSuffix] - Suffix for timeline element IDs (e.g. "Img")
- * @param {HTMLElement} [highlightEl] - Element to highlight words in
- */
 async function autoPlay(text, lang, timelineSuffix, highlightEl) {
   if (!text || text === "—" || text === "…" || !lang) return;
   stopAudio();
+  showTimeline(timelineSuffix || "");
   const audio = await speakText(text, lang);
   if (audio) {
     _curAudio = audio;
+    _audioPlaying = true;
+    _updateAllPlayPauseBtns();
     _startTimelineLoop(audio, timelineSuffix || "");
     if (highlightEl) {
       audio.addEventListener("canplay", () => {
@@ -488,7 +512,7 @@ async function autoPlay(text, lang, timelineSuffix, highlightEl) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// MIC STATE MACHINE (unchanged from v3.3)
+// MIC STATE MACHINE
 // ══════════════════════════════════════════════════════════════════
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 const _mic = {
@@ -595,6 +619,14 @@ function startListening() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// CONVERSATION MODE — with live re-translation on lang change
+// ══════════════════════════════════════════════════════════════════
+
+// Store last spoken text per panel for re-translation
+const _convLastTranscript = { A: "", B: "" };
+const _convLastFromLang   = { A: "", B: "" };
+
 async function startConvListening(speaker) {
   const ctx      = _mic[speaker];
   const otherSpk = speaker === "A" ? "B" : "A";
@@ -645,6 +677,9 @@ async function startConvListening(speaker) {
     micBtn?.classList.remove("listening");
     setMicStatus("Translating…", statId);
 
+    _convLastTranscript[speaker] = transcript;
+    _convLastFromLang[speaker]   = fromLang;
+
     const origEl  = document.getElementById(`originalText${speaker}`);
     const transEl = document.getElementById(`translatedText${speaker}`);
     const playBtn = document.getElementById(`playBtn${speaker}`);
@@ -681,6 +716,28 @@ async function startConvListening(speaker) {
   catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); }
 }
 
+// Re-translate when conversation language changes
+async function onConvLangChange(speaker) {
+  const fromSel = `convLang${speaker}`;
+  const toSel   = speaker === "A" ? "convLangB" : "convLangA";
+  const toLang  = document.getElementById(toSel)?.value || "en";
+
+  localStorage.setItem(`vaani_lang_convLang${speaker}`, document.getElementById(fromSel)?.value || "en");
+
+  const transcript = _convLastTranscript[speaker];
+  const origFrom   = _convLastFromLang[speaker];
+  if (!transcript || !origFrom) return;
+
+  const transEl = document.getElementById(`translatedText${speaker}`);
+  const playBtn = document.getElementById(`playBtn${speaker}`);
+  if (transEl) transEl.textContent = "…";
+
+  const translated = await translateText(transcript, origFrom, toLang);
+  if (transEl) transEl.textContent = translated || "—";
+  if (playBtn) playBtn.style.display = translated ? "flex" : "none";
+  if (translated) await autoPlay(translated, toLang, "", transEl);
+}
+
 // ── SINGLE RESULT DISPLAY HELPERS ─────────────────────────────────
 function clearSingleResults() {
   const s = document.getElementById("resultsSection");
@@ -706,7 +763,6 @@ function setTranslating() {
   const a = document.getElementById("actionBtns");
   if (t) t.textContent  = "…";
   if (a) a.style.display = "none";
-  resetTimeline();
 }
 
 function showFinalTranslation(original, translated) {
@@ -714,6 +770,7 @@ function showFinalTranslation(original, translated) {
   const a = document.getElementById("actionBtns");
   if (t) t.textContent  = translated || "—";
   if (a) a.style.display = translated ? "flex" : "none";
+  showTimeline("");
 }
 
 // ── TEXT MODE ─────────────────────────────────────────────────────
@@ -755,7 +812,6 @@ async function onLanguageChange() {
   const actEl   = document.getElementById("actionBtns");
   if (transEl) transEl.textContent  = "—";
   if (actEl)   actEl.style.display  = "none";
-  resetTimeline();
 
   const origText = (document.getElementById("originalText")?.textContent || "").trim();
   if (origText && origText !== "—" && origText !== "…") {
@@ -814,26 +870,30 @@ function switchInputMode(mode) {
   }
 }
 
-// ── PLAY BUTTONS (manual) ─────────────────────────────────────────
+// ── PLAY BUTTONS ─────────────────────────────────────────────────
 async function playAudio() {
+  if (_curAudio) { toggleAudio(); return; }
   const t = document.getElementById("translatedText")?.textContent;
   const l = document.getElementById("toLang")?.value;
   const el = document.getElementById("translatedText");
   if (t && t !== "—" && t !== "…") await autoPlay(t, l, "", el);
 }
 async function playAudioA() {
+  if (_curAudio) { toggleAudio(); return; }
   const t = document.getElementById("translatedTextA")?.textContent;
   const l = document.getElementById("convLangB")?.value;
   const el = document.getElementById("translatedTextA");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
 async function playAudioB() {
+  if (_curAudio) { toggleAudio(); return; }
   const t = document.getElementById("translatedTextB")?.textContent;
   const l = document.getElementById("convLangA")?.value;
   const el = document.getElementById("translatedTextB");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
 async function playImgAudio() {
+  if (_curAudio) { toggleAudio(); return; }
   const t = document.getElementById("imgTranslatedText")?.textContent;
   const l = document.getElementById("imgToLang")?.value;
   const el = document.getElementById("imgTranslatedText");
@@ -879,7 +939,11 @@ function initLanguageSelects() {
   document.getElementById("fromLang")?.addEventListener("change", onLanguageChange);
   document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
 
-  ["travelFromLang","travelToLang","imgFromLang","imgToLang","convLangA","convLangB"].forEach(id => {
+  // Conversation lang change with re-translation
+  document.getElementById("convLangA")?.addEventListener("change", () => onConvLangChange("A"));
+  document.getElementById("convLangB")?.addEventListener("change", () => onConvLangChange("B"));
+
+  ["travelFromLang","travelToLang","imgFromLang","imgToLang"].forEach(id => {
     document.getElementById(id)?.addEventListener("change", () => {
       localStorage.setItem(`vaani_lang_${id}`, document.getElementById(id).value);
     });
@@ -887,13 +951,13 @@ function initLanguageSelects() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// TRAVEL HELPER (unchanged from v3.3)
+// TRAVEL HELPER — with custom sentences, delete, custom categories
 // ══════════════════════════════════════════════════════════════════
 let _cat = "food";
 let _tCache = {};
 let _tTimer = null;
 
-const TRAVEL_PHRASES = {
+const TRAVEL_PHRASES_DEFAULT = {
   food:      [
     { en:"Where is a good restaurant?" }, { en:"I am vegetarian." },
     { en:"The bill please." },            { en:"Is this spicy?" },
@@ -932,15 +996,54 @@ const TRAVEL_PHRASES = {
   ],
 };
 
+// Storage helpers for custom travel data
+function _getTravelCustom() {
+  try { return JSON.parse(localStorage.getItem("vaani_travel_custom") || "{}"); } catch(_){ return {}; }
+}
+function _saveTravelCustom(data) {
+  localStorage.setItem("vaani_travel_custom", JSON.stringify(data));
+}
+function _getTravelCategories() {
+  // Returns ordered list of category keys
+  const custom = _getTravelCustom();
+  const defaultKeys = Object.keys(TRAVEL_PHRASES_DEFAULT);
+  const customKeys  = Object.keys(custom).filter(k => !defaultKeys.includes(k));
+  return [...defaultKeys, ...customKeys];
+}
+function _getPhrasesForCat(cat) {
+  const custom = _getTravelCustom();
+  const base   = TRAVEL_PHRASES_DEFAULT[cat] || [];
+  const extra  = custom[cat] || [];
+  return [...base, ...extra];
+}
+
+function _getTravelCatLabel(cat) {
+  const LABELS = { food:"Food", transport:"Transport", hotel:"Hotel", emergency:"Emergency", shopping:"Shopping", greetings:"Greetings" };
+  return LABELS[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
+}
+
+function _renderCatTabs() {
+  const tabs = document.getElementById("catTabs");
+  if (!tabs) return;
+  const cats = _getTravelCategories();
+  tabs.innerHTML = cats.map(cat => `
+    <button class="cat-btn${_cat === cat ? " active" : ""}" onclick="selectCategory('${cat}',this)">
+      ${_getTravelCatLabel(cat)}
+    </button>
+  `).join("") + `
+    <button class="cat-btn cat-btn-add" onclick="addTravelCategory()" title="Add category">+</button>
+  `;
+}
+
 function selectCategory(cat, btn) {
   _cat = cat;
-  document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
-  if (btn) btn.classList.add("active");
+  _renderCatTabs();
   clearTimeout(_tTimer);
   _tTimer = setTimeout(renderTravelPhrases, 150);
 }
 
 function loadTravelPhrases() {
+  _renderCatTabs();
   clearTimeout(_tTimer);
   _tTimer = setTimeout(renderTravelPhrases, 200);
 }
@@ -948,12 +1051,16 @@ function loadTravelPhrases() {
 async function renderTravelPhrases() {
   const fromLang = document.getElementById("travelFromLang")?.value || "en";
   const toLang   = document.getElementById("travelToLang")?.value   || "en";
-  const phrases  = TRAVEL_PHRASES[_cat] || [];
+  const phrases  = _getPhrasesForCat(_cat);
   const list     = document.getElementById("phrasesList");
   const loading  = document.getElementById("travelLoading");
   if (!list) return;
   list.innerHTML = "";
   if (loading) loading.style.display = "flex";
+
+  const custom       = _getTravelCustom();
+  const defaultKeys  = Object.keys(TRAVEL_PHRASES_DEFAULT);
+  const isBuiltin    = (phrase) => (TRAVEL_PHRASES_DEFAULT[_cat] || []).some(p => p.en === phrase.en);
 
   for (const phrase of phrases) {
     const fk = `${phrase.en}|${fromLang}`;
@@ -965,6 +1072,8 @@ async function renderTravelPhrases() {
     }
     const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
     _tCache[tk] = toText;
+
+    const isCustomPhrase = !isBuiltin(phrase);
 
     const card = document.createElement("div");
     card.className = "phrase-card";
@@ -997,9 +1106,7 @@ async function renderTravelPhrases() {
     playBtn.dataset.text = toText;
     playBtn.dataset.lang = toLang;
     playBtn.addEventListener("click", function() {
-      const t = this.dataset.text;
-      const l = this.dataset.lang;
-      if (t && l) autoPlay(t, l);
+      autoPlay(this.dataset.text, this.dataset.lang);
     });
 
     const copyBtn = document.createElement("button");
@@ -1007,32 +1114,120 @@ async function renderTravelPhrases() {
     copyBtn.textContent = "Copy";
     copyBtn.dataset.text = toText;
     copyBtn.addEventListener("click", function() {
-      const t = this.dataset.text;
-      if (t) navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+      navigator.clipboard.writeText(this.dataset.text).then(() => showToast("Copied!")).catch(() => {});
     });
 
     btnsDiv.appendChild(playBtn);
     btnsDiv.appendChild(copyBtn);
 
+    // Delete button for custom phrases
+    if (isCustomPhrase) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "phrase-btn phrase-del";
+      delBtn.textContent = "✕";
+      delBtn.title = "Delete phrase";
+      const phraseEn = phrase.en;
+      delBtn.addEventListener("click", () => {
+        deleteTravelPhrase(_cat, phraseEn);
+      });
+      btnsDiv.appendChild(delBtn);
+    }
+
     card.appendChild(textsDiv);
     card.appendChild(btnsDiv);
     list.appendChild(card);
   }
+
+  // "Add sentence" button at bottom
+  const addRow = document.createElement("div");
+  addRow.className = "phrase-add-row";
+  addRow.innerHTML = `
+    <input type="text" id="newPhraseInput" class="phrase-add-input" placeholder="Add a custom sentence in English…">
+    <button class="phrase-btn phrase-play phrase-add-btn" onclick="addTravelPhrase()">Add</button>
+  `;
+  list.appendChild(addRow);
+
   if (loading) loading.style.display = "none";
 }
 
+function addTravelPhrase() {
+  const input = document.getElementById("newPhraseInput");
+  const val   = (input?.value || "").trim();
+  if (!val) { showToast("Enter a sentence first"); return; }
+
+  const custom = _getTravelCustom();
+  if (!custom[_cat]) custom[_cat] = [];
+  if (custom[_cat].some(p => p.en === val)) { showToast("Already exists"); return; }
+  custom[_cat].push({ en: val });
+  _saveTravelCustom(custom);
+  if (input) input.value = "";
+  showToast("Phrase added!");
+  clearTimeout(_tTimer);
+  _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
+function deleteTravelPhrase(cat, phraseEn) {
+  const custom = _getTravelCustom();
+  if (!custom[cat]) return;
+  custom[cat] = custom[cat].filter(p => p.en !== phraseEn);
+  _saveTravelCustom(custom);
+  showToast("Phrase removed");
+  clearTimeout(_tTimer);
+  _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
+function addTravelCategory() {
+  const name = prompt("New category name:");
+  if (!name || !name.trim()) return;
+  const key = name.trim().toLowerCase().replace(/\s+/g, "_");
+  const custom = _getTravelCustom();
+  if (custom[key] || TRAVEL_PHRASES_DEFAULT[key]) { showToast("Category already exists"); return; }
+  custom[key] = [];
+  _saveTravelCustom(custom);
+  _cat = key;
+  _renderCatTabs();
+  showToast(`Category "${name}" added!`);
+  clearTimeout(_tTimer);
+  _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
 // ══════════════════════════════════════════════════════════════════
-// IMAGE TRANSLATION — PRODUCTION UPGRADE v4.0
-// Google Vision API + Tesseract fallback + structure preservation
+// OCR BULLET POINT FIX
 // ══════════════════════════════════════════════════════════════════
 
-let _imgCurrentFile  = null;
-let _imgCroppedBlob  = null;
-let _cropperInstance = null;
+/**
+ * Normalize OCR'd bullet characters.
+ * Tesseract often misreads • ● ■ ▪ → "e" or "|" or "o"
+ * This heuristic detects list-like lines and restores bullets.
+ */
+function _fixBullets(text) {
+  if (!text) return text;
+  const lines = text.split(/\r?\n/);
+  const fixed = lines.map((line, idx) => {
+    let l = line;
 
-// ── Google Vision API OCR (client-side call) ───────────────────────
+    // Replace known OCR bullet misreads at start of line
+    // Pattern: line starts with isolated "e", "o", "|", "·", "•", "●", "■", "▪", "-", "*"
+    // followed by a space and actual text
+    l = l.replace(/^([e|o·•●■▪◦‣⁃➢➤►▶→]\s+)/, (match, bullet) => "• ");
+    l = l.replace(/^([\-\*]\s+)/, "• ");
+
+    // Numbered list: "1." "2." etc — preserve
+    // Already fine, no change needed
+
+    // Double-"e" bullet artifact: "e e Item" → "• Item"
+    l = l.replace(/^(e\s+e\s+)/, "• ");
+
+    return l;
+  });
+  return fixed.join("\n");
+}
+
+// ══════════════════════════════════════════════════════════════════
+// GOOGLE VISION OCR
+// ══════════════════════════════════════════════════════════════════
+
 async function _googleVisionOCR(blob, langCode) {
-  // Only if API key is available
   if (!VISION_API_KEY) return null;
 
   const langHintMap = {
@@ -1044,7 +1239,6 @@ async function _googleVisionOCR(blob, langCode) {
   const bcp47 = langHintMap[langCode] || "en";
 
   try {
-    // Convert blob to base64
     const arrayBuf = await blob.arrayBuffer();
     const bytes    = new Uint8Array(arrayBuf);
     let binary = "";
@@ -1066,10 +1260,7 @@ async function _googleVisionOCR(blob, langCode) {
       signal: AbortSignal.timeout(30000)
     });
 
-    if (!r.ok) {
-      console.warn("[Vision] HTTP", r.status);
-      return null;
-    }
+    if (!r.ok) { console.warn("[Vision] HTTP", r.status); return null; }
 
     const data = await r.json();
     const resp = data.responses?.[0];
@@ -1080,15 +1271,13 @@ async function _googleVisionOCR(blob, langCode) {
     if (fullAnnotation) {
       const reconstructed = _reconstructVisionText(fullAnnotation);
       if (reconstructed && reconstructed.length > 2) {
-        console.log("[Vision] Extracted", reconstructed.length, "chars");
-        return reconstructed;
+        return _fixBullets(reconstructed);
       }
     }
 
-    // Fallback to simple annotation
     const simple = resp.textAnnotations?.[0]?.description;
     if (simple && simple.trim().length > 2) {
-      return simple.trim();
+      return _fixBullets(simple.trim());
     }
 
     return null;
@@ -1098,10 +1287,6 @@ async function _googleVisionOCR(blob, langCode) {
   }
 }
 
-/**
- * Reconstruct text from Vision API fullTextAnnotation,
- * preserving paragraph structure, line breaks, bullets, emojis.
- */
 function _reconstructVisionText(fullAnnotation) {
   const pages = fullAnnotation.pages;
   if (!pages || pages.length === 0) {
@@ -1133,7 +1318,6 @@ function _reconstructVisionText(fullAnnotation) {
           paraText += wordText;
         }
 
-        // Clean up extra spaces around newlines
         paraText = paraText
           .replace(/ +\n/g, "\n")
           .replace(/\n +/g, "\n")
@@ -1187,7 +1371,6 @@ function _loadCropper() {
   });
 }
 
-// ── Map lang code → Tesseract lang string ─────────────────────────
 const TESS_LANG_MAP = {
   te:"tel", ta:"tam", hi:"hin", kn:"kan", ml:"mal", mr:"mar",
   bn:"ben", gu:"guj", pa:"pan", ur:"urd", or:"ori", as:"asm",
@@ -1197,33 +1380,53 @@ const TESS_LANG_MAP = {
   hne:"hin", en:"eng",
 };
 
-// ── Preprocess image for better OCR ───────────────────────────────
-function _preprocessImage(file) {
+// ── Optimized image resize for OCR (target ~1200px max dimension) ──
+function _optimizeImageForOCR(file) {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const canvas = document.createElement("canvas");
-      const scale = img.width < 1000 ? (1000 / img.width) : 1;
-      canvas.width  = Math.round(img.width  * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const MAX = 1400;
+      let { width: w, height: h } = img;
 
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // Only scale up if too small; scale down if too large
+      if (w > MAX || h > MAX) {
+        const scale = MAX / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      } else if (w < 800) {
+        const scale = 800 / w;
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+
+      // Contrast enhancement
+      const imageData = ctx.getImageData(0, 0, w, h);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
         const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-        const c = Math.min(255, Math.max(0, 1.8 * (gray - 128) + 128));
+        const c = Math.min(255, Math.max(0, 1.7 * (gray - 128) + 128));
         d[i] = d[i+1] = d[i+2] = c;
       }
       ctx.putImageData(imageData, 0, 0);
-      canvas.toBlob(blob => resolve(blob), "image/png");
+
+      canvas.toBlob(blob => resolve(blob || file), "image/png");
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
     img.src = url;
   });
+}
+
+// ── Preprocess image for Tesseract (legacy compat) ────────────────
+function _preprocessImage(file) {
+  return _optimizeImageForOCR(file);
 }
 
 // ── Run Tesseract OCR ──────────────────────────────────────────────
@@ -1252,7 +1455,7 @@ async function _runOCR(blob, langCode) {
   }
 }
 
-// ── OCR post-processing ────────────────────────────────────────────
+// ── OCR post-processing with bullet fix ───────────────────────────
 function _cleanOcrText(raw) {
   if (!raw) return "";
 
@@ -1295,8 +1498,17 @@ function _cleanOcrText(raw) {
     .replace(/ ([.,!?:;])/g, "$1")
     .trim();
 
-  return result;
+  return _fixBullets(result);
 }
+
+// ══════════════════════════════════════════════════════════════════
+// IMAGE EDITING — Rotation + Improved Cropping
+// ══════════════════════════════════════════════════════════════════
+
+let _imgCurrentFile  = null;
+let _imgCroppedBlob  = null;
+let _cropperInstance = null;
+let _cropRotation    = 0;
 
 function openImagePreview(src) {
   const existing = document.getElementById("vaaniImgModal");
@@ -1334,6 +1546,7 @@ async function _openCropModal(file, onConfirm) {
   if (existing) existing.remove();
   if (_cropperInstance) { try { _cropperInstance.destroy(); } catch(_){} _cropperInstance = null; }
 
+  _cropRotation = 0;
   await _loadCropper();
 
   const objectUrl = URL.createObjectURL(file);
@@ -1345,9 +1558,20 @@ async function _openCropModal(file, onConfirm) {
     <div class="vcm-backdrop"></div>
     <div class="vcm-content">
       <div class="vcm-header">
-        <span class="vcm-title">Crop Image</span>
+        <span class="vcm-title">Crop &amp; Rotate Image</span>
         <button class="vcm-close" aria-label="Cancel crop">
           <svg viewBox="0 0 24 24" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="vcm-rotate-bar">
+        <button class="vcm-rot-btn" id="vcmRotLeft" title="Rotate Left 90°">
+          <svg viewBox="0 0 24 24" width="16" height="16"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.43"/></svg>
+          Rotate Left
+        </button>
+        <span class="vcm-rot-label" id="vcmRotLabel">0°</span>
+        <button class="vcm-rot-btn" id="vcmRotRight" title="Rotate Right 90°">
+          <svg viewBox="0 0 24 24" width="16" height="16"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-3.43"/></svg>
+          Rotate Right
         </button>
       </div>
       <div class="vcm-body">
@@ -1369,8 +1593,28 @@ async function _openCropModal(file, onConfirm) {
       autoCropArea: 0.9,
       responsive: true,
       background: false,
+      movable: true,
+      zoomable: true,
+      rotatable: true,
+      scalable: true,
+      aspectRatio: NaN,        // FREE crop — no fixed ratio
+      cropBoxResizable: true,
+      cropBoxMovable: true,
+      toggleDragModeOnDblclick: true,
     });
   };
+
+  // Rotation buttons
+  modal.querySelector("#vcmRotLeft").addEventListener("click", () => {
+    _cropRotation = (_cropRotation - 90 + 360) % 360;
+    _cropperInstance?.rotate(-90);
+    modal.querySelector("#vcmRotLabel").textContent = `${_cropRotation}°`;
+  });
+  modal.querySelector("#vcmRotRight").addEventListener("click", () => {
+    _cropRotation = (_cropRotation + 90) % 360;
+    _cropperInstance?.rotate(90);
+    modal.querySelector("#vcmRotLabel").textContent = `${_cropRotation}°`;
+  });
 
   const close = () => {
     modal.classList.remove("vcm-open");
@@ -1443,18 +1687,15 @@ function _openChangeModal() {
 
 // ══════════════════════════════════════════════════════════════════
 // BACK CAMERA CAPTURE via getUserMedia
-// Always uses environment (back) camera with exact constraint
 // ══════════════════════════════════════════════════════════════════
 
 let _cameraStream  = null;
 let _cameraModal   = null;
 
 async function _captureBackCamera() {
-  // Remove existing modal
   if (_cameraModal) { _cameraModal.remove(); _cameraModal = null; }
   _stopCameraStream();
 
-  // Create camera UI modal
   const modal = document.createElement("div");
   modal.id = "vaaniCameraModal";
   modal.className = "vaani-camera-modal";
@@ -1500,7 +1741,6 @@ async function _captureBackCamera() {
   const statusEl   = modal.querySelector("#vcamStatus");
   const captureBtn = modal.querySelector("#vcamCaptureBtn");
 
-  // Request back camera — exact first, fallback to environment
   let stream = null;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -1508,16 +1748,11 @@ async function _captureBackCamera() {
     });
     statusEl.textContent = "Back camera active — point at text";
   } catch (e1) {
-    console.warn("[Camera] exact environment failed, trying fallback:", e1.message);
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       statusEl.textContent = "Camera active — point at text";
     } catch (e2) {
-      console.warn("[Camera] environment fallback failed:", e2.message);
       try {
-        // Last resort: any camera
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
         statusEl.textContent = "Camera active (front — back not available)";
         showToast("Back camera unavailable, using front");
@@ -1534,7 +1769,6 @@ async function _captureBackCamera() {
   captureBtn.disabled = false;
 
   captureBtn.addEventListener("click", () => {
-    // Capture frame from video to canvas
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext("2d");
@@ -1554,142 +1788,6 @@ function _stopCameraStream() {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// LIVE CAMERA TRANSLATION
-// Real-time camera feed with continuous text detection + overlay
-// ══════════════════════════════════════════════════════════════════
-
-let _liveCamStream    = null;
-let _liveCamActive    = false;
-let _liveCamInterval  = null;
-let _liveCamProcessing = false;
-
-async function startLiveCamera() {
-  const btn      = document.getElementById("liveCamBtn");
-  const container= document.getElementById("liveCamContainer");
-  const overlay  = document.getElementById("liveCamOverlay");
-  const status   = document.getElementById("liveCamStatus");
-
-  if (_liveCamActive) {
-    _stopLiveCamera();
-    if (btn) { btn.textContent = "🎥 Live Camera"; btn.classList.remove("active"); }
-    return;
-  }
-
-  if (!container) { showToast("Live camera not available on this page"); return; }
-
-  // Request back camera
-  let stream = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-  } catch (_) {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
-    } catch (e) {
-      showToast("Camera access denied");
-      return;
-    }
-  }
-
-  _liveCamStream = stream;
-  _liveCamActive = true;
-
-  if (btn) { btn.textContent = "⏹ Stop Camera"; btn.classList.add("active"); }
-
-  // Create video element if not exists
-  let video = document.getElementById("liveCamVideo");
-  if (!video) {
-    video = document.createElement("video");
-    video.id = "liveCamVideo";
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.style.cssText = "width:100%;border-radius:8px;background:#000";
-    container.insertBefore(video, container.firstChild);
-  }
-
-  video.srcObject = stream;
-  container.style.display = "block";
-
-  if (status) status.textContent = "Camera active — scanning for text…";
-
-  // Process frame every 3 seconds
-  _liveCamInterval = setInterval(() => _processLiveCamFrame(video, overlay, status), 3000);
-}
-
-async function _processLiveCamFrame(video, overlay, status) {
-  if (_liveCamProcessing || !_liveCamActive) return;
-  _liveCamProcessing = true;
-
-  try {
-    // Capture frame
-    const canvas = document.createElement("canvas");
-    canvas.width  = video.videoWidth  || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.85));
-    if (!blob) return;
-
-    const fromLang = document.getElementById("imgFromLang")?.value || "en";
-    const toLang   = document.getElementById("imgToLang")?.value   || "en";
-
-    if (status) status.textContent = "Detecting text…";
-
-    // Try Vision API first
-    let extracted = await _googleVisionOCR(blob, fromLang);
-
-    // Fallback to Tesseract
-    if (!extracted) {
-      try {
-        const raw = await _runOCR(blob, fromLang);
-        extracted = _cleanOcrText(raw);
-      } catch (_) {}
-    }
-
-    if (!extracted || extracted.length < 3) {
-      if (status) status.textContent = "No text detected — scanning…";
-      return;
-    }
-
-    if (status) status.textContent = "Translating…";
-
-    const translated = await translateText(extracted, fromLang, toLang);
-
-    if (overlay) {
-      overlay.style.display = "block";
-      overlay.textContent = translated || extracted;
-    }
-
-    if (status) status.textContent = `Live: ${translated ? toLang.toUpperCase() : fromLang.toUpperCase()} detected`;
-  } catch (e) {
-    console.warn("[LiveCam]", e.message);
-  } finally {
-    _liveCamProcessing = false;
-  }
-}
-
-function _stopLiveCamera() {
-  _liveCamActive = false;
-  if (_liveCamInterval) { clearInterval(_liveCamInterval); _liveCamInterval = null; }
-  if (_liveCamStream) {
-    _liveCamStream.getTracks().forEach(t => t.stop());
-    _liveCamStream = null;
-  }
-  const video = document.getElementById("liveCamVideo");
-  if (video) { video.srcObject = null; video.remove(); }
-  const container = document.getElementById("liveCamContainer");
-  if (container) container.style.display = "none";
-  const overlay = document.getElementById("liveCamOverlay");
-  if (overlay) { overlay.style.display = "none"; overlay.textContent = ""; }
-  _liveCamProcessing = false;
-}
-
 // ── Show preview with click-to-expand ─────────────────────────────
 function _showPreviewBox(objectUrl) {
   const pb = document.getElementById("imgPreviewBox");
@@ -1707,14 +1805,10 @@ function _showPreviewBox(objectUrl) {
   if (up) up.style.display = "none";
 }
 
-// ── Core: handle a new file (show crop → update preview) ──────────
 async function processImageFile(file) {
-  if (!file || (!file.type?.startsWith("image/") && file.size === undefined)) {
-    // Accept blobs without type from camera capture
-    if (!(file instanceof Blob)) {
-      showToast("Please upload an image file");
-      return;
-    }
+  if (!file || (!(file instanceof Blob))) {
+    showToast("Please upload an image file");
+    return;
   }
   _imgCurrentFile = file;
 
@@ -1724,6 +1818,7 @@ async function processImageFile(file) {
     _showPreviewBox(croppedUrl);
     document.getElementById("imgResults").style.display = "none";
     document.getElementById("imgStatus").textContent = "";
+    _resetEditableExtracted();
     resetTimeline("Img");
   });
 }
@@ -1740,7 +1835,78 @@ function handleImageUpload(e) {
   if (f) processImageFile(f);
 }
 
-// ── Main translate image handler ───────────────────────────────────
+// ── Editable extracted text helpers ───────────────────────────────
+function _resetEditableExtracted() {
+  const ta = document.getElementById("imgExtractedTextEdit");
+  if (ta) ta.value = "";
+  const confirmBtn = document.getElementById("imgConfirmTranslateBtn");
+  if (confirmBtn) confirmBtn.style.display = "none";
+}
+
+function _showEditableExtracted(text) {
+  const ta = document.getElementById("imgExtractedTextEdit");
+  const confirmBtn = document.getElementById("imgConfirmTranslateBtn");
+  if (ta) {
+    ta.value = text;
+    ta.style.display = "block";
+  }
+  if (confirmBtn) confirmBtn.style.display = "flex";
+}
+
+async function confirmAndTranslate() {
+  const ta = document.getElementById("imgExtractedTextEdit");
+  const extractedText = (ta?.value || "").trim();
+  if (!extractedText) { showToast("No text to translate"); return; }
+
+  const fromLang = document.getElementById("imgFromLang")?.value || "en";
+  const toLang   = document.getElementById("imgToLang")?.value   || "en";
+  const status   = document.getElementById("imgStatus");
+  const btn      = document.getElementById("imgConfirmTranslateBtn");
+
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "Translating…";
+
+  let translated = "";
+  if (fromLang === toLang) {
+    translated = extractedText;
+  } else {
+    try {
+      const paragraphs = extractedText.split(/\n\n+/);
+      const translatedParas = await Promise.all(
+        paragraphs.map(async (para) => {
+          if (!para.trim()) return "";
+          const lines = para.split("\n");
+          const translatedLines = await Promise.all(
+            lines.map(async (line) => {
+              const l = line.trim();
+              if (!l) return "";
+              try { return await translateText(l, fromLang, toLang); } catch (_) { return l; }
+            })
+          );
+          return translatedLines.join("\n");
+        })
+      );
+      translated = translatedParas.join("\n\n").trim();
+    } catch(tErr) {
+      console.warn("[Image] Translation error:", tErr);
+      translated = extractedText;
+    }
+  }
+
+  const transEl = document.getElementById("imgTranslatedText");
+  if (transEl) transEl.textContent = translated || "—";
+  if (status) status.textContent = "Translation complete ✓";
+  if (btn) btn.disabled = false;
+
+  if (translated && translated !== extractedText) {
+    await autoPlay(translated, toLang, "Img", transEl);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MAIN IMAGE TRANSLATE — Parallel OCR + Translation + Audio
+// ══════════════════════════════════════════════════════════════════
+
 async function translateImage() {
   const fromLang = document.getElementById("imgFromLang")?.value || "en";
   const toLang   = document.getElementById("imgToLang")?.value   || "en";
@@ -1749,121 +1915,135 @@ async function translateImage() {
 
   const sourceBlob = _imgCroppedBlob || _imgCurrentFile;
 
-  if (!sourceBlob) {
-    showToast("No image selected");
-    return;
-  }
+  if (!sourceBlob) { showToast("No image selected"); return; }
 
   if (btn)    btn.disabled = true;
-  if (status) status.textContent = "Preprocessing image…";
+  if (status) status.textContent = "Optimizing image…";
   document.getElementById("imgResults").style.display = "none";
+  _resetEditableExtracted();
   resetTimeline("Img");
 
   try {
+    // ── Step 1: Optimize image in background (non-blocking) ───────
+    const optimizedBlobPromise = _optimizeImageForOCR(sourceBlob);
+
+    // ── Step 2: Try Vision OCR (runs in parallel with optimization) ─
+    if (status) status.textContent = "Running OCR…";
+
     let extractedText = "";
     let ocrEngine = "unknown";
 
-    // ── Step 1: Try Google Vision API ─────────────────────────────
-    if (status) status.textContent = "Running OCR…";
-    const visionResult = await _googleVisionOCR(sourceBlob, fromLang);
+    // Run Vision API on original blob immediately (no need to wait for optimization)
+    const visionPromise = _googleVisionOCR(sourceBlob, fromLang);
+
+    // Wait for both
+    const [visionResult, optimizedBlob] = await Promise.all([visionPromise, optimizedBlobPromise]);
+
     if (visionResult && visionResult.length > 2) {
       extractedText = visionResult;
       ocrEngine = "Google Vision";
-      console.log(`[OCR] Vision extracted ${extractedText.length} chars`);
     } else {
-      // ── Step 2: Backend OCR ──────────────────────────────────────
+      // ── Step 3: Backend OCR (parallel with client fallback setup) ──
       if (status) status.textContent = "Running server OCR…";
-      try {
-        const fd = new FormData();
-        fd.append("file", sourceBlob, "image.png");
-        fd.append("from_lang", fromLang);
-        fd.append("to_lang", toLang);
-        const resp = await fetch(`${API_URL}/image-translate`, {
-          method:"POST", body:fd, signal:AbortSignal.timeout(40000)
-        });
-        if (resp.ok) {
-          const d = await resp.json();
-          if (d.extracted && d.extracted.length > 2) {
-            // Backend handled OCR + translation together
-            extractedText = d.extracted;
-            const translatedFromBackend = (d.translated || "").trim();
-            if (translatedFromBackend) {
-              document.getElementById("imgExtractedText").textContent  = extractedText;
-              document.getElementById("imgTranslatedText").textContent = translatedFromBackend;
-              document.getElementById("imgResults").style.display      = "block";
-              if (status) status.textContent = `OCR: ${d.engine || "server"} ✓`;
-              const transEl = document.getElementById("imgTranslatedText");
-              await autoPlay(translatedFromBackend, toLang, "Img", transEl);
-              return;
-            }
+
+      const backendPromise = (async () => {
+        try {
+          const fd = new FormData();
+          fd.append("file", optimizedBlob || sourceBlob, "image.png");
+          fd.append("from_lang", fromLang);
+          fd.append("to_lang", toLang);
+          const resp = await fetch(`${API_URL}/image-translate`, {
+            method:"POST", body:fd, signal:AbortSignal.timeout(40000)
+          });
+          if (resp.ok) {
+            const d = await resp.json();
+            return d;
           }
+        } catch(fbErr) {
+          console.warn("[Image] Backend error:", fbErr);
         }
-      } catch(fbErr) {
-        console.warn("[Image] Backend fallback error:", fbErr);
+        return null;
+      })();
+
+      const backendResult = await backendPromise;
+
+      if (backendResult && backendResult.extracted && backendResult.extracted.length > 2) {
+        if (backendResult.translated && backendResult.translated.trim()) {
+          // Backend did OCR + translation together — fast path
+          const extracted = backendResult.extracted;
+          const translatedFromBackend = backendResult.translated.trim();
+
+          _showEditableExtracted(extracted);
+          document.getElementById("imgResults").style.display = "block";
+          const transEl = document.getElementById("imgTranslatedText");
+          if (transEl) transEl.textContent = translatedFromBackend;
+          if (status) status.textContent = `OCR: ${backendResult.engine || "server"} ✓`;
+          showTimeline("Img");
+          // Start audio in background without blocking UI
+          autoPlay(translatedFromBackend, toLang, "Img", transEl);
+          return;
+        }
+        extractedText = backendResult.extracted;
+        ocrEngine = backendResult.engine || "server";
       }
 
-      // ── Step 3: Tesseract.js client fallback ─────────────────────
-      if (status) status.textContent = "Loading Tesseract OCR…";
-      try {
-        const preprocessed = await _preprocessImage(sourceBlob);
-        const rawOcr = await _runOCR(preprocessed, fromLang);
-        extractedText = _cleanOcrText(rawOcr);
-        ocrEngine = "Tesseract";
-      } catch (ocrErr) {
-        console.warn("[Image] Tesseract error:", ocrErr);
+      if (!extractedText) {
+        // ── Step 4: Tesseract.js client fallback ───────────────────
+        if (status) status.textContent = "Loading Tesseract OCR…";
+        try {
+          const rawOcr = await _runOCR(optimizedBlob || sourceBlob, fromLang);
+          extractedText = _cleanOcrText(rawOcr);
+          ocrEngine = "Tesseract";
+        } catch (ocrErr) {
+          console.warn("[Image] Tesseract error:", ocrErr);
+        }
       }
     }
 
-    // ── Step 4: Display extracted text ────────────────────────────
+    // ── Step 5: Show extracted (editable) ────────────────────────
     if (!extractedText || extractedText.length < 2) {
-      document.getElementById("imgExtractedText").textContent  = "No text found";
+      _showEditableExtracted("");
       document.getElementById("imgTranslatedText").textContent = "No text detected in this image.";
-      document.getElementById("imgResults").style.display      = "block";
+      document.getElementById("imgResults").style.display = "block";
       if (status) status.textContent = "";
       return;
     }
 
-    document.getElementById("imgExtractedText").textContent = extractedText;
+    _showEditableExtracted(extractedText);
     if (status) status.textContent = `OCR: ${ocrEngine} ✓ — Translating…`;
 
-    // ── Step 5: Translate preserving structure ────────────────────
+    // ── Step 6: Translate (paragraph-aware) + start audio in parallel ─
     let translated = "";
     if (fromLang === toLang) {
       translated = extractedText;
     } else {
-      try {
-        // Translate paragraph by paragraph to preserve formatting
-        const paragraphs = extractedText.split(/\n\n+/);
-        const translatedParas = await Promise.all(
-          paragraphs.map(async (para) => {
-            if (!para.trim()) return "";
-            const lines = para.split("\n");
-            const translatedLines = await Promise.all(
-              lines.map(async (line) => {
-                const l = line.trim();
-                if (!l) return "";
-                try {
-                  return await _clientTranslateChunk(l, fromLang, toLang);
-                } catch (_) { return l; }
-              })
-            );
-            return translatedLines.join("\n");
-          })
-        );
-        translated = translatedParas.join("\n\n").trim();
-      } catch(tErr) {
-        console.warn("[Image] Translation error:", tErr);
-        translated = extractedText;
-      }
+      const paragraphs = extractedText.split(/\n\n+/);
+      const translatedParas = await Promise.all(
+        paragraphs.map(async (para) => {
+          if (!para.trim()) return "";
+          const lines = para.split("\n");
+          const translatedLines = await Promise.all(
+            lines.map(async (line) => {
+              const l = line.trim();
+              if (!l) return "";
+              try { return await translateText(l, fromLang, toLang); } catch (_) { return l; }
+            })
+          );
+          return translatedLines.join("\n");
+        })
+      );
+      translated = translatedParas.join("\n\n").trim();
     }
 
     const transEl = document.getElementById("imgTranslatedText");
-    transEl.textContent = translated || "—";
+    if (transEl) transEl.textContent = translated || "—";
     document.getElementById("imgResults").style.display = "block";
     if (status) status.textContent = `OCR: ${ocrEngine} ✓`;
+    showTimeline("Img");
 
     if (translated && translated !== extractedText) {
-      await autoPlay(translated, toLang, "Img", transEl);
+      // Fire audio without awaiting — non-blocking
+      autoPlay(translated, toLang, "Img", transEl);
     }
   } catch (e) {
     console.error("[Vaani] translateImage:", e);
@@ -1872,27 +2052,6 @@ async function translateImage() {
   } finally {
     if (btn) btn.disabled = false;
   }
-}
-
-function _splitText(text, maxLen = 4500) {
-  const sentences = text.split(/(?<=[।.!?\n])\s*/);
-  const chunks = [], current_parts = [];
-  let len = 0;
-  for (const s of sentences) {
-    const st = s.trim();
-    if (!st) continue;
-    if (len + st.length + 1 > maxLen && current_parts.length) {
-      chunks.push(current_parts.join(" "));
-      current_parts.length = 0; len = 0;
-    }
-    current_parts.push(st); len += st.length + 1;
-  }
-  if (current_parts.length) chunks.push(current_parts.join(" "));
-  return chunks.length ? chunks : [text];
-}
-
-async function _clientTranslateChunk(text, fromLang, toLang) {
-  return await translateText(text, fromLang, toLang) || text;
 }
 
 // ── HISTORY & FAVOURITES ──────────────────────────────────────────
@@ -2012,7 +2171,6 @@ function renderSettingsPage() {
   const fromPref = localStorage.getItem("vaani_lang_fromLang") || "te";
   const toPref   = localStorage.getItem("vaani_lang_toLang")   || "ta";
 
-  // Show dialect info if detected
   let dialectInfo = "";
   if (_dialectTone) {
     dialectInfo = `<div class="stg-row"><span class="stg-label">Detected Dialect</span><span style="font-size:13px;color:var(--accent-light)">${_dialectTone}</span></div>`;
@@ -2060,6 +2218,7 @@ function renderSettingsPage() {
       <div class="stg-btn-col">
         <button class="stg-btn stg-warn" onclick="stgClearHistory()">Clear Translation History</button>
         <button class="stg-btn stg-warn" onclick="stgClearFavs()">Clear Favourites</button>
+        <button class="stg-btn stg-warn" onclick="stgClearTravel()">Clear Custom Travel Phrases</button>
         <button class="stg-btn stg-danger" onclick="stgResetAll()">Reset All App Data</button>
       </div>
     </div>
@@ -2067,7 +2226,7 @@ function renderSettingsPage() {
     <div class="stg-section">
       <div class="stg-title">About</div>
       <div class="stg-about">
-        <div>Vaani — Indian Language Translator v4.0</div>
+        <div>Vaani — Indian Language Translator v5.0</div>
         <div>OCR: Google Vision API + Tesseract fallback</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
         <div>Speech: Bhashini TTS + gTTS fallback</div>
@@ -2101,6 +2260,12 @@ function stgClearFavs() {
   showToast("Favourites cleared");
   renderFavourites();
 }
+function stgClearTravel() {
+  if (!confirm("Clear all custom travel phrases?")) return;
+  localStorage.removeItem("vaani_travel_custom");
+  _tCache = {};
+  showToast("Custom travel phrases cleared");
+}
 function stgResetAll() {
   if (!confirm("Reset ALL app data? Cannot be undone.")) return;
   localStorage.clear();
@@ -2120,12 +2285,10 @@ function navigateTo(page) {
   });
   closeMenu();
   history.pushState({ page }, "", `#${page.toLowerCase()}`);
-  if (page === "Travel")     renderTravelPhrases();
+  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
-  // Stop live camera when leaving Image page
-  if (page !== "Image") _stopLiveCamera();
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id =>
     document.getElementById(id)?.classList.remove("listening")
@@ -2172,7 +2335,6 @@ setInterval(pingBackend, 10 * 60 * 1000);
 if (typeof window.signInWithGoogle === "undefined") window.signInWithGoogle = () => showToast("Sign-in coming soon");
 if (typeof window.signOutUser      === "undefined") window.signOutUser      = () => showToast("Signed out");
 
-// ── AUTH STATE HOOK ───────────────────────────────────────────────
 window._vaaniCurrentUser = null;
 window._vaaniOnAuthChange = function(user) {
   window._vaaniCurrentUser = user || null;
@@ -2187,11 +2349,9 @@ document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
   initLanguageSelects();
 
-  // Init all timeline controls (main + image)
   _initTimelineControls("");
   _initTimelineControls("Img");
 
-  // Change button → open change modal
   const changeBtn = document.getElementById("imgChangeBtn");
   if (changeBtn) {
     changeBtn.addEventListener("click", (e) => {
@@ -2200,7 +2360,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Camera "Take Photo" button in source buttons area → use getUserMedia
   const camSrcBtn = document.getElementById("cameraSrcBtn");
   if (camSrcBtn) {
     camSrcBtn.addEventListener("click", async (e) => {
@@ -2209,7 +2368,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Also patch the inline cameraInput (fallback for non-getUserMedia browsers)
   const cameraInput = document.getElementById("cameraInput");
   if (cameraInput) {
     cameraInput.setAttribute("capture", "environment");
@@ -2221,6 +2379,5 @@ document.addEventListener("DOMContentLoaded", () => {
   renderHistory();
   renderFavourites();
 
-  // Detect location for dialect-aware translation
   detectUserLocation();
 });
