@@ -1,0 +1,182 @@
+/* ══════════════════════════════════════════════════════════════════
+   PERMISSION DENIED GUIDE MODAL  (v5.3 — append to style.css)
+   Non-blocking, platform-specific, with Retry button
+══════════════════════════════════════════════════════════════════ */
+
+#vaaniPermGuide {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+#vaaniPermGuide.vpg-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vpg-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.vpg-sheet {
+  position: relative;
+  z-index: 1;
+  background: var(--bg2);
+  border: 1px solid var(--card-border);
+  border-radius: 20px 20px 0 0;
+  width: min(520px, 100%);
+  padding: 28px 24px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.34, 1.2, 0.64, 1);
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+#vaaniPermGuide.vpg-open .vpg-sheet {
+  transform: translateY(0);
+}
+
+/* Drag handle */
+.vpg-sheet::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--card-border);
+  margin: 0 auto 20px;
+}
+
+.vpg-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+.vpg-icon-denied {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1.5px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
+.vpg-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 8px;
+  letter-spacing: -0.3px;
+}
+.vpg-sub {
+  font-size: 13px;
+  color: var(--text2);
+  text-align: center;
+  line-height: 1.6;
+  margin-bottom: 20px;
+  max-width: 340px;
+}
+
+.vpg-steps {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.vpg-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+.vpg-step strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.vpg-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-light);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.vpg-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.vpg-retry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: 0 4px 20px var(--accent-glow);
+}
+.vpg-retry svg { width: 16px; height: 16px; stroke: #fff; flex-shrink: 0; }
+.vpg-retry:hover { opacity: 0.9; transform: translateY(-1px); }
+.vpg-retry:active { transform: translateY(0); }
+.vpg-dismiss {
+  width: 100%;
+  padding: 12px 20px;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.vpg-dismiss:hover { color: var(--text); border-color: var(--text3); }
+
+/* Light theme adjustments */
+[data-theme="light"] .vpg-backdrop { background: rgba(0,0,0,0.55); }
+[data-theme="light"] .vpg-sheet { background: var(--bg2); }
+
+/* Mobile: full-width at bottom */
+@media (max-width: 480px) {
+  .vpg-sheet { padding: 24px 16px 32px; border-radius: 16px 16px 0 0; }
+  .vpg-step { padding: 10px 12px; font-size: 12px; }
+}
