@@ -1675,26 +1675,84 @@ function _optimizeImageForOCR(file) {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
+
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const MAX = 1400;
+
+      const MAX = 2000;
+      const MIN = 1000;
       let { width: w, height: h } = img;
-      if (w > MAX || h > MAX) { const scale = MAX / Math.max(w, h); w = Math.round(w * scale); h = Math.round(h * scale); }
-      else if (w < 800) { const scale = 800 / w; w = Math.round(w * scale); h = Math.round(h * scale); }
+
+      // Scale down if too large
+      if (w > MAX || h > MAX) {
+        const scale = MAX / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      // Scale up if too small
+      else if (w < MIN) {
+        const scale = MIN / w;
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+
       const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
+      canvas.width  = w;
+      canvas.height = h;
       const ctx = canvas.getContext("2d");
+
+      // Draw original
       ctx.drawImage(img, 0, 0, w, h);
+
+      // Convert to grayscale + increase contrast + sharpen
       const imageData = ctx.getImageData(0, 0, w, h);
       const d = imageData.data;
+
+      // Step 1: Grayscale
       for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-        const c = Math.min(255, Math.max(0, 1.7 * (gray - 128) + 128));
-        d[i] = d[i+1] = d[i+2] = c;
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i] = d[i + 1] = d[i + 2] = gray;
       }
+
+      // Step 2: Contrast stretch (factor 1.8)
+      const contrast = 1.8;
+      for (let i = 0; i < d.length; i += 4) {
+        const c = Math.min(255, Math.max(0, contrast * (d[i] - 128) + 128));
+        d[i] = d[i + 1] = d[i + 2] = c;
+      }
+
       ctx.putImageData(imageData, 0, 0);
+
+      // Step 3: Sharpen via convolution
+      const sharpKernel = [
+         0, -1,  0,
+        -1,  5, -1,
+         0, -1,  0
+      ];
+      const src = ctx.getImageData(0, 0, w, h);
+      const dst = ctx.createImageData(w, h);
+      const sd = src.data, dd = dst.data;
+
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          let val = 0;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const idx = ((y + ky) * w + (x + kx)) * 4;
+              val += sd[idx] * sharpKernel[(ky + 1) * 3 + (kx + 1)];
+            }
+          }
+          val = Math.min(255, Math.max(0, val));
+          const out = (y * w + x) * 4;
+          dd[out] = dd[out + 1] = dd[out + 2] = val;
+          dd[out + 3] = 255;
+        }
+      }
+      ctx.putImageData(dst, 0, 0);
+
       canvas.toBlob(blob => resolve(blob || file), "image/png");
     };
+
     img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
     img.src = url;
   });
@@ -1726,29 +1784,78 @@ async function _runOCR(blob, langCode) {
 
 function _cleanOcrText(raw) {
   if (!raw) return "";
-  let lines = raw.split(/\r?\n/);
-  lines = lines.map(line => {
-    line = line
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ")
-      .replace(/[|]{2,}/g, " ").replace(/_{3,}/g, " ").replace(/={3,}/g, " ")
-      .replace(/-{3,}/g, " ").replace(/\.{4,}/g, "… ").replace(/[~^`#*\\]{2,}/g, " ");
-    return line.split(/\s+/).filter(tok => {
-      if (!tok) return false;
-      if (/[\p{L}\p{N}]/u.test(tok)) return true;
-      if (/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{FE00}-\u{FEFF}]/u.test(tok)) return true;
-      return false;
-    }).join(" ").trim();
-  });
-  const seen = new Set();
-  lines = lines.filter(line => {
-    const norm = line.trim();
-    if (!norm || seen.has(norm)) return false;
-    seen.add(norm);
-    return true;
-  });
-  return _fixBullets(
-    lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/ {2,}/g, " ").replace(/ ([.,!?:;])/g, "$1").trim()
-  );
+
+  const lines = raw.split(/\r?\n/);
+  const cleaned = [];
+
+  for (let line of lines) {
+    // Remove non-printable control characters
+    line = line.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+
+    const tokens = line.split(/\s+/);
+    const validTokens = [];
+
+    for (const token of tokens) {
+      if (!token) continue;
+
+      // Always keep punctuation-only tokens
+      if (/^[.,!?;:()\-"']+$/.test(token)) {
+        validTokens.push(token);
+        continue;
+      }
+
+      // Count Telugu characters in token
+      const teluguChars  = (token.match(/[\u0C00-\u0C7F]/g) || []).length;
+      // Count valid non-Telugu (digits, basic punctuation)
+      const neutralChars = (token.match(/[\d.,!?;:()\-"']/g) || []).length;
+      const totalChars   = token.replace(/\s/g, "").length;
+
+      if (totalChars === 0) continue;
+
+      const teluguRatio = teluguChars / totalChars;
+
+      // Keep token if majority Telugu
+      if (teluguRatio >= 0.5) {
+        // Strip any embedded non-Telugu/non-neutral chars
+        const stripped = token.replace(/[^\u0C00-\u0C7F\d.,!?;:()\-"']/g, "").trim();
+        if (stripped.length > 0) validTokens.push(stripped);
+        continue;
+      }
+
+      // Keep pure digit / neutral tokens
+      if (neutralChars === totalChars) {
+        validTokens.push(token);
+        continue;
+      }
+
+      // Drop: pure ASCII uppercase junk (DOA, ADD, CHEAT, etc.)
+      if (/^[A-Z]{2,}$/.test(token)) continue;
+
+      // Drop: mixed-script corrupted tokens (Latin mixed with Telugu)
+      if (teluguChars > 0 && /[a-zA-Z]/.test(token)) continue;
+
+      // Drop: pure Latin words that are not numbers/punctuation
+      if (/^[a-zA-Z]+$/.test(token)) continue;
+    }
+
+    const cleanedLine = validTokens.join(" ").trim();
+    if (cleanedLine.length > 0) cleaned.push(cleanedLine);
+  }
+
+  // Deduplicate consecutive identical lines
+  const deduped = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    if (i === 0 || cleaned[i] !== cleaned[i - 1]) {
+      deduped.push(cleaned[i]);
+    }
+  }
+
+  return deduped
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ {2,}/g, " ")
+    .replace(/ ([.,!?;:])/g, "$1")
+    .trim();
 }
 
 // ── IMAGE EDITING ─────────────────────────────────────────────────
@@ -2070,96 +2177,133 @@ async function confirmAndTranslate() {
   if (translated && translated !== extractedText) await autoPlay(translated, toLang, "Img", transEl);
 }
 
+function _splitIntoSentences(text) {
+  if (!text) return [];
+  // Split on Telugu purna virama, danda, or common punctuation
+  const parts = text.split(/(?<=[.!?।॥\u0C0E\u0C14])\s+/);
+  return parts.map(s => s.trim()).filter(s => s.length > 1);
+}
+
 async function translateImage() {
-  const fromLang = document.getElementById("imgFromLang")?.value || "en";
-  const toLang   = document.getElementById("imgToLang")?.value   || "en";
-  const status   = document.getElementById("imgStatus");
-  const btn      = document.getElementById("imgTranslateBtn");
+  const fromLang   = document.getElementById("imgFromLang")?.value || "en";
+  const toLang     = document.getElementById("imgToLang")?.value   || "en";
+  const status     = document.getElementById("imgStatus");
+  const btn        = document.getElementById("imgTranslateBtn");
   const sourceBlob = _imgCroppedBlob || _imgCurrentFile;
+
   if (!sourceBlob) { showToast("No image selected"); return; }
-  if (btn)    btn.disabled = true;
-  if (status) status.textContent = "Optimizing image…";
+
+  if (btn)    btn.disabled        = true;
+  if (status) status.textContent  = "Optimizing image…";
   document.getElementById("imgResults").style.display = "none";
   _resetEditableExtracted();
   resetTimeline("Img");
+
   try {
-    const optimizedBlobPromise = _optimizeImageForOCR(sourceBlob);
-    if (status) status.textContent = "Running OCR…";
-    let extractedText = "", ocrEngine = "unknown";
-    const visionPromise = _googleVisionOCR(sourceBlob, fromLang);
-    const [visionResult, optimizedBlob] = await Promise.all([visionPromise, optimizedBlobPromise]);
-    if (visionResult && visionResult.length > 2) {
-      extractedText = visionResult;
+    // Step 1: Preprocess image
+    if (status) status.textContent = "Enhancing image for OCR…";
+    const optimizedBlob = await _optimizeImageForOCR(sourceBlob);
+
+    // Step 2: OCR — Vision API first, Tesseract fallback
+    let rawText  = "";
+    let ocrEngine = "unknown";
+
+    if (status) status.textContent = "Running OCR (Google Vision)…";
+    const visionResult = await _googleVisionOCR(optimizedBlob, fromLang);
+
+    if (visionResult && visionResult.trim().length > 5) {
+      rawText   = visionResult;
       ocrEngine = "Google Vision";
     } else {
-      if (status) status.textContent = "Running server OCR…";
-      const backendPromise = (async () => {
-        try {
-          const fd = new FormData();
-          fd.append("file", optimizedBlob || sourceBlob, "image.png");
-          fd.append("from_lang", fromLang);
-          fd.append("to_lang", toLang);
-          const resp = await fetch(`${API_URL}/image-translate`, { method:"POST", body:fd, signal:AbortSignal.timeout(40000) });
-          if (resp.ok) return await resp.json();
-        } catch(fbErr) { console.warn("[Image] Backend error:", fbErr); }
-        return null;
-      })();
-      const backendResult = await backendPromise;
-      if (backendResult?.extracted && backendResult.extracted.length > 2) {
-        if (backendResult.translated?.trim()) {
-          _showEditableExtracted(backendResult.extracted);
-          document.getElementById("imgResults").style.display = "block";
-          const transEl = document.getElementById("imgTranslatedText");
-          if (transEl) transEl.textContent = backendResult.translated.trim();
-          if (status) status.textContent = `OCR: ${backendResult.engine || "server"} ✓`;
-          showTimeline("Img");
-          autoPlay(backendResult.translated.trim(), toLang, "Img", transEl);
-          return;
+      // Vision failed or returned noise — try backend then Tesseract
+      if (status) status.textContent = "Vision unclear, trying server OCR…";
+      try {
+        const fd = new FormData();
+        fd.append("file", optimizedBlob, "image.png");
+        fd.append("from_lang", fromLang);
+        fd.append("to_lang", toLang);
+        const resp = await fetch(`${API_URL}/image-translate`, {
+          method: "POST", body: fd, signal: AbortSignal.timeout(40000)
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.extracted && data.extracted.trim().length > 5) {
+            rawText   = data.extracted;
+            ocrEngine = data.engine || "server";
+            // If backend also returned translation, use it directly
+            if (data.translated?.trim()) {
+              const cleaned = _cleanOcrText(rawText);
+              _showEditableExtracted(cleaned);
+              document.getElementById("imgResults").style.display = "block";
+              const transEl = document.getElementById("imgTranslatedText");
+              if (transEl) transEl.textContent = data.translated.trim();
+              if (status) status.textContent = `OCR: ${ocrEngine} ✓`;
+              showTimeline("Img");
+              autoPlay(data.translated.trim(), toLang, "Img", transEl);
+              return;
+            }
+          }
         }
-        extractedText = backendResult.extracted;
-        ocrEngine = backendResult.engine || "server";
+      } catch (backendErr) {
+        console.warn("[Image] Backend OCR error:", backendErr);
       }
-      if (!extractedText) {
-        if (status) status.textContent = "Loading Tesseract OCR…";
+
+      // Final fallback: Tesseract
+      if (!rawText) {
+        if (status) status.textContent = "Running Tesseract OCR…";
         try {
-          const rawOcr = await _runOCR(optimizedBlob || sourceBlob, fromLang);
-          extractedText = _cleanOcrText(rawOcr);
+          rawText   = await _runOCR(optimizedBlob, fromLang);
           ocrEngine = "Tesseract";
-        } catch (ocrErr) { console.warn("[Image] Tesseract error:", ocrErr); }
+        } catch (tessErr) {
+          console.warn("[Image] Tesseract error:", tessErr);
+        }
       }
     }
-    if (!extractedText || extractedText.length < 2) {
+
+    // Step 3: Clean OCR output
+    const cleanedText = _cleanOcrText(rawText || "");
+
+    if (!cleanedText || cleanedText.length < 3) {
       _showEditableExtracted("");
-      document.getElementById("imgTranslatedText").textContent = "No text detected in this image.";
+      const transEl = document.getElementById("imgTranslatedText");
+      if (transEl) transEl.textContent = "Text not detected clearly. Try a better image.";
       document.getElementById("imgResults").style.display = "block";
       if (status) status.textContent = "";
       return;
     }
-    _showEditableExtracted(extractedText);
+
+    _showEditableExtracted(cleanedText);
     if (status) status.textContent = `OCR: ${ocrEngine} ✓ — Translating…`;
+
+    // Step 4: Sentence-level translation
     let translated = "";
     if (fromLang === toLang) {
-      translated = extractedText;
+      translated = cleanedText;
     } else {
-      const paragraphs = extractedText.split(/\n\n+/);
-      const translatedParas = await Promise.all(paragraphs.map(async (para) => {
-        if (!para.trim()) return "";
-        const lines = para.split("\n");
-        const translatedLines = await Promise.all(lines.map(async (line) => {
-          const l = line.trim();
-          if (!l) return "";
-          try { return await translateText(l, fromLang, toLang); } catch (_) { return l; }
-        }));
-        return translatedLines.join("\n");
-      }));
-      translated = translatedParas.join("\n\n").trim();
+      const sentences = _splitIntoSentences(cleanedText);
+      if (sentences.length === 0) {
+        translated = await translateText(cleanedText, fromLang, toLang);
+      } else {
+        const translatedSentences = await Promise.all(
+          sentences.map(async (sentence) => {
+            try {
+              return await translateText(sentence, fromLang, toLang);
+            } catch (_) {
+              return sentence;
+            }
+          })
+        );
+        translated = translatedSentences.join(" ").trim();
+      }
     }
+
     const transEl = document.getElementById("imgTranslatedText");
     if (transEl) transEl.textContent = translated || "—";
     document.getElementById("imgResults").style.display = "block";
     if (status) status.textContent = `OCR: ${ocrEngine} ✓`;
     showTimeline("Img");
-    if (translated && translated !== extractedText) autoPlay(translated, toLang, "Img", transEl);
+    if (translated && translated !== cleanedText) autoPlay(translated, toLang, "Img", transEl);
+
   } catch (e) {
     console.error("[Vaani] translateImage:", e);
     if (status) status.textContent = "Error: " + e.message;
