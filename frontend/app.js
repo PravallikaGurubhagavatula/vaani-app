@@ -2439,21 +2439,68 @@ function renderFavourites() {
   const favs = _readFavs();
   const list = document.getElementById("favouritesList");
   if (!list) return;
+
   if (!favs.length) {
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
     return;
   }
-  list.innerHTML = favs.map((f, i) => `
-    <div class="hist-card fav-card">
-      <div class="hist-langs">${LANG_NAMES[f.fromLang]||f.fromLang} → ${LANG_NAMES[f.toLang]||f.toLang}</div>
-      <div class="hist-orig">${_escHtml(f.original)}</div>
-      <div class="hist-trans">${_escHtml(f.translated)}</div>
-      <div class="hist-actions">
-        <button class="hist-btn" onclick="autoPlay(${JSON.stringify(f.translated)},${JSON.stringify(f.toLang)})">Play</button>
-        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(f.translated)}).then(()=>showToast('Copied!'))">Copy</button>
-        <button class="hist-btn del" onclick="deleteFavourite(${i})">Remove</button>
-      </div>
-    </div>`).join("");
+
+  list.innerHTML = "";
+
+  favs.forEach((f, i) => {
+    const card = document.createElement("div");
+    card.className = "hist-card fav-card";
+
+    const langs = document.createElement("div");
+    langs.className = "hist-langs";
+    langs.textContent = `${LANG_NAMES[f.fromLang] || f.fromLang} → ${LANG_NAMES[f.toLang] || f.toLang}`;
+
+    const orig = document.createElement("div");
+    orig.className = "hist-orig";
+    orig.textContent = f.original;
+
+    const trans = document.createElement("div");
+    trans.className = "hist-trans";
+    trans.textContent = f.translated;
+
+    const actions = document.createElement("div");
+    actions.className = "hist-actions";
+
+    // Play button
+    const playBtn = document.createElement("button");
+    playBtn.className = "hist-btn";
+    playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => {
+      autoPlay(f.translated, f.toLang);
+    });
+
+    // Copy button
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "hist-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(f.translated)
+        .then(() => showToast("Copied!"))
+        .catch(() => showToast("Copy failed"));
+    });
+
+    // Remove button
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "hist-btn del";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => deleteFavourite(i));
+
+    actions.appendChild(playBtn);
+    actions.appendChild(copyBtn);
+    actions.appendChild(removeBtn);
+
+    card.appendChild(langs);
+    card.appendChild(orig);
+    card.appendChild(trans);
+    card.appendChild(actions);
+
+    list.appendChild(card);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
