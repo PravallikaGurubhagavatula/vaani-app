@@ -875,7 +875,7 @@ async function startListening() {
     setTranslating();
     setMicStatus("Translating…");
 
-    const translated = await translateText(transcript, fromLang, toLang);
+    const translated = await window.finalTranslate(transcript, fromLang, toLang);
     showFinalTranslation(transcript, translated);
     setMicStatus("Tap to speak again");
 
@@ -1049,7 +1049,7 @@ async function startConvListening(speaker) {
     _convLastFromLang[speaker]   = fromLang;
     _convLastToLang[speaker]     = toLang;
 
-    const translated = await translateText(transcript, fromLang, toLang);
+    const translated = await window.finalTranslate(transcript, fromLang, toLang);
     if (transEl) transEl.textContent = translated || "—";
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
     setMicStatus("Tap to speak again", statId);
@@ -1108,7 +1108,7 @@ async function onConvLangChange(speaker) {
   if (transEl) transEl.textContent = "…";
 
   try {
-    const translated = await translateText(transcript, origFrom, newLang);
+    const translated = await window.finalTranslate(transcript, origFrom, newLang);
     if (transEl) transEl.textContent = translated || "—";
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
     _convLastToLang[sourceSpeak] = newLang;
@@ -1167,7 +1167,7 @@ async function translateTypedText() {
   if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
   showOriginalText(raw);
   setTranslating();
-  const translated = await translateText(raw, fromLang, toLang);
+  const translated = await window.finalTranslate(raw, fromLang, toLang);
   showFinalTranslation(raw, translated);
   if (btn) { btn.disabled = false; btn.textContent = "Translate"; }
   if (translated) {
@@ -1191,7 +1191,7 @@ async function onLanguageChange() {
   const origText = (document.getElementById("originalText")?.textContent || "").trim();
   if (origText && origText !== "—" && origText !== "…") {
     if (transEl) transEl.textContent = "…";
-    const translated = await translateText(origText, fromLang, toLang);
+    const translated = await window.finalTranslate(origText, fromLang, toLang);
     if (transEl) transEl.textContent  = translated || "—";
     if (actEl)   actEl.style.display  = translated ? "flex" : "none";
     if (translated) await autoPlay(translated, toLang, "", transEl);
@@ -1216,7 +1216,7 @@ async function swapLanguages() {
   if (!newSource || newSource === "—") return;
   showOriginalText(newSource);
   setTranslating();
-  const translated = await translateText(newSource, prevTo, prevFrom);
+  const translated = await window.finalTranslate(newSource, prevTo, prevFrom);
   showFinalTranslation(newSource, translated);
   if (translated) {
     const transEl = document.getElementById("translatedText");
