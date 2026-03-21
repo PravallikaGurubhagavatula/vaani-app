@@ -430,3 +430,63 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .wh-word{border-radius:3px;transition:background 0.1s ease,color 0.1s ease}
 .wh-current{background:var(--accent) !important;color:#fff !important;padding:1px 3px;border-radius:4px;box-shadow:0 0 0 2px var(--accent-glow)}
 .wh-active{cursor:default}
+
+
+/* ================================================================
+   Vaani — Theme Color Fixes
+   They override gold/yellow star and red danger colors to match
+   the app's purple theme.
+================================================================ */
+
+/* ── Save / Star button — Single Mode ───────────────────────────── */
+.ac-star {
+  border-color: rgba(124, 58, 237, 0.35) !important;
+  color: var(--text-secondary);
+}
+.ac-star:hover {
+  background: rgba(124, 58, 237, 0.12) !important;
+  border-color: rgba(124, 58, 237, 0.6) !important;
+  color: #a78bfa !important;
+}
+
+/* ── Save / Star button — History cards ─────────────────────────── */
+.hist-btn-star svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  margin-right: 3px;
+}
+
+/* ── Settings — warn buttons (Clear History, Clear Favs etc.) ───── */
+.stg-warn {
+  background: rgba(124, 58, 237, 0.08) !important;
+  border: 1px solid rgba(124, 58, 237, 0.3) !important;
+  color: #a78bfa !important;
+}
+.stg-warn:hover {
+  background: rgba(124, 58, 237, 0.18) !important;
+  border-color: rgba(124, 58, 237, 0.55) !important;
+  color: #c4b5fd !important;
+}
+
+/* ── Settings — danger button (Reset All App Data) ───────────────── */
+/* Kept as a distinct red so users know it's destructive,
+   but softened to match the dark theme */
+.stg-danger {
+  background: rgba(220, 38, 38, 0.08) !important;
+  border: 1px solid rgba(220, 38, 38, 0.3) !important;
+  color: #f87171 !important;
+}
+.stg-danger:hover {
+  background: rgba(220, 38, 38, 0.18) !important;
+  border-color: rgba(220, 38, 38, 0.55) !important;
+  color: #fca5a5 !important;
+}
+
+/* ── History card — Saved state star button ──────────────────────── */
+/* When a history item is already saved, the button turns purple */
+.hist-btn.hist-btn-star[style*="color: rgb(167, 139, 250)"],
+.hist-btn.hist-btn-star[style*="color:#a78bfa"] {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.45);
+}
