@@ -468,6 +468,23 @@
 </script>
 <script type="module" src="firebase.js?v=20250325a"></script>
 <script src="app.js?v=20250325a"></script>
+  <!-- ① Slang dictionary (no dependencies) -->
+  <script src="slangDictionary.js?v=2"></script>
+ 
+  <!-- ② Tone detector (depends on slangDictionary) -->
+  <script src="toneDetector.js?v=2"></script>
+ 
+  <!-- ③ Context translator (depends on slang + tone) -->
+  <script src="contextTranslator.js?v=2"></script>
+ 
+  <!-- ④ LLM enhancer stub (no dependencies) -->
+  <script src="llmEnhancer.js?v=2"></script>
+ 
+  <!-- ⑤ Main app (must come AFTER the helpers above) -->
+  <script src="app.js?v=20250325a"></script>
+ 
+  <!-- ⑥ Integration bridge — MUST be last, plain script, NO type="module" -->
+  <script src="translationIntegration.js?v=2"></script>
 <script>
   // ── FIX 2: SERVICE WORKER — network-first, auto-update on new version ──
   if ('serviceWorker' in navigator) {
