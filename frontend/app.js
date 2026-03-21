@@ -6,6 +6,14 @@
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
+// ── GLOBAL AUTH STATE (set by firebase.js via onAuthStateChanged) ─
+// VAANI_AUTH_READY: false until Firebase resolves for the first time
+// _vaaniCurrentUser: null = signed out, object = signed in
+window.VAANI_AUTH_READY  = false;
+window._vaaniCurrentUser = null;
+ 
+// Debug helpers — remove in production if desired
+console.log("[Vaani] App loaded. AUTH_READY:", window.VAANI_AUTH_READY);
 
 // ── GLOBAL AUTH STATE ─────────────────────────────────────────────
 // Set by firebase.js via onAuthStateChanged — never set directly here.
@@ -1273,8 +1281,10 @@ function deleteFavourite(i) {
 function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
-
-  // Auth not yet resolved — show neutral spinner to avoid sign-in flicker
+ 
+  // ── Auth not yet resolved → show a neutral loading state ─────
+  // This prevents the flash of "Sign in" on first load before
+  // Firebase's onAuthStateChanged has fired.
   if (!window.VAANI_AUTH_READY) {
     list.innerHTML = `
       <div class="empty-state">
@@ -1283,37 +1293,61 @@ function renderHistory() {
       </div>`;
     return;
   }
-
-  // Signed out
+ 
+  // ── Not signed in ────────────────────────────────────────────
   if (!window._vaaniCurrentUser) {
     list.innerHTML = `
       <div class="empty-state">
-        <div class="es-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/></svg>
+        </div>
         <p class="es-title">Sign in to view history</p>
         <p class="es-sub">Sign in to save and view your translation history across devices.</p>
-        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <button class="btn-primary"
+                style="margin-top:20px;padding:11px 28px;font-size:14px"
+                onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
           Sign In
         </button>
       </div>`;
     return;
   }
-
-  // Signed in — render from localStorage
+ 
+  // ── Signed in → render from localStorage ────────────────────
+  console.log("[Vaani] renderHistory for user:", window._vaaniCurrentUser.email);
+ 
   const hist = _readHistory();
   if (!hist.length) {
-    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        </div>
+        <p class="es-title">No history yet</p>
+        <p class="es-sub">Start translating to see your history here.</p>
+      </div>`;
     return;
   }
+ 
   list.innerHTML = hist.map((h, i) => `
     <div class="hist-card">
-      <div class="hist-langs">${LANG_NAMES[h.fromLang]||h.fromLang} → ${LANG_NAMES[h.toLang]||h.toLang}</div>
+      <div class="hist-langs">${LANG_NAMES[h.fromLang] || h.fromLang} → ${LANG_NAMES[h.toLang] || h.toLang}</div>
       <div class="hist-orig">${_escHtml(h.original)}</div>
       <div class="hist-trans">${_escHtml(h.translated)}</div>
       <div class="hist-actions">
-        <button class="hist-btn" onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
-        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
-        <button class="hist-btn" onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">Save</button>
+        <button class="hist-btn"
+          onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
+        <button class="hist-btn"
+          onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
+        <button class="hist-btn"
+          onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">Save</button>
         <button class="hist-btn del" onclick="deleteHistory(${i})">Delete</button>
       </div>
     </div>`).join("");
@@ -1322,8 +1356,8 @@ function renderHistory() {
 function renderFavourites() {
   const list = document.getElementById("favouritesList");
   if (!list) return;
-
-  // Auth not yet resolved — spinner to prevent sign-in flicker
+ 
+  // ── Auth not yet resolved → loading spinner ──────────────────
   if (!window.VAANI_AUTH_READY) {
     list.innerHTML = `
       <div class="empty-state">
@@ -1332,27 +1366,85 @@ function renderFavourites() {
       </div>`;
     return;
   }
-
-  // Signed out
+ 
+  // ── Not signed in → prompt ───────────────────────────────────
   if (!window._vaaniCurrentUser) {
     list.innerHTML = `
       <div class="empty-state">
-        <div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
         <p class="es-title">Sign in to view favourites</p>
         <p class="es-sub">Sign in to save and access your favourite translations.</p>
-        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <button class="btn-primary"
+                style="margin-top:20px;padding:11px 28px;font-size:14px"
+                onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
           Sign In
         </button>
       </div>`;
     return;
   }
-
-  // Signed in — render from localStorage
+ 
+  // ── Signed in → render from localStorage ────────────────────
+  console.log("[Vaani] renderFavourites for user:", window._vaaniCurrentUser.email);
+ 
   const favs = _readFavs();
-    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
+  if (!favs.length) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
+        <p class="es-title">No favourites yet</p>
+        <p class="es-sub">Tap the star after translating to save here.</p>
+      </div>`;
     return;
   }
+ 
+  list.innerHTML = "";
+  favs.forEach((f, i) => {
+    const card    = document.createElement("div"); card.className    = "hist-card fav-card";
+    const langs   = document.createElement("div"); langs.className   = "hist-langs";
+    langs.textContent = `${LANG_NAMES[f.fromLang] || f.fromLang} → ${LANG_NAMES[f.toLang] || f.toLang}`;
+    const orig    = document.createElement("div"); orig.className    = "hist-orig";  orig.textContent  = f.original;
+    const trans   = document.createElement("div"); trans.className   = "hist-trans"; trans.textContent = f.translated;
+    const actions = document.createElement("div"); actions.className = "hist-actions";
+ 
+    const playBtn = document.createElement("button");
+    playBtn.className = "hist-btn"; playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => playFavorite(f.translated, f.toLang));
+ 
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(f.translated)
+        .then(() => showToast("Copied!"))
+        .catch(() => showToast("Copy failed"));
+    });
+ 
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "hist-btn del"; removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => deleteFavourite(i));
+ 
+    actions.appendChild(playBtn);
+    actions.appendChild(copyBtn);
+    actions.appendChild(removeBtn);
+ 
+    card.appendChild(langs);
+    card.appendChild(orig);
+    card.appendChild(trans);
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+}
   list.innerHTML = "";
   favs.forEach((f, i) => {
     const card = document.createElement("div"); card.className = "hist-card fav-card";
@@ -1547,26 +1639,40 @@ if (typeof window.signOutUser === "undefined") {
   window.signOutUser = () => showToast("Sign-out coming soon");
 }
 
-// ── SINGLE SOURCE OF TRUTH: called by firebase.js onAuthStateChanged ──
-// Fires on every auth change (sign-in, sign-out, page load).
-// NEVER set _vaaniCurrentUser anywhere else.
-window._vaaniOnAuthChange = function(user) {
+// Called by firebase.js every time auth state changes.
+// This is the SINGLE place that syncs auth state into the app UI.
+window._vaaniOnAuthChange = function (user) {
   window._vaaniCurrentUser = user || null;
   window.VAANI_AUTH_READY  = true;
-
-  console.log("[Vaani] Auth state →",
-    user ? `signed in: ${user.email}` : "signed out",
-    "| AUTH_READY: true");
-
-  // Update menu avatar / sign-in card / sign-out button
+ 
+  console.log("[Vaani] _vaaniOnAuthChange →",
+    user ? `signed in: ${user.email}` : "signed out");
+ 
+  // ── Update the menu (avatar, sign-in card, sign-out button) ──
   _applyUserToUI(user);
-
-  // Persist session to localStorage for offline display
+ 
+  // ── Persist / clear session cache ────────────────────────────
   _persistUserSession(user);
-
-  // Re-render whichever auth-sensitive page is currently active
+ 
+  // ── Re-render whichever page is currently visible ─────────────
+  // Uses a small helper so we only touch pages that are active.
   _refreshAuthSensitivePages();
 };
+ 
+// Re-renders History and Favourites if they are the active page.
+// Also handles the case where the user was on one of these pages
+// when auth resolved (first load race condition).
+function _refreshAuthSensitivePages() {
+  const histPage = document.getElementById("pageHistory");
+  const favPage  = document.getElementById("pageFavourites");
+ 
+  if (histPage && histPage.classList.contains("active")) {
+    renderHistory();
+  }
+  if (favPage && favPage.classList.contains("active")) {
+    renderFavourites();
+  }
+}
 
 // Re-renders History and/or Favourites if they are the active page.
 function _refreshAuthSensitivePages() {
@@ -1580,23 +1686,29 @@ function _refreshAuthSensitivePages() {
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
 
-  // ── Auth is driven entirely by firebase.js / onAuthStateChanged ──
-  // We do NOT restore the session from localStorage here.
-  // Instead, render auth-sensitive pages immediately — they will show
-  // a loading spinner until window.VAANI_AUTH_READY becomes true.
-  // When firebase.js fires window._vaaniOnAuthChange(), the pages
-  // re-render automatically with the correct signed-in state.
+  // ── Auth state is owned by firebase.js / onAuthStateChanged ──
+  // We do NOT restore from localStorage here anymore — that caused
+  // the stale "signed in" flash before Firebase resolved, and
+  // conversely the "sign in" flash when Firebase hadn't fired yet.
+  //
+  // Instead: show a neutral loading state on auth-sensitive pages
+  // until window.VAANI_AUTH_READY becomes true (set by firebase.js).
+  //
+  // The menu UI will update automatically when firebase.js calls
+  // window._vaaniOnAuthChange() once onAuthStateChanged fires.
+  //
+  // For pages that are active right now, trigger an initial render
+  // which will show the loading spinner until auth resolves.
   _refreshAuthSensitivePages();
 
-  // Safety net: if Firebase never resolves (offline / blocked) within
-  // 5 s, default to signed-out so the user sees the sign-in prompt
-  // rather than a spinner forever.
+  // Safety net: if firebase.js never calls back within 5 s
+  // (e.g. offline, blocked), resolve auth as "signed out" so
+  // the user sees the sign-in prompt rather than a spinner forever.
   setTimeout(() => {
     if (!window.VAANI_AUTH_READY) {
-      console.warn("[Vaani] Auth timeout — defaulting to signed out");
+      console.warn("[Vaani] Auth resolution timeout — defaulting to signed out");
       window.VAANI_AUTH_READY  = true;
       window._vaaniCurrentUser = null;
-      _applyUserToUI(null);
       _refreshAuthSensitivePages();
     }
   }, 5000);
