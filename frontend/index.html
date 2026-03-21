@@ -16,8 +16,6 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20250325a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
-  <!-- in <head>, after permission-guide.css -->
-  <link rel="stylesheet" href="camera-ocr.css?v=1">
 </head>
 <body>
 
@@ -74,10 +72,6 @@
     <a class="menu-item" id="menuTravel"       onclick="navigateTo('Travel')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
       <span class="mi-label">Travel Helper</span><span class="mi-dot"></span>
-    </a>
-    <a class="menu-item" id="menuImage"        onclick="navigateTo('Image')">
-      <span class="mi-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>
-      <span class="mi-label">Image Translation</span><span class="mi-dot"></span>
     </a>
     <div class="menu-divider"></div>
     <a class="menu-item" id="menuHistory"      onclick="navigateTo('History')">
@@ -146,11 +140,6 @@
       <div class="feature-card" onclick="navigateTo('Travel')">
         <div class="fc-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
         <div class="fc-body"><div class="fc-title">Travel Helper</div><div class="fc-desc">Essential phrases for food, transport, hotels and emergencies</div></div>
-        <div class="fc-arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
-      </div>
-      <div class="feature-card" onclick="navigateTo('Image')">
-        <div class="fc-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
-        <div class="fc-body"><div class="fc-title">Image Translation</div><div class="fc-desc">Extract and translate text from any photo</div></div>
         <div class="fc-arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>
     </div>
@@ -222,8 +211,7 @@
 
   <!-- Text input -->
   <div id="textInput" class="text-section" style="display:none">
-    <textarea id="textInputArea" class="text-area"
-      placeholder="Type here" rows="4"></textarea>
+    <textarea id="textInputArea" class="text-area" placeholder="Type here" rows="4"></textarea>
     <button class="btn-primary btn-full" id="translateTextBtn" onclick="translateTypedText()">
       Translate <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
     </button>
@@ -336,100 +324,6 @@
   <div id="phrasesList" class="phrases-list"></div>
 </div>
 
-<!-- ══ IMAGE TRANSLATION ════════════════════════════════════════════ -->
-<div id="pageImage" class="page">
-  <div class="page-header">
-    <h2 class="page-title">Image Translation</h2>
-    <p class="page-sub">Upload a photo — crop, rotate, extract and translate the text inside</p>
-  </div>
-  <div class="glass-card">
-    <div class="lang-row">
-      <div class="lang-box"><label class="lang-label">Text Language in Image</label><select id="imgFromLang" class="lang-select"></select></div>
-      <div class="arrow-sep"><svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
-      <div class="lang-box"><label class="lang-label">Translate To</label><select id="imgToLang" class="lang-select"></select></div>
-    </div>
-  </div>
-
-  <div class="upload-zone" id="uploadArea" onclick="document.getElementById('imageInput').click()"
-       ondragover="event.preventDefault();this.classList.add('drag-over')"
-       ondragleave="this.classList.remove('drag-over')"
-       ondrop="handleDrop(event)">
-    <div class="upload-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
-    <p class="upload-title">Drop image here</p>
-    <p class="upload-sub">or tap to upload — JPG, PNG, WEBP</p>
-    <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
-  </div>
-
-  <div class="img-source-btns">
-    <button class="img-src-btn" onclick="document.getElementById('imageInput').click()">
-      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload Photo
-    </button>
-    <button class="img-src-btn img-src-camera" id="cameraSrcBtn">
-      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Take Photo
-    </button>
-    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
-  </div>
-
-  <div id="imgPreviewBox" class="img-preview" style="display:none">
-    <img id="imgPreview" src="" alt="Preview" title="Tap to view full screen" style="cursor:zoom-in">
-    <button class="change-btn" id="imgChangeBtn">
-      <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.43"/></svg>Change
-    </button>
-  </div>
-
-  <button class="btn-primary btn-full" id="imgTranslateBtn" onclick="translateImage()" style="display:none">
-    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Extract &amp; Translate
-  </button>
-  <p class="status-text" id="imgStatus"></p>
-
-  <div id="imgResults" style="display:none">
-    <div class="result-card">
-      <div class="rc-header">
-        <span class="rc-label">Text found in image</span>
-        <button class="sm-btn" onclick="copyText('imgExtractedTextEdit')" title="Copy extracted">
-          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-      </div>
-      <textarea
-        id="imgExtractedTextEdit"
-        class="text-area img-extracted-edit"
-        rows="5"
-        placeholder="Extracted text will appear here — you can edit before translating"
-        style="display:none"
-      ></textarea>
-      <button
-        id="imgConfirmTranslateBtn"
-        class="btn-primary btn-full"
-        onclick="confirmAndTranslate()"
-        style="display:none;margin-top:10px"
-      >
-        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-        Confirm &amp; Translate
-      </button>
-    </div>
-
-    <div class="result-card result-translated">
-      <div class="rc-header"><span class="rc-label">Translation</span>
-        <button class="sm-btn" onclick="copyText('imgTranslatedText')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-      </div>
-      <p class="rc-text rc-accent" id="imgTranslatedText" style="white-space:pre-wrap">—</p>
-      <div class="audio-timeline" id="audioTimelineImg" style="display:none">
-        <span class="tl-time" id="timelineCurrentImg">0:00</span>
-        <input type="range" id="timelineSeekImg" class="tl-seek" min="0" max="100" step="0.1" value="0" aria-label="Image audio seek bar">
-        <span class="tl-time" id="timelineTotalImg">0:00</span>
-      </div>
-      <div class="rc-actions">
-        <button class="ac-btn ac-primary" data-playpause="labeled" onclick="playImgAudio()">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
-        </button>
-        <button class="ac-btn" onclick="copyText('imgTranslatedText')">
-          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ══ HISTORY ══════════════════════════════════════════════════════ -->
 <div id="pageHistory" class="page">
   <div class="page-header"><h2 class="page-title">History</h2><p class="page-sub">Your recent translations</p></div>
@@ -454,30 +348,20 @@
 <!-- ══ TOAST ════════════════════════════════════════════════════════ -->
 <div id="toast" class="toast"></div>
 
-<!-- ══ SCRIPTS — CORRECT ORDER, NO DUPLICATES ══════════════════════ -->
-
-<!-- Step 1: Global config -->
+<!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
 <script>
   window.VAANI_VERSION    = "20250325a";
   window.VAANI_VISION_KEY = "";
 </script>
 
-<!-- Step 2: Enhancement helpers (plain scripts, load before app.js) -->
 <script src="slangDictionary.js?v=2"></script>
 <script src="toneDetector.js?v=2"></script>
 <script src="contextTranslator.js?v=2"></script>
 <script src="llmEnhancer.js?v=2"></script>
-
-<!-- Step 3: Main app (classic script — NOT type="module") -->
 <script src="app.js?v=20250325a"></script>
-
-<!-- Step 4: Integration bridge (MUST be after app.js, plain script) -->
 <script src="translationIntegration.js?v=2"></script>
-
-<!-- Step 5: Firebase (module is fine here — it doesn't affect onclick handlers) -->
 <script type="module" src="firebase.js?v=20250325a"></script>
 
-<!-- Step 6: Service worker + PWA install prompt (unchanged) -->
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
