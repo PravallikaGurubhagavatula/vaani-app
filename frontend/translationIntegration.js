@@ -1,166 +1,131 @@
-/**
- * Vaani — translationIntegration.js
- * ═══════════════════════════════════════════════════════════════════
- * Drop this file in the same directory as app.js.
- * It monkey-patches the translation pipeline non-destructively.
- *
- * HOW TO ACTIVATE  (add ONE line anywhere after app.js loads):
- *
- *     <script type="module" src="translationIntegration.js?v=1"></script>
- *
- * Add it in index.html AFTER the existing app.js <script> tag:
- *
- *     <script src="app.js?v=20250325a"></script>
- *     <script type="module" src="translationIntegration.js?v=1"></script>   ← ADD THIS
- *
- * That is the ONLY change needed to index.html.
- * ═══════════════════════════════════════════════════════════════════
- */
+/* ================================================================
+   Vaani — translationIntegration.js  (global build — no import/export)
+   Load AFTER app.js with a plain <script> tag (NOT type="module").
 
-import { enhanceTranslation,
-         enhanceTranslationDetailed } from "./contextTranslator.js";
-import { enhanceWithLLM,
-         warmupLLM }                  from "./llmEnhancer.js";
+   ⚠️  RULES:
+   - Does NOT modify window.translateText or any existing function
+   - Only ADDS window.finalTranslate
+   - All existing onclick handlers keep working unchanged
+   - Safe fallback if any dependency is missing
+================================================================ */
 
-// ── GLOBAL FLAGS ───────────────────────────────────────────────────
+(function() {
 
-/**
- * Set window.DEBUG_TRANSLATION = true in the browser console to enable
- * per-translation logging: tone, slang hits, rewrite used, final output.
- */
-window.DEBUG_TRANSLATION = window.DEBUG_TRANSLATION ?? false;
+  // ── Global feature flags ─────────────────────────────────────────
+  window.DEBUG_TRANSLATION       = window.DEBUG_TRANSLATION       || false;
+  window.USE_LLM                 = window.USE_LLM                 || false;
+  window.USE_ENHANCED_TRANSLATION = window.USE_ENHANCED_TRANSLATION !== undefined
+    ? window.USE_ENHANCED_TRANSLATION
+    : true;
 
-/**
- * Set window.USE_LLM = true to route final translations through the LLM
- * polisher defined in llmEnhancer.js.
- * Default: false (stub pass-through, zero latency).
- */
-window.USE_LLM = window.USE_LLM ?? false;
-
-// ── DEBUG LOGGER ───────────────────────────────────────────────────
-
-function _debugLog(label, original, sourceLang, detail, llmResult) {
-  if (!window.DEBUG_TRANSLATION) return;
-  console.groupCollapsed(`[Vaani ContextTranslator] "${original.slice(0, 40)}" (${sourceLang})`);
-  console.log("🎯 Tone detected :", detail.tone);
-  console.log("📖 Slang hits    :", detail.slangHits.length
-    ? detail.slangHits.map(h => `${h.slang} → ${h.meaning} (${h.tone})`).join(", ")
-    : "none");
-  console.log("✏️  Rewrite used  :", detail.rewriteUsed, detail.confidence ? `(confidence ${detail.confidence})` : "");
-  console.log("🔄 Raw machine   :", detail.translated);
-  console.log("✅ Context-enhanced:", detail.enhanced);
-  if (window.USE_LLM) {
-    console.log("🤖 LLM-polished  :", llmResult);
-  }
-  console.groupEnd();
-}
-
-// ── CORE WRAPPER ───────────────────────────────────────────────────
-
-/**
- * finalTranslate — wraps the existing translateText() from app.js.
- *
- * Pipeline:
- *   translateText()  →  enhanceTranslation()  →  enhanceWithLLM() [optional]
- *
- * Replaces window.finalTranslate if already defined.
- * app.js internal functions are NOT touched.
- *
- * @param {string} text        - Source text
- * @param {string} sourceLang  - Source language code
- * @param {string} targetLang  - Target language code
- * @returns {Promise<string>}
- */
-async function finalTranslate(text, sourceLang, targetLang) {
-  if (!text || !text.trim()) return "";
-
-  // ── Step 1: Existing machine translation (untouched) ────────────
-  let basic = "";
-  try {
-    // translateText is defined in app.js and available on the same scope
-    // because this module is loaded after app.js in the same page.
-    basic = await window._vaaniTranslate(text, sourceLang, targetLang);
-  } catch (err) {
-    console.warn("[Vaani] finalTranslate: machine translation failed:", err?.message);
-    return text;
+  // ── Debug logger ─────────────────────────────────────────────────
+  function _debugLog(original, sourceLang, detail, finalResult) {
+    if (!window.DEBUG_TRANSLATION) return;
+    try {
+      var label = String(original).slice(0, 40);
+      console.groupCollapsed("[Vaani ContextTranslator] \"" + label + "\" (" + sourceLang + ")");
+      console.log("🎯 Tone detected  :", detail.tone);
+      console.log("📖 Slang hits     :", detail.slangHits && detail.slangHits.length
+        ? detail.slangHits.map(function(h) { return h.slang + " → " + h.meaning + " (" + h.tone + ")"; }).join(", ")
+        : "none");
+      console.log("✏️  Rewrite used   :", detail.rewriteUsed, detail.confidence ? "(confidence " + detail.confidence + ")" : "");
+      console.log("🔄 Raw machine    :", detail.translated);
+      console.log("✅ Context-enhanced:", detail.enhanced);
+      if (window.USE_LLM) console.log("🤖 LLM-polished   :", finalResult);
+      console.groupEnd();
+    } catch (e) {}
   }
 
-  if (!basic || !basic.trim()) return text;
-
-  // ── Step 2: Context enhancement ─────────────────────────────────
-  let enhanced = basic;
-  let detail   = null;
-
-  try {
-    detail   = enhanceTranslationDetailed(text, basic, sourceLang);
-    enhanced = detail.enhanced || basic;
-  } catch (err) {
-    console.warn("[Vaani] finalTranslate: contextEnhancer failed:", err?.message);
-    enhanced = basic;
-  }
-
-  // ── Step 3: Optional LLM polish ─────────────────────────────────
-  let final = enhanced;
-  try {
-    if (window.USE_LLM === true) {
-      final = await enhanceWithLLM(enhanced, sourceLang, targetLang);
+  // ── Safe wrapper around existing translateText ────────────────────
+  // Reads translateText from window at call-time so it always picks up
+  // the real function even if app.js finishes loading after this file.
+  async function _machineTranslate(text, fromLang, toLang) {
+    // Try window.translateText (defined in app.js global scope)
+    if (typeof translateText === "function") {
+      return await translateText(text, fromLang, toLang);
     }
-  } catch (err) {
-    console.warn("[Vaani] finalTranslate: LLM enhancer failed:", err?.message);
-    final = enhanced;
+    if (typeof window.translateText === "function") {
+      return await window.translateText(text, fromLang, toLang);
+    }
+    // Last-resort direct API call if translateText is not yet available
+    try {
+      var API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
+      var r = await fetch(API + "/translate", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ text: text, from_lang: fromLang, to_lang: toLang }),
+        signal:  AbortSignal.timeout(22000),
+      });
+      if (!r.ok) return text;
+      var d = await r.json();
+      return (d.translated || "").trim() || text;
+    } catch (e) {
+      console.warn("[Vaani] _machineTranslate fallback failed:", e && e.message);
+      return text;
+    }
   }
 
-  // ── Step 4: Debug log ────────────────────────────────────────────
-  if (window.DEBUG_TRANSLATION && detail) {
-    _debugLog("finalTranslate", text, sourceLang, detail, final);
-  }
+  // ── finalTranslate — the enhanced pipeline ────────────────────────
+  window.finalTranslate = async function(text, fromLang, toLang) {
+    if (!text || !String(text).trim()) return "";
 
-  return final || basic || text;
-}
+    // Step 1: machine translation (existing, untouched)
+    var basic = "";
+    try {
+      basic = await _machineTranslate(text, fromLang, toLang);
+    } catch (e) {
+      console.warn("[Vaani] finalTranslate: machine translation failed:", e && e.message);
+      return text;
+    }
 
-// ── BRIDGE: expose finalTranslate + proxy _vaaniTranslate ──────────
-//
-// We expose translateText from app.js under a private key so finalTranslate
-// can call it without any modification to app.js.
-// This runs AFTER app.js has fully loaded (module scripts are deferred).
+    if (!basic || !String(basic).trim()) return text;
 
-(function installBridge() {
-  // Point _vaaniTranslate at the existing translateText from app.js.
-  // translateText is a module-scoped function in app.js but because app.js
-  // is loaded as a classic script it lands on the global closure —
-  // we expose it through the window bridge used in app.js call sites.
-  if (typeof translateText === "function") {
-    window._vaaniTranslate = translateText;
-  } else {
-    // Fallback: wrap fetch call directly in case of scope isolation
-    window._vaaniTranslate = async function(text, fromLang, toLang) {
-      const API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
-      try {
-        const r = await fetch(`${API}/translate`, {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ text, from_lang: fromLang, to_lang: toLang }),
-          signal:  AbortSignal.timeout(22000),
-        });
-        if (!r.ok) return text;
-        const d = await r.json();
-        return (d.translated || "").trim() || text;
-      } catch (_) {
-        return text;
+    // Short-circuit: if enhanced translation is disabled, return basic
+    if (!window.USE_ENHANCED_TRANSLATION) return basic;
+
+    // Step 2: context enhancement
+    var enhanced = basic;
+    var detail   = null;
+
+    try {
+      if (typeof window.enhanceTranslationDetailed === "function") {
+        detail   = window.enhanceTranslationDetailed(text, basic, fromLang);
+        enhanced = (detail && detail.enhanced) ? detail.enhanced : basic;
+      } else if (typeof window.enhanceTranslation === "function") {
+        enhanced = window.enhanceTranslation(text, basic, fromLang);
       }
-    };
-  }
+    } catch (e) {
+      console.warn("[Vaani] finalTranslate: contextEnhancer failed:", e && e.message);
+      enhanced = basic;
+    }
 
-  // Expose finalTranslate globally so future modules / console can use it
-  window.finalTranslate = finalTranslate;
+    // Step 3: optional LLM polish
+    var final = enhanced;
+    try {
+      if (window.USE_LLM === true && typeof window.enhanceWithLLM === "function") {
+        final = await window.enhanceWithLLM(enhanced, fromLang, toLang);
+      }
+    } catch (e) {
+      console.warn("[Vaani] finalTranslate: LLM enhancer failed:", e && e.message);
+      final = enhanced;
+    }
+
+    // Step 4: debug log
+    if (window.DEBUG_TRANSLATION && detail) _debugLog(text, fromLang, detail, final);
+
+    return final || basic || text;
+  };
 
   console.log(
-    "[Vaani] translationIntegration loaded.",
+    "[Vaani] translationIntegration ready.",
+    "| ENHANCED:", window.USE_ENHANCED_TRANSLATION,
     "| DEBUG:", window.DEBUG_TRANSLATION,
     "| LLM:", window.USE_LLM
   );
-})();
 
-// ── OPTIONAL: warm up LLM connection on load ──────────────────────
-// No-op unless window.USE_LLM === true
-warmupLLM().catch(() => {});
+  // Optional: warm up LLM (no-op in stub mode)
+  if (typeof window.warmupLLM === "function") {
+    window.warmupLLM().catch(function() {});
+  }
+
+})();
