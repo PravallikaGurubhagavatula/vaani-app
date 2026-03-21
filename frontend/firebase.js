@@ -1,61 +1,66 @@
 /* ================================================================
    Vaani — firebase.js
-   Auth fix: global AUTH_READY flag, onAuthStateChanged drives all UI.
-   
-   CONTRACT with app.js:
-     window.VAANI_AUTH_READY   — false until Firebase resolves (even if no user)
-     window._vaaniCurrentUser  — null | user object
-     window._vaaniOnAuthChange(user) — called by this file; app.js implements it
+
+   HOW TO FILL IN YOUR CONFIG:
+   1. Go to https://console.firebase.google.com
+   2. Select your project (or create one if you haven't)
+   3. Click the gear icon ⚙️  → Project Settings
+   4. Scroll down to "Your apps" → click your web app (</>)
+      (If no web app exists, click "Add app" → Web)
+   5. Copy the firebaseConfig object shown there
+   6. Paste the 6 values below, replacing "PASTE_YOUR_..." text
+
+   ALSO REQUIRED IN FIREBASE CONSOLE (one-time setup):
+   ✅ Authentication → Sign-in method → Google → Enable → Save
+   ✅ Authentication → Settings → Authorized domains → Add your domain
+      e.g.  vaani-app-ui0z.onrender.com  and  localhost
 ================================================================ */
 
-import { initializeApp }             from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { initializeApp }      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth,
          GoogleAuthProvider,
          signInWithPopup,
          signOut,
-         onAuthStateChanged }        from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+         onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-// ── Firebase config — replace with your real values ───────────────
+// ── STEP 1: PASTE YOUR FIREBASE CONFIG VALUES HERE ────────────────
+
 const firebaseConfig = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID",
+  apiKey:            "PASTE_YOUR_API_KEY_HERE",
+  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
+  appId:             "PASTE_YOUR_APP_ID_HERE",
 };
+
+// ── DO NOT EDIT BELOW THIS LINE ───────────────────────────────────
 
 const app      = initializeApp(firebaseConfig);
 const auth     = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// ── GLOBAL AUTH STATE ─────────────────────────────────────────────
-// These are the single source of truth for auth across the whole app.
-window.VAANI_AUTH_READY  = false;   // true once Firebase has resolved (login OR no-login)
-window._vaaniCurrentUser = null;    // null = signed out, object = signed in
+// Always show account picker so switching accounts is easy
+provider.setCustomParameters({ prompt: "select_account" });
 
-// ── CORE: onAuthStateChanged ──────────────────────────────────────
-// Fires once on page load (even if user is not signed in) and again
-// on every sign-in / sign-out event. This is the ONLY place that
-// sets auth state — no localStorage hacks, no currentUser snapshots.
+// ── onAuthStateChanged — the single source of truth for auth ──────
+// Fires automatically on every page load (even if signed out) and on
+// every sign-in / sign-out. This is what drives History & Favourites.
 
 onAuthStateChanged(auth, (user) => {
-  const wasReady = window.VAANI_AUTH_READY;
-
   window._vaaniCurrentUser = user || null;
   window.VAANI_AUTH_READY  = true;
 
-  console.log("[Vaani Auth] State resolved →",
-    user ? `signed in as ${user.email}` : "signed out",
-    "| AUTH_READY:", window.VAANI_AUTH_READY
+  console.log(
+    "[Vaani Auth]",
+    user ? `Signed in: ${user.email}` : "Signed out",
+    "| AUTH_READY: true"
   );
 
-  // Notify app.js. The callback is defined in app.js; guard in case
-  // firebase.js loads before app.js finishes executing.
+  // Call app.js handler — guard in case this fires before DOMContentLoaded
   if (typeof window._vaaniOnAuthChange === "function") {
     window._vaaniOnAuthChange(user || null);
   } else {
-    // app.js not ready yet — queue the call for after DOMContentLoaded
     window.addEventListener("DOMContentLoaded", () => {
       if (typeof window._vaaniOnAuthChange === "function") {
         window._vaaniOnAuthChange(user || null);
@@ -65,24 +70,48 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // ── SIGN IN ───────────────────────────────────────────────────────
+
 window.signInWithGoogle = async function () {
   try {
     await signInWithPopup(auth, provider);
-    // onAuthStateChanged above handles the rest — no manual UI update needed
+    // onAuthStateChanged above automatically updates all UI
   } catch (err) {
-    if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
-      console.error("[Vaani Auth] Sign-in error:", err.message);
-      if (typeof window.showToast === "function") window.showToast("Sign-in failed. Please try again.");
+    // Ignore user closing the popup — not an error
+    if (
+      err.code === "auth/popup-closed-by-user" ||
+      err.code === "auth/cancelled-popup-request"
+    ) return;
+
+    // Log full error so you can debug from browser console
+    console.error("[Vaani Auth] Sign-in error →", err.code, ":", err.message);
+
+    // Show specific toast message based on error type
+    if (typeof window.showToast === "function") {
+      if (err.code === "auth/unauthorized-domain") {
+        window.showToast("Add this domain to Firebase Console → Auth → Authorized Domains.");
+      } else if (err.code === "auth/operation-not-allowed") {
+        window.showToast("Enable Google sign-in in Firebase Console → Auth → Sign-in method.");
+      } else if (err.code === "auth/configuration-not-found" || err.code === "auth/invalid-api-key") {
+        window.showToast("Firebase config error — check your API key in firebase.js.");
+      } else if (err.code === "auth/popup-blocked") {
+        window.showToast("Popup blocked by browser. Please allow popups for this site.");
+      } else {
+        window.showToast("Sign-in failed (" + (err.code || "unknown") + "). Check console.");
+      }
     }
   }
 };
 
 // ── SIGN OUT ──────────────────────────────────────────────────────
+
 window.signOutUser = async function () {
   try {
     await signOut(auth);
-    // onAuthStateChanged fires with null → app.js cleans up
+    // onAuthStateChanged fires with null → app.js handles all cleanup
   } catch (err) {
-    console.error("[Vaani Auth] Sign-out error:", err.message);
+    console.error("[Vaani Auth] Sign-out error →", err.code, ":", err.message);
+    if (typeof window.showToast === "function") {
+      window.showToast("Sign-out failed. Please try again.");
+    }
   }
 };
