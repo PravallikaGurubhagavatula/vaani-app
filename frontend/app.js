@@ -13,10 +13,14 @@
    ALL PRIOR FEATURES RETAINED (translation, OCR, travel, etc.)
 ================================================================ */
 
+import { enhanceTranslation, enhanceTranslationDetailed } from './contextTranslator.js';
+
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
 const VISION_API_KEY = window.VAANI_VISION_KEY || "";
 const VISION_URL = "https://vision.googleapis.com/v1/images:annotate";
+
+
 
 // ── LANGUAGE CONFIG ────────────────────────────────────────────────
 const LANG_CONFIG = {
