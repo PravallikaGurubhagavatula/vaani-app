@@ -7,6 +7,13 @@
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
+// ── GLOBAL AUTH STATE ─────────────────────────────────────────────
+// Set by firebase.js via onAuthStateChanged — never set directly here.
+// VAANI_AUTH_READY: false until Firebase has resolved (login OR no-login).
+// _vaaniCurrentUser: null = signed out, object = signed in.
+window.VAANI_AUTH_READY  = false;
+window._vaaniCurrentUser = null;
+
 // ── LANGUAGE CONFIG ────────────────────────────────────────────────
 const LANG_CONFIG = {
   as:         { name:"Assamese",             nonLatin:true,  gtCode:"as",       ttsCode:"bn",  speechCode:"bn-IN" },
@@ -1266,8 +1273,19 @@ function deleteFavourite(i) {
 function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
-  const isLoggedIn = !!(window._vaaniCurrentUser);
-  if (!isLoggedIn) {
+
+  // Auth not yet resolved — show neutral spinner to avoid sign-in flicker
+  if (!window.VAANI_AUTH_READY) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="spinner" style="margin:0 auto 16px"></div>
+        <p class="es-sub">Loading…</p>
+      </div>`;
+    return;
+  }
+
+  // Signed out
+  if (!window._vaaniCurrentUser) {
     list.innerHTML = `
       <div class="empty-state">
         <div class="es-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
@@ -1280,6 +1298,8 @@ function renderHistory() {
       </div>`;
     return;
   }
+
+  // Signed in — render from localStorage
   const hist = _readHistory();
   if (!hist.length) {
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
@@ -1300,10 +1320,36 @@ function renderHistory() {
 }
 
 function renderFavourites() {
-  const favs = _readFavs();
   const list = document.getElementById("favouritesList");
   if (!list) return;
-  if (!favs.length) {
+
+  // Auth not yet resolved — spinner to prevent sign-in flicker
+  if (!window.VAANI_AUTH_READY) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="spinner" style="margin:0 auto 16px"></div>
+        <p class="es-sub">Loading…</p>
+      </div>`;
+    return;
+  }
+
+  // Signed out
+  if (!window._vaaniCurrentUser) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+        <p class="es-title">Sign in to view favourites</p>
+        <p class="es-sub">Sign in to save and access your favourite translations.</p>
+        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Sign In
+        </button>
+      </div>`;
+    return;
+  }
+
+  // Signed in — render from localStorage
+  const favs = _readFavs();
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
     return;
   }
@@ -1492,30 +1538,68 @@ pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
 // ── FIREBASE / AUTH STUBS ─────────────────────────────────────────
+// Stubs are only used if firebase.js fails to load.
+// firebase.js overrides signInWithGoogle and signOutUser via window.*.
 if (typeof window.signInWithGoogle === "undefined") {
   window.signInWithGoogle = () => showToast("Sign-in coming soon");
 }
 if (typeof window.signOutUser === "undefined") {
-  window.signOutUser = () => {
-    window._vaaniCurrentUser = null; _persistUserSession(null); _applyUserToUI(null);
-    showToast("Signed out");
-    const histPage = document.getElementById("pageHistory");
-    if (histPage && histPage.classList.contains("active")) renderHistory();
-  };
+  window.signOutUser = () => showToast("Sign-out coming soon");
 }
-window._vaaniCurrentUser = null;
+
+// ── SINGLE SOURCE OF TRUTH: called by firebase.js onAuthStateChanged ──
+// Fires on every auth change (sign-in, sign-out, page load).
+// NEVER set _vaaniCurrentUser anywhere else.
 window._vaaniOnAuthChange = function(user) {
-  window._vaaniCurrentUser = user || null; _persistUserSession(user); _applyUserToUI(user);
-  const histPage = document.getElementById("pageHistory");
-  if (histPage && histPage.classList.contains("active")) renderHistory();
+  window._vaaniCurrentUser = user || null;
+  window.VAANI_AUTH_READY  = true;
+
+  console.log("[Vaani] Auth state →",
+    user ? `signed in: ${user.email}` : "signed out",
+    "| AUTH_READY: true");
+
+  // Update menu avatar / sign-in card / sign-out button
+  _applyUserToUI(user);
+
+  // Persist session to localStorage for offline display
+  _persistUserSession(user);
+
+  // Re-render whichever auth-sensitive page is currently active
+  _refreshAuthSensitivePages();
 };
+
+// Re-renders History and/or Favourites if they are the active page.
+function _refreshAuthSensitivePages() {
+  const histPage = document.getElementById("pageHistory");
+  const favPage  = document.getElementById("pageFavourites");
+  if (histPage && histPage.classList.contains("active")) renderHistory();
+  if (favPage  && favPage.classList.contains("active"))  renderFavourites();
+}
 
 // ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
 
-  const restoredSession = _restoreUserSession();
-  if (restoredSession) { window._vaaniCurrentUser = restoredSession; _applyUserToUI(restoredSession); }
+  // ── Auth is driven entirely by firebase.js / onAuthStateChanged ──
+  // We do NOT restore the session from localStorage here.
+  // Instead, render auth-sensitive pages immediately — they will show
+  // a loading spinner until window.VAANI_AUTH_READY becomes true.
+  // When firebase.js fires window._vaaniOnAuthChange(), the pages
+  // re-render automatically with the correct signed-in state.
+  _refreshAuthSensitivePages();
+
+  // Safety net: if Firebase never resolves (offline / blocked) within
+  // 5 s, default to signed-out so the user sees the sign-in prompt
+  // rather than a spinner forever.
+  setTimeout(() => {
+    if (!window.VAANI_AUTH_READY) {
+      console.warn("[Vaani] Auth timeout — defaulting to signed out");
+      window.VAANI_AUTH_READY  = true;
+      window._vaaniCurrentUser = null;
+      _applyUserToUI(null);
+      _refreshAuthSensitivePages();
+    }
+  }, 5000);
 
   initLanguageSelects();
   _initTimelineControls("");
