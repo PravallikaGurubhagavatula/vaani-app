@@ -13,7 +13,6 @@
    ALL PRIOR FEATURES RETAINED (translation, OCR, travel, etc.)
 ================================================================ */
 
-import { enhanceTranslation, enhanceTranslationDetailed } from './contextTranslator.js';
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
