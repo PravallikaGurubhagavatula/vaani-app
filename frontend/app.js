@@ -1,17 +1,17 @@
 /* ================================================================
    Vaani — app.js  v5.6
-   Fixes: duplicate auth flags, duplicate renderFavourites body,
-          duplicate _refreshAuthSensitivePages, double renderHistory.
+   Fixes:
+   - renderFavourites() duplicate/broken closing brace removed
+   - _refreshAuthSensitivePages() duplicate definition removed
+   - All other features intact
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
 
-// ── GLOBAL AUTH STATE ─────────────────────────────────────────────
-// Set ONCE here. firebase.js sets these via window._vaaniOnAuthChange.
-// VAANI_AUTH_READY: false until Firebase resolves (login OR no-login).
-// _vaaniCurrentUser: null = signed out, object = signed in.
 window.VAANI_AUTH_READY  = false;
 window._vaaniCurrentUser = null;
+
+console.log("[Vaani] App loaded. AUTH_READY:", window.VAANI_AUTH_READY);
 
 // ── LANGUAGE CONFIG ────────────────────────────────────────────────
 const LANG_CONFIG = {
@@ -870,6 +870,8 @@ async function translateTypedText() {
   }
 }
 
+// ── LANGUAGE CHANGE ───────────────────────────────────────────────
+
 async function onLanguageChange() {
   const fromLang = document.getElementById("fromLang")?.value || "en";
   const toLang   = document.getElementById("toLang")?.value   || "en";
@@ -887,6 +889,8 @@ async function onLanguageChange() {
     if (translated) await autoPlay(translated, toLang, "", transEl);
   }
 }
+
+// ── SWAP ──────────────────────────────────────────────────────────
 
 async function swapLanguages() {
   const fromEl = document.getElementById("fromLang");
@@ -907,6 +911,8 @@ async function swapLanguages() {
   if (translated) { const transEl = document.getElementById("translatedText"); await autoPlay(translated, prevFrom, "", transEl); }
 }
 
+// ── INPUT MODE TOGGLE ─────────────────────────────────────────────
+
 function switchInputMode(mode) {
   const vSec = document.getElementById("voiceInput");
   const tSec = document.getElementById("textInput");
@@ -920,6 +926,8 @@ function switchInputMode(mode) {
     tBtn?.classList.add("active"); vBtn?.classList.remove("active");
   }
 }
+
+// ── PLAY BUTTONS ──────────────────────────────────────────────────
 
 async function playAudio() {
   if (_curAudio) { toggleAudio(); return; }
@@ -955,6 +963,8 @@ async function playPhrase(text, lang) {
   if (text) await autoPlay(text, lang);
 }
 
+// ── COPY ──────────────────────────────────────────────────────────
+
 function copyTranslation() {
   const t = document.getElementById("translatedText")?.textContent;
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
@@ -965,6 +975,8 @@ function copyText(id) {
   const t = el?.tagName === "TEXTAREA" ? el.value : el?.textContent;
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
 }
+
+// ── LANGUAGE SELECT HELPERS ───────────────────────────────────────
 
 function buildLangOptions(sel) {
   let html = "";
@@ -1109,7 +1121,8 @@ async function renderTravelPhrases() {
     const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
     _tCache[tk] = toText;
     const isCustomPhrase = !isBuiltin(phrase);
-    const card = document.createElement("div"); card.className = "phrase-card";
+    const card = document.createElement("div");
+    card.className = "phrase-card";
     const textsDiv = document.createElement("div"); textsDiv.className = "phrase-texts";
     const origDiv  = document.createElement("div"); origDiv.className  = "phrase-orig";  origDiv.textContent  = fromText;
     const transDiv = document.createElement("div"); transDiv.className = "phrase-trans"; transDiv.textContent = toText;
@@ -1260,42 +1273,70 @@ function renderHistory() {
   const list = document.getElementById("historyList");
   if (!list) return;
 
-  // Auth not yet resolved — show spinner (prevents sign-in flicker)
+  // Auth not yet resolved → show neutral loading state
   if (!window.VAANI_AUTH_READY) {
-    list.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto 16px"></div><p class="es-sub">Loading…</p></div>`;
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="spinner" style="margin:0 auto 16px"></div>
+        <p class="es-sub">Loading…</p>
+      </div>`;
     return;
   }
 
-  // Signed out
+  // Not signed in → prompt sign in
   if (!window._vaaniCurrentUser) {
     list.innerHTML = `
       <div class="empty-state">
-        <div class="es-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/></svg>
+        </div>
         <p class="es-title">Sign in to view history</p>
         <p class="es-sub">Sign in to save and view your translation history across devices.</p>
-        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <button class="btn-primary"
+                style="margin-top:20px;padding:11px 28px;font-size:14px"
+                onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
           Sign In
         </button>
       </div>`;
     return;
   }
 
-  // Signed in — render from localStorage
+  // Signed in → render from localStorage
+  console.log("[Vaani] renderHistory for user:", window._vaaniCurrentUser.email);
+
   const hist = _readHistory();
   if (!hist.length) {
-    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        </div>
+        <p class="es-title">No history yet</p>
+        <p class="es-sub">Start translating to see your history here.</p>
+      </div>`;
     return;
   }
+
   list.innerHTML = hist.map((h, i) => `
     <div class="hist-card">
-      <div class="hist-langs">${LANG_NAMES[h.fromLang]||h.fromLang} → ${LANG_NAMES[h.toLang]||h.toLang}</div>
+      <div class="hist-langs">${LANG_NAMES[h.fromLang] || h.fromLang} → ${LANG_NAMES[h.toLang] || h.toLang}</div>
       <div class="hist-orig">${_escHtml(h.original)}</div>
       <div class="hist-trans">${_escHtml(h.translated)}</div>
       <div class="hist-actions">
-        <button class="hist-btn" onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
-        <button class="hist-btn" onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
-        <button class="hist-btn" onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">Save</button>
+        <button class="hist-btn"
+          onclick="autoPlay(${JSON.stringify(h.translated)},${JSON.stringify(h.toLang)})">Play</button>
+        <button class="hist-btn"
+          onclick="navigator.clipboard.writeText(${JSON.stringify(h.translated)}).then(()=>showToast('Copied!'))">Copy</button>
+        <button class="hist-btn"
+          onclick="saveFavourite(${JSON.stringify(h.original)},${JSON.stringify(h.translated)},${JSON.stringify(h.fromLang)},${JSON.stringify(h.toLang)})">Save</button>
         <button class="hist-btn del" onclick="deleteHistory(${i})">Delete</button>
       </div>
     </div>`).join("");
@@ -1307,33 +1348,58 @@ function renderFavourites() {
   const list = document.getElementById("favouritesList");
   if (!list) return;
 
-  // Auth not yet resolved — spinner
+  // Auth not yet resolved → loading spinner
   if (!window.VAANI_AUTH_READY) {
-    list.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto 16px"></div><p class="es-sub">Loading…</p></div>`;
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="spinner" style="margin:0 auto 16px"></div>
+        <p class="es-sub">Loading…</p>
+      </div>`;
     return;
   }
 
-  // Signed out
+  // Not signed in → prompt
   if (!window._vaaniCurrentUser) {
     list.innerHTML = `
       <div class="empty-state">
-        <div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
         <p class="es-title">Sign in to view favourites</p>
         <p class="es-sub">Sign in to save and access your favourite translations.</p>
-        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <button class="btn-primary"
+                style="margin-top:20px;padding:11px 28px;font-size:14px"
+                onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
           Sign In
         </button>
       </div>`;
     return;
   }
 
-  // Signed in — render from localStorage
+  // Signed in → render from localStorage
+  console.log("[Vaani] renderFavourites for user:", window._vaaniCurrentUser.email);
+
   const favs = _readFavs();
   if (!favs.length) {
-    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating to save here.</p></div>`;
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon">
+          <svg viewBox="0 0 24 24">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
+        <p class="es-title">No favourites yet</p>
+        <p class="es-sub">Tap the star after translating to save here.</p>
+      </div>`;
     return;
   }
+
   list.innerHTML = "";
   favs.forEach((f, i) => {
     const card    = document.createElement("div"); card.className    = "hist-card fav-card";
@@ -1342,20 +1408,37 @@ function renderFavourites() {
     const orig    = document.createElement("div"); orig.className    = "hist-orig";  orig.textContent  = f.original;
     const trans   = document.createElement("div"); trans.className   = "hist-trans"; trans.textContent = f.translated;
     const actions = document.createElement("div"); actions.className = "hist-actions";
-    const playBtn = document.createElement("button"); playBtn.className = "hist-btn"; playBtn.textContent = "Play";
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "hist-btn"; playBtn.textContent = "Play";
     playBtn.addEventListener("click", () => playFavorite(f.translated, f.toLang));
-    const copyBtn = document.createElement("button"); copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
-    copyBtn.addEventListener("click", () => { navigator.clipboard.writeText(f.translated).then(() => showToast("Copied!")).catch(() => showToast("Copy failed")); });
-    const removeBtn = document.createElement("button"); removeBtn.className = "hist-btn del"; removeBtn.textContent = "Remove";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(f.translated)
+        .then(() => showToast("Copied!"))
+        .catch(() => showToast("Copy failed"));
+    });
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "hist-btn del"; removeBtn.textContent = "Remove";
     removeBtn.addEventListener("click", () => deleteFavourite(i));
-    actions.appendChild(playBtn); actions.appendChild(copyBtn); actions.appendChild(removeBtn);
-    card.appendChild(langs); card.appendChild(orig); card.appendChild(trans); card.appendChild(actions);
+
+    actions.appendChild(playBtn);
+    actions.appendChild(copyBtn);
+    actions.appendChild(removeBtn);
+
+    card.appendChild(langs);
+    card.appendChild(orig);
+    card.appendChild(trans);
+    card.appendChild(actions);
     list.appendChild(card);
   });
 }
 
 // ══════════════════════════════════════════════════════════════════
-// AUTH SESSION HELPERS
+// AUTH SESSION
 // ══════════════════════════════════════════════════════════════════
 
 const SESSION_KEY = "vaani_user_session";
@@ -1364,16 +1447,6 @@ function _persistUserSession(user) {
   if (user) {
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ uid: user.uid, displayName: user.displayName || "", email: user.email || "", photoURL: user.photoURL || "", ts: Date.now() })); } catch (_) {}
   } else { try { localStorage.removeItem(SESSION_KEY); } catch (_) {} }
-}
-
-function _restoreUserSession() {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const session = JSON.parse(raw);
-    if (Date.now() - (session.ts || 0) > 30 * 24 * 60 * 60 * 1000) { localStorage.removeItem(SESSION_KEY); return null; }
-    return session;
-  } catch (_) { return null; }
 }
 
 function _applyUserToUI(user) {
@@ -1409,8 +1482,14 @@ function renderSettingsPage() {
   container.innerHTML = `
     <div class="stg-section">
       <div class="stg-title">Language Preferences</div>
-      <div class="stg-row"><label class="stg-label">Default Source Language</label><select class="stg-select" onchange="stgSaveLang('fromLang',this.value)">${buildLangOptions(fromPref)}</select></div>
-      <div class="stg-row"><label class="stg-label">Default Target Language</label><select class="stg-select" onchange="stgSaveLang('toLang',this.value)">${buildLangOptions(toPref)}</select></div>
+      <div class="stg-row">
+        <label class="stg-label">Default Source Language</label>
+        <select class="stg-select" onchange="stgSaveLang('fromLang',this.value)">${buildLangOptions(fromPref)}</select>
+      </div>
+      <div class="stg-row">
+        <label class="stg-label">Default Target Language</label>
+        <select class="stg-select" onchange="stgSaveLang('toLang',this.value)">${buildLangOptions(toPref)}</select>
+      </div>
       ${dialectInfo}
     </div>
     <div class="stg-section">
@@ -1512,11 +1591,7 @@ function pingBackend() {
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
 
-// ══════════════════════════════════════════════════════════════════
-// AUTH — SINGLE SOURCE OF TRUTH
-// ══════════════════════════════════════════════════════════════════
-
-// Stubs — only active if firebase.js fails to load
+// ── FIREBASE / AUTH STUBS ─────────────────────────────────────────
 if (typeof window.signInWithGoogle === "undefined") {
   window.signInWithGoogle = () => showToast("Sign-in coming soon");
 }
@@ -1524,18 +1599,20 @@ if (typeof window.signOutUser === "undefined") {
   window.signOutUser = () => showToast("Sign-out coming soon");
 }
 
-// Called by firebase.js on every auth state change (sign-in, sign-out, page load).
-// This is the ONLY place that writes _vaaniCurrentUser and VAANI_AUTH_READY.
-window._vaaniOnAuthChange = function(user) {
+// Called by firebase.js every time auth state changes.
+window._vaaniOnAuthChange = function (user) {
   window._vaaniCurrentUser = user || null;
   window.VAANI_AUTH_READY  = true;
-  console.log("[Vaani] Auth →", user ? `signed in: ${user.email}` : "signed out");
+
+  console.log("[Vaani] _vaaniOnAuthChange →",
+    user ? `signed in: ${user.email}` : "signed out");
+
   _applyUserToUI(user);
   _persistUserSession(user);
   _refreshAuthSensitivePages();
 };
 
-// Re-renders History / Favourites if they are the currently active page.
+// Re-renders History and Favourites if they are the active page.
 function _refreshAuthSensitivePages() {
   const histPage = document.getElementById("pageHistory");
   const favPage  = document.getElementById("pageFavourites");
@@ -1543,12 +1620,21 @@ function _refreshAuthSensitivePages() {
   if (favPage  && favPage.classList.contains("active"))  renderFavourites();
 }
 
-// ══════════════════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════════════════
-
+// ── INIT ──────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
+
+  _refreshAuthSensitivePages();
+
+  // Safety net: if firebase.js never calls back within 5s, default to signed out
+  setTimeout(() => {
+    if (!window.VAANI_AUTH_READY) {
+      console.warn("[Vaani] Auth resolution timeout — defaulting to signed out");
+      window.VAANI_AUTH_READY  = true;
+      window._vaaniCurrentUser = null;
+      _refreshAuthSensitivePages();
+    }
+  }, 5000);
 
   initLanguageSelects();
   _initTimelineControls("");
@@ -1564,22 +1650,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
 
-  // Show spinner on auth-sensitive pages until Firebase resolves
-  _refreshAuthSensitivePages();
-
-  // Safety net: if Firebase never responds within 5 s (offline/blocked),
-  // default to signed-out so the user sees the sign-in prompt instead of
-  // a spinner forever.
-  setTimeout(() => {
-    if (!window.VAANI_AUTH_READY) {
-      console.warn("[Vaani] Auth timeout — defaulting to signed out");
-      window.VAANI_AUTH_READY  = true;
-      window._vaaniCurrentUser = null;
-      _applyUserToUI(null);
-      _refreshAuthSensitivePages();
-    }
-  }, 5000);
-
+  renderHistory();
   detectUserLocation();
 
   if (navigator.permissions) {
