@@ -1239,10 +1239,10 @@ function _writeFavs(arr) {
 }
 
 // ── STAR SVG HELPERS ─────────────────────────────────────────────
-// Returns SVG markup for the star — filled (gold) or outline (default).
+// Returns SVG markup for the star — filled (purple) or outline (default).
 function _starSvg(filled) {
   return filled
-    ? `<svg viewBox="0 0 24 24" style="fill:#eab308;stroke:#eab308"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
+    ? `<svg viewBox="0 0 24 24" style="fill:#7c3aed;stroke:#7c3aed"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
     : `<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
 }
 
@@ -1260,9 +1260,9 @@ function _updateSingleStarBtn() {
   if (!btn) return;
   const saved = _isSingleResultSaved();
   btn.innerHTML = _starSvg(saved) + (saved ? "Saved" : "Save");
-  btn.style.background    = saved ? "rgba(234,179,8,0.18)" : "";
-  btn.style.borderColor   = saved ? "rgba(234,179,8,0.5)"  : "";
-  btn.style.color         = saved ? "#eab308"               : "";
+  btn.style.background    = saved ? "rgba(124,58,237,0.18)" : "";
+  btn.style.borderColor   = saved ? "rgba(124,58,237,0.5)"  : "";
+  btn.style.color         = saved ? "#a78bfa"               : "";
 }
 
 function saveSingleToFavourites() {
@@ -1362,7 +1362,7 @@ function renderHistory() {
     saveBtn.className = "hist-btn hist-btn-star";
     const alreadySaved = _readFavs().some(f => f.translated === h.translated && f.toLang === h.toLang);
     saveBtn.innerHTML = _starSvg(alreadySaved) + (alreadySaved ? " Saved" : " Save");
-    if (alreadySaved) { saveBtn.style.color = "#eab308"; saveBtn.style.borderColor = "rgba(234,179,8,0.4)"; }
+    if (alreadySaved) { saveBtn.style.color = "#a78bfa"; saveBtn.style.borderColor = "rgba(124,58,237,0.4)"; }
     saveBtn.addEventListener("click", () => {
       const favs = _readFavs();
       const idx = favs.findIndex(f => f.translated === h.translated && f.toLang === h.toLang);
@@ -1375,7 +1375,7 @@ function renderHistory() {
         favs.unshift({ original: h.original, translated: h.translated, fromLang: h.fromLang, toLang: h.toLang, ts: Date.now() });
         _writeFavs(favs);
         saveBtn.innerHTML = _starSvg(true) + " Saved";
-        saveBtn.style.color = "#eab308"; saveBtn.style.borderColor = "rgba(234,179,8,0.4)";
+        saveBtn.style.color = "#a78bfa"; saveBtn.style.borderColor = "rgba(124,58,237,0.4)";
         showToast("Saved to favourites");
       }
       _updateSingleStarBtn();
