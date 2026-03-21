@@ -1,25 +1,11 @@
 /* ================================================================
-   Vaani — app.js  v5.4  ALL ISSUES FIXED
-
-   FIXES IN v5.4:
-   1.  VOICE DUPLICATION FIX  — interimResults=false, clean state,
-       single source of truth, no duplicate listeners
-   2.  PERMISSION SYSTEM      — simplified, no guides, simple retry
-   3.  FAKE APP SETTINGS REMOVED — browser-only flow, clear message
-   4.  PWA / CACHE STABILITY  — skipWaiting, clients.claim handled
-   5.  MOBILE STABILITY       — no multiple bindings, clean async
-   6.  CLEAN UX               — minimal, fast, no confusion
-
-   ALL PRIOR FEATURES RETAINED (translation, OCR, travel, etc.)
+   Vaani — app.js  v5.5
+   Image Translation feature removed (v5.5).
+   All other features intact: voice, text, conversation, travel,
+   history, favourites, settings, auth.
 ================================================================ */
 
-
 const API_URL = "https://vaani-app-ui0z.onrender.com";
-
-const VISION_API_KEY = window.VAANI_VISION_KEY || "";
-const VISION_URL = "https://vision.googleapis.com/v1/images:annotate";
-
-
 
 // ── LANGUAGE CONFIG ────────────────────────────────────────────────
 const LANG_CONFIG = {
@@ -117,8 +103,7 @@ async function detectUserLocation() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 2 & 3: SIMPLIFIED PERMISSION SYSTEM
-// No fake app settings, no long guides — simple retry flow
+// PERMISSION SYSTEM
 // ══════════════════════════════════════════════════════════════════
 
 const _permissionGranted = { audio: false, video: false };
@@ -128,20 +113,9 @@ function _isIOS() {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-function _isPWA() {
-  return window.matchMedia("(display-mode: standalone)").matches ||
-    window.navigator.standalone === true;
-}
-
-/**
- * FIX 2+3: Simple permission denied UI — no fake "App Settings" instructions.
- * Shows a minimal message + Retry button. Browser-only flow.
- */
 function _showPermissionDeniedGuide(type, onRetry) {
   document.getElementById("vaaniPermGuide")?.remove();
-
   const label = type === "audio" ? "Microphone" : "Camera";
-
   const modal = document.createElement("div");
   modal.id = "vaaniPermGuide";
   modal.innerHTML = `
@@ -153,21 +127,12 @@ function _showPermissionDeniedGuide(type, onRetry) {
         <button class="vpg-dismiss" id="vpgDismissBtn">Cancel</button>
       </div>
     </div>`;
-
   document.body.appendChild(modal);
   requestAnimationFrame(() => modal.classList.add("vpg-open"));
-
-  const close = () => {
-    modal.classList.remove("vpg-open");
-    setTimeout(() => modal.remove(), 300);
-  };
-
+  const close = () => { modal.classList.remove("vpg-open"); setTimeout(() => modal.remove(), 300); };
   modal.querySelector("#vpgDismissBtn").addEventListener("click", close);
   modal.querySelector(".vpg-backdrop").addEventListener("click", close);
-  modal.querySelector("#vpgRetryBtn").addEventListener("click", () => {
-    close();
-    setTimeout(() => onRetry(), 200);
-  });
+  modal.querySelector("#vpgRetryBtn").addEventListener("click", () => { close(); setTimeout(() => onRetry(), 200); });
 }
 
 async function _attemptGetUserMedia(type) {
@@ -189,13 +154,8 @@ async function _attemptGetUserMedia(type) {
 
 async function handlePermission(type, micStatusId) {
   if (_permissionGranted[type]) return true;
-
-  const setStatus = (msg) => {
-    if (micStatusId) setMicStatus(msg, micStatusId);
-  };
-
+  const setStatus = (msg) => { if (micStatusId) setMicStatus(msg, micStatusId); };
   const iosMode = _isIOS() || !navigator.permissions;
-
   if (!iosMode) {
     const permName = type === "audio" ? "microphone" : "camera";
     let state = "prompt";
@@ -203,62 +163,38 @@ async function handlePermission(type, micStatusId) {
       const result = await navigator.permissions.query({ name: permName });
       state = result.state;
       result.addEventListener("change", () => {
-        if (result.state === "granted") {
-          _permissionGranted[type] = true;
-          document.getElementById("vaaniPermGuide")?.remove();
-        } else if (result.state === "denied") {
-          _permissionGranted[type] = false;
-        }
+        if (result.state === "granted") { _permissionGranted[type] = true; document.getElementById("vaaniPermGuide")?.remove(); }
+        else if (result.state === "denied") { _permissionGranted[type] = false; }
       }, { once: true });
-    } catch (e) {
-      state = "prompt";
-    }
-
-    if (state === "granted") {
-      _permissionGranted[type] = true;
-      return true;
-    }
-
+    } catch (e) { state = "prompt"; }
+    if (state === "granted") { _permissionGranted[type] = true; return true; }
     if (state === "denied") {
       return new Promise((resolve) => {
         _showPermissionDeniedGuide(type, async () => {
           setStatus("Checking…");
           const ok = await _attemptGetUserMedia(type);
           resolve(ok);
-          if (!ok) {
-            _showPermissionDeniedGuide(type, async () => {
-              resolve(await _attemptGetUserMedia(type));
-            });
-          }
+          if (!ok) _showPermissionDeniedGuide(type, async () => { resolve(await _attemptGetUserMedia(type)); });
         });
       });
     }
   }
-
   setStatus("Requesting permission…");
   const ok = await _attemptGetUserMedia(type);
   if (ok) return true;
-
   if (!iosMode) {
     try {
       const permName = type === "audio" ? "microphone" : "camera";
       const result = await navigator.permissions.query({ name: permName });
       if (result.state === "denied") {
         return new Promise((resolve) => {
-          _showPermissionDeniedGuide(type, async () => {
-            setStatus("Checking…");
-            resolve(await _attemptGetUserMedia(type));
-          });
+          _showPermissionDeniedGuide(type, async () => { setStatus("Checking…"); resolve(await _attemptGetUserMedia(type)); });
         });
       }
     } catch (_) {}
   }
-
   return new Promise((resolve) => {
-    _showPermissionDeniedGuide(type, async () => {
-      setStatus("Checking…");
-      resolve(await _attemptGetUserMedia(type));
-    });
+    _showPermissionDeniedGuide(type, async () => { setStatus("Checking…"); resolve(await _attemptGetUserMedia(type)); });
   });
 }
 
@@ -267,7 +203,7 @@ async function requestMicPermission(micStatusId) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 9: TTS PRONUNCIATION — correct voice selection
+// TTS — VOICE SELECTION
 // ══════════════════════════════════════════════════════════════════
 
 const TTS_LOCALE_MAP = {
@@ -287,24 +223,14 @@ let _voiceList = [];
 function _loadVoices() {
   return new Promise(resolve => {
     const voices = speechSynthesis.getVoices();
-    if (voices.length > 0) {
-      _voiceList = voices;
-      _voicesLoaded = true;
-      resolve(voices);
-      return;
-    }
+    if (voices.length > 0) { _voiceList = voices; _voicesLoaded = true; resolve(voices); return; }
     const onVoicesChanged = () => {
-      _voiceList = speechSynthesis.getVoices();
-      _voicesLoaded = true;
+      _voiceList = speechSynthesis.getVoices(); _voicesLoaded = true;
       speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
       resolve(_voiceList);
     };
     speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
-    setTimeout(() => {
-      _voiceList = speechSynthesis.getVoices();
-      _voicesLoaded = true;
-      resolve(_voiceList);
-    }, 1500);
+    setTimeout(() => { _voiceList = speechSynthesis.getVoices(); _voicesLoaded = true; resolve(_voiceList); }, 1500);
   });
 }
 
@@ -326,15 +252,9 @@ function _speakBrowser(text, langCode) {
   const speak = async () => {
     const utterance = new SpeechSynthesisUtterance(text);
     const voice = await _getBestVoice(langCode);
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = voice.lang;
-    } else {
-      utterance.lang = TTS_LOCALE_MAP[langCode] || "en-US";
-    }
-    utterance.rate = 0.9;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
+    if (voice) { utterance.voice = voice; utterance.lang = voice.lang; }
+    else { utterance.lang = TTS_LOCALE_MAP[langCode] || "en-US"; }
+    utterance.rate = 0.9; utterance.pitch = 1.0; utterance.volume = 1.0;
     window.speechSynthesis.speak(utterance);
   };
   speak().catch(e => console.warn("[Vaani] Browser TTS:", e));
@@ -449,17 +369,15 @@ async function _pivotTranslate(text, fromLang, toLang) {
 // AUDIO SYSTEM
 // ══════════════════════════════════════════════════════════════════
 
-let _curAudio          = null;
-let _audioPlaying      = false;
+let _curAudio           = null;
+let _audioPlaying       = false;
 let _wordHighlightWords = [];
 let _wordHighlightEl    = null;
 let _wordHighlightRAF   = null;
-let _wordHighlightStart = 0;
 let _wordHighlightDur   = 0;
-let _activeTimelineSuffix = "";
-let _boundTimeUpdate = null;
-let _boundAudioEnded = null;
-let _timelineSeeking = false;
+let _boundTimeUpdate    = null;
+let _boundAudioEnded    = null;
+let _timelineSeeking    = false;
 
 function stopAudio() {
   _detachAudioListeners();
@@ -481,9 +399,7 @@ function _detachAudioListeners() {
 
 function pauseAudio() {
   if (_curAudio && _audioPlaying) {
-    _curAudio.pause();
-    _audioPlaying = false;
-    _updateAllPlayPauseBtns();
+    _curAudio.pause(); _audioPlaying = false; _updateAllPlayPauseBtns();
     if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
   }
 }
@@ -491,16 +407,14 @@ function pauseAudio() {
 function resumeAudio() {
   if (_curAudio && !_audioPlaying) {
     _curAudio.play().catch(e => console.warn("[Vaani] resume:", e.message));
-    _audioPlaying = true;
-    _updateAllPlayPauseBtns();
+    _audioPlaying = true; _updateAllPlayPauseBtns();
     if (_wordHighlightEl) _startWordHighlightLoop(_curAudio);
   }
 }
 
 function toggleAudio() {
   if (!_curAudio) return;
-  if (_audioPlaying) pauseAudio();
-  else resumeAudio();
+  if (_audioPlaying) pauseAudio(); else resumeAudio();
 }
 
 function _updateAllPlayPauseBtns() {
@@ -545,21 +459,16 @@ function _attachTimelineToAudio(audio, suffix) {
   if (!bar || !cur || !total) return;
   _detachAudioListeners();
   const setDur = () => { if (total && isFinite(audio.duration)) total.textContent = _fmtTime(audio.duration); };
-  if (audio.readyState >= 1) setDur();
-  else audio.addEventListener("loadedmetadata", setDur, { once: true });
+  if (audio.readyState >= 1) setDur(); else audio.addEventListener("loadedmetadata", setDur, { once: true });
   _boundTimeUpdate = () => {
     if (_timelineSeeking) return;
     const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-    bar.value = pct;
-    _updateSeekFill(bar, pct);
+    bar.value = pct; _updateSeekFill(bar, pct);
     cur.textContent = _fmtTime(audio.currentTime);
   };
   _boundAudioEnded = () => {
-    _audioPlaying = false;
-    _updateAllPlayPauseBtns();
-    clearWordHighlight();
-    bar.value = 0;
-    _updateSeekFill(bar, 0);
+    _audioPlaying = false; _updateAllPlayPauseBtns(); clearWordHighlight();
+    bar.value = 0; _updateSeekFill(bar, 0);
     if (cur) cur.textContent = "0:00";
   };
   audio.addEventListener("timeupdate", _boundTimeUpdate);
@@ -576,24 +485,16 @@ function _initTimelineControls(suffix) {
     _timelineSeeking = true;
     const pct = parseFloat(bar.value);
     _updateSeekFill(bar, pct);
-    if (cur && _curAudio && isFinite(_curAudio.duration)) {
-      cur.textContent = _fmtTime((_curAudio.duration * pct) / 100);
-    }
+    if (cur && _curAudio && isFinite(_curAudio.duration)) cur.textContent = _fmtTime((_curAudio.duration * pct) / 100);
   });
   bar.addEventListener("change", () => {
-    if (_curAudio && isFinite(_curAudio.duration)) {
-      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
-    }
+    if (_curAudio && isFinite(_curAudio.duration)) _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     _timelineSeeking = false;
-    if (_audioPlaying && _curAudio && _curAudio.paused) {
-      _curAudio.play().catch(e => console.warn("[Vaani] seek-resume:", e.message));
-    }
+    if (_audioPlaying && _curAudio && _curAudio.paused) _curAudio.play().catch(e => console.warn("[Vaani] seek-resume:", e.message));
   });
   bar.addEventListener("touchstart", () => { _timelineSeeking = true; }, { passive: true });
   bar.addEventListener("touchend", () => {
-    if (_curAudio && isFinite(_curAudio.duration)) {
-      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
-    }
+    if (_curAudio && isFinite(_curAudio.duration)) _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
     _timelineSeeking = false;
     if (_audioPlaying && _curAudio && _curAudio.paused) _curAudio.play().catch(() => {});
   });
@@ -625,14 +526,10 @@ function startWordHighlight(el, text, audio) {
   clearWordHighlight();
   const words = text.split(/\s+/).filter(w => w.length > 0);
   if (words.length === 0) return;
-  _wordHighlightEl    = el;
-  _wordHighlightWords = words;
-  _wordHighlightDur   = 0;
-  el.innerHTML = _buildHighlightHtml(text);
-  el.classList.add("wh-active");
+  _wordHighlightEl = el; _wordHighlightWords = words; _wordHighlightDur = 0;
+  el.innerHTML = _buildHighlightHtml(text); el.classList.add("wh-active");
   const setDur = () => { _wordHighlightDur = audio.duration || 0; };
-  if (audio.readyState >= 1) setDur();
-  else audio.addEventListener("loadedmetadata", setDur, { once: true });
+  if (audio.readyState >= 1) setDur(); else audio.addEventListener("loadedmetadata", setDur, { once: true });
   _startWordHighlightLoop(audio);
 }
 
@@ -649,10 +546,7 @@ function _startWordHighlightLoop(audio) {
     if (idx !== lastIdx) {
       el.querySelector(".wh-current")?.classList.remove("wh-current");
       const span = el.querySelector(`[data-wi="${idx}"]`);
-      if (span) {
-        span.classList.add("wh-current");
-        try { span.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch(_){}
-      }
+      if (span) { span.classList.add("wh-current"); try { span.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch(_){} }
       lastIdx = idx;
     }
     _wordHighlightRAF = requestAnimationFrame(tick);
@@ -664,13 +558,10 @@ function clearWordHighlight() {
   if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
   if (_wordHighlightEl) {
     _wordHighlightEl.classList.remove("wh-active");
-    if (_wordHighlightEl.querySelectorAll(".wh-word").length > 0) {
-      _wordHighlightEl.innerHTML = _wordHighlightEl.textContent;
-    }
+    if (_wordHighlightEl.querySelectorAll(".wh-word").length > 0) _wordHighlightEl.innerHTML = _wordHighlightEl.textContent;
     _wordHighlightEl = null;
   }
-  _wordHighlightWords = [];
-  _wordHighlightDur   = 0;
+  _wordHighlightWords = []; _wordHighlightDur = 0;
 }
 
 // ── AUDIO CORE ────────────────────────────────────────────────────
@@ -702,73 +593,44 @@ async function autoPlay(text, lang, timelineSuffix, highlightEl) {
   if (!text || text === "—" || text === "…" || !lang) return;
   stopAudio();
   const suffix = timelineSuffix || "";
-  showTimeline(suffix);
-  resetTimeline(suffix);
-  _activeTimelineSuffix = suffix;
+  showTimeline(suffix); resetTimeline(suffix);
   const audio = await speakText(text, lang);
   if (!audio) { _speakBrowser(text, lang); return; }
   _curAudio = audio;
   _attachTimelineToAudio(audio, suffix);
   if (highlightEl) {
-    audio.addEventListener("canplay", () => {
-      startWordHighlight(highlightEl, text, audio);
-    }, { once: true });
+    audio.addEventListener("canplay", () => { startWordHighlight(highlightEl, text, audio); }, { once: true });
   }
   audio.currentTime = 0;
   try {
-    await audio.play();
-    _audioPlaying = true;
-    _updateAllPlayPauseBtns();
+    await audio.play(); _audioPlaying = true; _updateAllPlayPauseBtns();
   } catch (e) {
     console.warn("[Vaani] play:", e.message);
-    _audioPlaying = false;
-    _updateAllPlayPauseBtns();
+    _audioPlaying = false; _updateAllPlayPauseBtns();
     _speakBrowser(text, lang);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// FIX 1 & 5: MIC STATE MACHINE — VOICE DUPLICATION FIXED
-//
-// ROOT CAUSE OF DUPLICATION:
-//   • interimResults=true caused onresult to fire repeatedly
-//   • Each fire appended to finalTranscript incorrectly
-//   • Multiple concatenated interim+final results overlapped
-//
-// FIX:
-//   • interimResults = false  → only fire on FINAL results
-//   • transcript = ONLY e.results[i][0].transcript for NEW finals
-//   • Single string variable, set once, never appended mid-stream
-//   • Clean reset on every new recording session
-//   • No duplicate listeners (rec object replaced each session)
+// MIC STATE MACHINE
 // ══════════════════════════════════════════════════════════════════
 
 const MicState = { IDLE:"idle", LISTENING:"listening", STOPPED:"stopped" };
 
-// FIX 5: Single shared mic state object per channel — prevents multiple bindings
 const _mic = {
   single: { state: MicState.IDLE, rec: null, last: "", transcript: "" },
   A:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
   B:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
 };
 
-// Silence timeout — stop after user stops speaking
-const SPEECH_SILENCE_TIMEOUT = 3500;
-
 function _killMic(ctx) {
   if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
   if (ctx.rec) {
-    // Remove all listeners before aborting to prevent ghost callbacks
-    ctx.rec.onresult  = null;
-    ctx.rec.onend     = null;
-    ctx.rec.onerror   = null;
-    ctx.rec.onspeechend = null;
+    ctx.rec.onresult = null; ctx.rec.onend = null; ctx.rec.onerror = null; ctx.rec.onspeechend = null;
     try { ctx.rec.abort(); } catch(_) {}
     ctx.rec = null;
   }
-  ctx.state      = MicState.IDLE;
-  ctx.last       = "";
-  ctx.transcript = "";
+  ctx.state = MicState.IDLE; ctx.last = ""; ctx.transcript = "";
 }
 
 function setMicStatus(msg, id = "micStatus") {
@@ -776,150 +638,72 @@ function setMicStatus(msg, id = "micStatus") {
   if (el) el.textContent = msg;
 }
 
-// ── SINGLE MODE MIC — FIX 1 APPLIED ─────────────────────────────
+// ── SINGLE MODE MIC ───────────────────────────────────────────────
 
 async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
-
   if (ctx.state === MicState.LISTENING) {
-    if (ctx.rec) {
-      ctx.rec.onend = null;
-      try { ctx.rec.stop(); } catch(_) {}
-    }
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak");
+    if (ctx.rec) { ctx.rec.onend = null; try { ctx.rec.stop(); } catch(_) {} }
+    _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak");
     return;
   }
-
-  _killMic(ctx);
-  clearSingleResults();
-
+  _killMic(ctx); clearSingleResults();
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-    showToast("Voice input not supported. Use Chrome on Android/Desktop.");
-    return;
+    showToast("Voice input not supported. Use Chrome on Android/Desktop."); return;
   }
-
   setMicStatus("Requesting microphone…");
   const permitted = await handlePermission("audio", "micStatus");
-  if (!permitted) {
-    setMicStatus("Tap to speak");
-    return;
-  }
-
+  if (!permitted) { setMicStatus("Tap to speak"); return; }
   const fromLang   = document.getElementById("fromLang")?.value || "en";
   const toLang     = document.getElementById("toLang")?.value   || "en";
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
-
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
-
-  rec.lang            = speechCode;
-  rec.continuous      = false;
-  rec.interimResults  = false;
-  rec.maxAlternatives = 1;
-
-  ctx.rec        = rec;
-  ctx.state      = MicState.LISTENING;
-  ctx.transcript = "";
-
-  micBtn?.classList.add("listening");
-  setMicStatus("Listening… (tap again to stop)");
-
+  rec.lang = speechCode; rec.continuous = false; rec.interimResults = false; rec.maxAlternatives = 1;
+  ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
+  micBtn?.classList.add("listening"); setMicStatus("Listening… (tap again to stop)");
   rec.onresult = (e) => {
     let finalText = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        finalText = e.results[i][0].transcript;
-      }
+      if (e.results[i].isFinal) finalText = e.results[i][0].transcript;
     }
-    if (finalText.trim()) {
-      ctx.transcript = finalText.trim();
-      showOriginalText(ctx.transcript);
-    }
+    if (finalText.trim()) { ctx.transcript = finalText.trim(); showOriginalText(ctx.transcript); }
   };
-
-  rec.onspeechend = () => {
-    if (ctx.rec && ctx.state === MicState.LISTENING) {
-      try { ctx.rec.stop(); } catch(_) {}
-    }
-  };
-
+  rec.onspeechend = () => { if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch(_) {} } };
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
     if (ctx.state === MicState.IDLE) return;
-
     const transcript = ctx.transcript.trim();
-
-    if (!transcript) {
-      ctx.state = MicState.IDLE;
-      ctx.rec   = null;
-      setMicStatus("No speech detected. Tap to try again.");
-      return;
-    }
-
-    if (transcript === ctx.last) {
-      ctx.state = MicState.IDLE;
-      ctx.rec   = null;
-      setMicStatus("Tap to speak again");
-      return;
-    }
-
-    ctx.last  = transcript;
-    ctx.state = MicState.STOPPED;
-    ctx.rec   = null;
-
-    showOriginalText(transcript);
-    setTranslating();
-    setMicStatus("Translating…");
-
+    if (!transcript) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("No speech detected. Tap to try again."); return; }
+    if (transcript === ctx.last) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak again"); return; }
+    ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
+    showOriginalText(transcript); setTranslating(); setMicStatus("Translating…");
     const translated = await window.finalTranslate(transcript, fromLang, toLang);
-    showFinalTranslation(transcript, translated);
-    setMicStatus("Tap to speak again");
-
+    showFinalTranslation(transcript, translated); setMicStatus("Tap to speak again");
     if (translated) {
       saveToHistory(transcript, translated, fromLang, toLang);
       const transEl = document.getElementById("translatedText");
       await autoPlay(translated, toLang, "", transEl);
     }
-
     ctx.state = MicState.IDLE;
   };
-
   rec.onerror = (e) => {
-    const prevState = ctx.state;
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    if (e.error === "no-speech") {
-      setMicStatus("No speech detected. Tap to try again.");
-    } else if (e.error === "not-allowed") {
-      _permissionGranted.audio = false;
-      setMicStatus("Microphone blocked.");
-      _showPermissionDeniedGuide("audio", async () => {
-        const ok = await _attemptGetUserMedia("audio");
-        if (ok) setMicStatus("Permission granted! Tap to speak.");
-      });
-    } else if (e.error === "aborted") {
-      if (prevState === MicState.LISTENING) setMicStatus("Tap to speak");
-    } else {
-      showToast("Mic error: " + e.error);
-      setMicStatus("Tap to speak");
+    const prevState = ctx.state; _killMic(ctx); micBtn?.classList.remove("listening");
+    if (e.error === "no-speech") { setMicStatus("No speech detected. Tap to try again."); }
+    else if (e.error === "not-allowed") {
+      _permissionGranted.audio = false; setMicStatus("Microphone blocked.");
+      _showPermissionDeniedGuide("audio", async () => { const ok = await _attemptGetUserMedia("audio"); if (ok) setMicStatus("Permission granted! Tap to speak."); });
     }
+    else if (e.error === "aborted") { if (prevState === MicState.LISTENING) setMicStatus("Tap to speak"); }
+    else { showToast("Mic error: " + e.error); setMicStatus("Tap to speak"); }
   };
-
-  try {
-    rec.start();
-  } catch (e) {
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak");
-    console.warn("[Vaani] rec.start:", e.message);
-  }
+  try { rec.start(); }
+  catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak"); console.warn("[Vaani] rec.start:", e.message); }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// CONVERSATION MODE — FIX 1 APPLIED
+// CONVERSATION MODE
 // ══════════════════════════════════════════════════════════════════
 
 const _convLastTranscript = { A: "", B: "" };
@@ -935,177 +719,86 @@ async function startConvListening(speaker) {
   const toSel    = speaker === "A" ? "convLangB" : "convLangA";
   const micBtnId = `micBtn${speaker}`;
   const statId   = `micStatus${speaker}`;
-
   const fromLang   = document.getElementById(fromSel)?.value || "en";
   const toLang     = document.getElementById(toSel)?.value   || "en";
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
   const micBtn     = document.getElementById(micBtnId);
-
-  // Toggle: stop if already listening
   if (ctx.state === MicState.LISTENING) {
-    if (ctx.rec) {
-      ctx.rec.onend = null;
-      try { ctx.rec.stop(); } catch(_) {}
-    }
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak", statId);
-    return;
+    if (ctx.rec) { ctx.rec.onend = null; try { ctx.rec.stop(); } catch(_) {} }
+    _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); return;
   }
-
-  // Kill other speaker's mic first
   _killMic(_mic[otherSpk]);
   document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
   setMicStatus("Tap to speak", `micStatus${otherSpk}`);
-
-  // Kill own mic cleanly
   _killMic(ctx);
-
-  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-    showToast("Voice not supported. Use Chrome."); return;
-  }
-
+  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) { showToast("Voice not supported. Use Chrome."); return; }
   setMicStatus("Requesting microphone…", statId);
   const permitted = await handlePermission("audio", statId);
-  if (!permitted) {
-    setMicStatus("Tap to speak", statId);
-    return;
-  }
-
+  if (!permitted) { setMicStatus("Tap to speak", statId); return; }
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
-
-  // ── FIX 1: Clean settings ───────────────────────────────────
-  rec.lang            = speechCode;
-  rec.continuous      = false;      // FIX: Single utterance
-  rec.interimResults  = false;      // FIX: Final only — no duplication
-  rec.maxAlternatives = 1;
-
-  ctx.rec        = rec;
-  ctx.state      = MicState.LISTENING;
-  ctx.transcript = "";              // FIX: Reset every session
-
-  micBtn?.classList.add("listening");
-  setMicStatus("Listening… (tap again to stop)", statId);
-
+  rec.lang = speechCode; rec.continuous = false; rec.interimResults = false; rec.maxAlternatives = 1;
+  ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
+  micBtn?.classList.add("listening"); setMicStatus("Listening… (tap again to stop)", statId);
   const origEl  = document.getElementById(`originalText${speaker}`);
   const transEl = document.getElementById(`translatedText${speaker}`);
   const playBtn = document.getElementById(`playBtn${speaker}`);
-
-  // ── FIX 1: Clean onresult ───────────────────────────────────
   rec.onresult = (e) => {
     if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-
     let finalText = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        finalText += e.results[i][0].transcript;
-      }
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
     }
-
-    if (finalText.trim()) {
-      ctx.transcript = finalText.trim(); // FIX: SET, not append
-      if (origEl) origEl.textContent = ctx.transcript;
-    }
+    if (finalText.trim()) { ctx.transcript = finalText.trim(); if (origEl) origEl.textContent = ctx.transcript; }
   };
-
-  rec.onspeechend = () => {
-    if (ctx.rec && ctx.state === MicState.LISTENING) {
-      try { ctx.rec.stop(); } catch(_) {}
-    }
-  };
-
+  rec.onspeechend = () => { if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch(_) {} } };
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
     if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
-
     if (ctx.state === MicState.IDLE) return;
-
     const transcript = ctx.transcript.trim();
-
-    if (!transcript) {
-      ctx.state = MicState.IDLE;
-      ctx.rec   = null;
-      setMicStatus("Tap to speak", statId);
-      return;
-    }
-
-    if (transcript === ctx.last) {
-      ctx.state = MicState.IDLE;
-      ctx.rec   = null;
-      setMicStatus("Tap to speak again", statId);
-      return;
-    }
-
-    ctx.last  = transcript;
-    ctx.state = MicState.STOPPED;
-    ctx.rec   = null;
-
+    if (!transcript) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak", statId); return; }
+    if (transcript === ctx.last) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak again", statId); return; }
+    ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
     setMicStatus("Translating…", statId);
     if (transEl) transEl.textContent = "…";
-
     _convLastTranscript[speaker] = transcript;
     _convLastFromLang[speaker]   = fromLang;
     _convLastToLang[speaker]     = toLang;
-
     const translated = await window.finalTranslate(transcript, fromLang, toLang);
     if (transEl) transEl.textContent = translated || "—";
     if (playBtn) playBtn.style.display = translated ? "flex" : "none";
     setMicStatus("Tap to speak again", statId);
-
     if (translated) await autoPlay(translated, toLang, "", transEl);
     ctx.state = MicState.IDLE;
   };
-
   rec.onerror = (e) => {
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak", statId);
+    _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId);
     if (e.error === "not-allowed") {
       _permissionGranted.audio = false;
-      _showPermissionDeniedGuide("audio", async () => {
-        const ok = await _attemptGetUserMedia("audio");
-        if (ok) setMicStatus("Permission granted! Tap to speak.", statId);
-      });
-    } else if (e.error !== "aborted" && e.error !== "no-speech") {
-      showToast("Mic: " + e.error);
-    } else if (e.error === "no-speech") {
-      setMicStatus("No speech detected. Tap to try again.", statId);
-    }
+      _showPermissionDeniedGuide("audio", async () => { const ok = await _attemptGetUserMedia("audio"); if (ok) setMicStatus("Permission granted! Tap to speak.", statId); });
+    } else if (e.error !== "aborted" && e.error !== "no-speech") { showToast("Mic: " + e.error); }
+    else if (e.error === "no-speech") { setMicStatus("No speech detected. Tap to try again.", statId); }
   };
-
   try { rec.start(); }
-  catch (e) {
-    _killMic(ctx);
-    micBtn?.classList.remove("listening");
-    setMicStatus("Tap to speak", statId);
-    console.warn("[Vaani] conv rec.start:", e.message);
-  }
+  catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak", statId); console.warn("[Vaani] conv rec.start:", e.message); }
 }
 
-// FIX 10: Reactive re-translation on conv language change
 async function onConvLangChange(speaker) {
   const selectId = `convLang${speaker}`;
   const newLang  = document.getElementById(selectId)?.value || "en";
   localStorage.setItem(`vaani_lang_${selectId}`, newLang);
-
   const sourceSpeak = speaker === "B" ? "A" : "B";
   const transcript  = _convLastTranscript[sourceSpeak];
   const origFrom    = _convLastFromLang[sourceSpeak];
-
   if (!transcript || !origFrom) return;
   if (_convLastToLang[sourceSpeak] === newLang) return;
-
   if (sourceSpeak === "A" && _convTranslatingA) return;
   if (sourceSpeak === "B" && _convTranslatingB) return;
-
-  if (sourceSpeak === "A") _convTranslatingA = true;
-  else                     _convTranslatingB = true;
-
+  if (sourceSpeak === "A") _convTranslatingA = true; else _convTranslatingB = true;
   const transEl = document.getElementById(`translatedText${sourceSpeak}`);
   const playBtn = document.getElementById(`playBtn${sourceSpeak}`);
   if (transEl) transEl.textContent = "…";
-
   try {
     const translated = await window.finalTranslate(transcript, origFrom, newLang);
     if (transEl) transEl.textContent = translated || "—";
@@ -1113,8 +806,7 @@ async function onConvLangChange(speaker) {
     _convLastToLang[sourceSpeak] = newLang;
     if (translated) await autoPlay(translated, newLang, "", transEl);
   } finally {
-    if (sourceSpeak === "A") _convTranslatingA = false;
-    else                     _convTranslatingB = false;
+    if (sourceSpeak === "A") _convTranslatingA = false; else _convTranslatingB = false;
   }
 }
 
@@ -1126,9 +818,7 @@ function clearSingleResults() {
   const o = document.getElementById("originalText");
   const t = document.getElementById("translatedText");
   const a = document.getElementById("actionBtns");
-  if (o) o.textContent = "—";
-  if (t) t.textContent = "—";
-  if (a) a.style.display = "none";
+  if (o) o.textContent = "—"; if (t) t.textContent = "—"; if (a) a.style.display = "none";
   resetTimeline("");
 }
 
@@ -1142,14 +832,13 @@ function showOriginalText(text) {
 function setTranslating() {
   const t = document.getElementById("translatedText");
   const a = document.getElementById("actionBtns");
-  if (t) t.textContent  = "…";
-  if (a) a.style.display = "none";
+  if (t) t.textContent = "…"; if (a) a.style.display = "none";
 }
 
 function showFinalTranslation(original, translated) {
   const t = document.getElementById("translatedText");
   const a = document.getElementById("actionBtns");
-  if (t) t.textContent  = translated || "—";
+  if (t) t.textContent = translated || "—";
   if (a) a.style.display = translated ? "flex" : "none";
   showTimeline("");
 }
@@ -1164,8 +853,7 @@ async function translateTypedText() {
   const toLang   = document.getElementById("toLang")?.value   || "en";
   const btn = document.getElementById("translateTextBtn");
   if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
-  showOriginalText(raw);
-  setTranslating();
+  showOriginalText(raw); setTranslating();
   const translated = await window.finalTranslate(raw, fromLang, toLang);
   showFinalTranslation(raw, translated);
   if (btn) { btn.disabled = false; btn.textContent = "Translate"; }
@@ -1185,14 +873,13 @@ async function onLanguageChange() {
   localStorage.setItem("vaani_lang_toLang",   toLang);
   const transEl = document.getElementById("translatedText");
   const actEl   = document.getElementById("actionBtns");
-  if (transEl) transEl.textContent  = "—";
-  if (actEl)   actEl.style.display  = "none";
+  if (transEl) transEl.textContent = "—"; if (actEl) actEl.style.display = "none";
   const origText = (document.getElementById("originalText")?.textContent || "").trim();
   if (origText && origText !== "—" && origText !== "…") {
     if (transEl) transEl.textContent = "…";
     const translated = await window.finalTranslate(origText, fromLang, toLang);
-    if (transEl) transEl.textContent  = translated || "—";
-    if (actEl)   actEl.style.display  = translated ? "flex" : "none";
+    if (transEl) transEl.textContent = translated || "—";
+    if (actEl) actEl.style.display = translated ? "flex" : "none";
     if (translated) await autoPlay(translated, toLang, "", transEl);
   }
 }
@@ -1207,20 +894,15 @@ async function swapLanguages() {
   const prevTo    = toEl.value;
   const origText  = (document.getElementById("originalText")?.textContent  || "").trim();
   const transText = (document.getElementById("translatedText")?.textContent || "").trim();
-  fromEl.value = prevTo;
-  toEl.value   = prevFrom;
+  fromEl.value = prevTo; toEl.value = prevFrom;
   localStorage.setItem("vaani_lang_fromLang", prevTo);
   localStorage.setItem("vaani_lang_toLang",   prevFrom);
   const newSource = (transText && transText !== "—" && transText !== "…") ? transText : origText;
   if (!newSource || newSource === "—") return;
-  showOriginalText(newSource);
-  setTranslating();
+  showOriginalText(newSource); setTranslating();
   const translated = await window.finalTranslate(newSource, prevTo, prevFrom);
   showFinalTranslation(newSource, translated);
-  if (translated) {
-    const transEl = document.getElementById("translatedText");
-    await autoPlay(translated, prevFrom, "", transEl);
-  }
+  if (translated) { const transEl = document.getElementById("translatedText"); await autoPlay(translated, prevFrom, "", transEl); }
 }
 
 // ── INPUT MODE TOGGLE ─────────────────────────────────────────────
@@ -1231,17 +913,15 @@ function switchInputMode(mode) {
   const vBtn = document.getElementById("voiceModeBtn");
   const tBtn = document.getElementById("textModeBtn");
   if (mode === "voice") {
-    if (vSec) vSec.style.display = "block";
-    if (tSec) tSec.style.display = "none";
+    if (vSec) vSec.style.display = "block"; if (tSec) tSec.style.display = "none";
     vBtn?.classList.add("active"); tBtn?.classList.remove("active");
   } else {
-    if (vSec) vSec.style.display = "none";
-    if (tSec) tSec.style.display = "block";
+    if (vSec) vSec.style.display = "none"; if (tSec) tSec.style.display = "block";
     tBtn?.classList.add("active"); vBtn?.classList.remove("active");
   }
 }
 
-// ── PLAY BUTTONS ─────────────────────────────────────────────────
+// ── PLAY BUTTONS ──────────────────────────────────────────────────
 
 async function playAudio() {
   if (_curAudio) { toggleAudio(); return; }
@@ -1250,20 +930,13 @@ async function playAudio() {
   const el = document.getElementById("translatedText");
   if (t && t !== "—" && t !== "…") await autoPlay(t, l, "", el);
 }
-// ── FAVORITES PLAY ─────────────────────────────────────────
 
 async function playFavorite(text, lang) {
   if (!text || text === "—") return;
-
-  // If already playing → toggle
-  if (_curAudio) {
-    toggleAudio();
-    return;
-  }
-
-  // Safe playback
+  if (_curAudio) { toggleAudio(); return; }
   await autoPlay(text, lang);
 }
+
 async function playAudioA() {
   if (_curAudio) { toggleAudio(); return; }
   const t  = document.getElementById("translatedTextA")?.textContent;
@@ -1271,6 +944,7 @@ async function playAudioA() {
   const el = document.getElementById("translatedTextA");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
+
 async function playAudioB() {
   if (_curAudio) { toggleAudio(); return; }
   const t  = document.getElementById("translatedTextB")?.textContent;
@@ -1278,13 +952,7 @@ async function playAudioB() {
   const el = document.getElementById("translatedTextB");
   if (t && t !== "—") await autoPlay(t, l, "", el);
 }
-async function playImgAudio() {
-  if (_curAudio) { toggleAudio(); return; }
-  const t  = document.getElementById("imgTranslatedText")?.textContent;
-  const l  = document.getElementById("imgToLang")?.value;
-  const el = document.getElementById("imgTranslatedText");
-  if (t && t !== "—") await autoPlay(t, l, "Img", el);
-}
+
 async function playPhrase(text, lang) {
   if (text) await autoPlay(text, lang);
 }
@@ -1295,6 +963,7 @@ function copyTranslation() {
   const t = document.getElementById("translatedText")?.textContent;
   if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
 }
+
 function copyText(id) {
   const el = document.getElementById(id);
   const t = el?.tagName === "TEXTAREA" ? el.value : el?.textContent;
@@ -1318,7 +987,6 @@ function initLanguageSelects() {
   const defaults = {
     fromLang:"te", toLang:"ta",
     travelFromLang:"te", travelToLang:"hi",
-    imgFromLang:"te", imgToLang:"en",
     convLangA:"te", convLangB:"ta"
   };
   Object.entries(defaults).forEach(([id, def]) => {
@@ -1333,7 +1001,7 @@ function initLanguageSelects() {
   document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
   document.getElementById("convLangA")?.addEventListener("change", () => onConvLangChange("A"));
   document.getElementById("convLangB")?.addEventListener("change", () => onConvLangChange("B"));
-  ["travelFromLang","travelToLang","imgFromLang","imgToLang"].forEach(id => {
+  ["travelFromLang","travelToLang"].forEach(id => {
     document.getElementById(id)?.addEventListener("change", () => {
       localStorage.setItem(`vaani_lang_${id}`, document.getElementById(id).value);
     });
@@ -1390,9 +1058,7 @@ const TRAVEL_PHRASES_DEFAULT = {
 function _getTravelCustom() {
   try { return JSON.parse(localStorage.getItem("vaani_travel_custom") || "{}"); } catch(_){ return {}; }
 }
-function _saveTravelCustom(data) {
-  localStorage.setItem("vaani_travel_custom", JSON.stringify(data));
-}
+function _saveTravelCustom(data) { localStorage.setItem("vaani_travel_custom", JSON.stringify(data)); }
 function _getTravelCategories() {
   const custom = _getTravelCustom();
   const defaultKeys = Object.keys(TRAVEL_PHRASES_DEFAULT);
@@ -1420,16 +1086,12 @@ function _renderCatTabs() {
 }
 
 function selectCategory(cat, btn) {
-  _cat = cat;
-  _renderCatTabs();
-  clearTimeout(_tTimer);
-  _tTimer = setTimeout(renderTravelPhrases, 150);
+  _cat = cat; _renderCatTabs();
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 150);
 }
 
 function loadTravelPhrases() {
-  _renderCatTabs();
-  clearTimeout(_tTimer);
-  _tTimer = setTimeout(renderTravelPhrases, 200);
+  _renderCatTabs(); clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 200);
 }
 
 async function renderTravelPhrases() {
@@ -1441,9 +1103,7 @@ async function renderTravelPhrases() {
   if (!list) return;
   list.innerHTML = "";
   if (loading) loading.style.display = "flex";
-
   const isBuiltin = (phrase) => (TRAVEL_PHRASES_DEFAULT[_cat] || []).some(p => p.en === phrase.en);
-
   for (const phrase of phrases) {
     const fk = `${phrase.en}|${fromLang}`;
     const tk = `${phrase.en}|${toLang}`;
@@ -1454,69 +1114,39 @@ async function renderTravelPhrases() {
     }
     const toText = _tCache[tk] || await translateText(phrase.en, "en", toLang);
     _tCache[tk] = toText;
-
     const isCustomPhrase = !isBuiltin(phrase);
     const card = document.createElement("div");
     card.className = "phrase-card";
-
-    const textsDiv = document.createElement("div");
-    textsDiv.className = "phrase-texts";
-    const origDiv = document.createElement("div");
-    origDiv.className = "phrase-orig";
-    origDiv.textContent = fromText;
-    const transDiv = document.createElement("div");
-    transDiv.className = "phrase-trans";
-    transDiv.textContent = toText;
-    const enDiv = document.createElement("div");
-    enDiv.className = "phrase-en";
-    enDiv.textContent = phrase.en;
-    textsDiv.appendChild(origDiv);
-    textsDiv.appendChild(transDiv);
-    textsDiv.appendChild(enDiv);
-
-    const btnsDiv = document.createElement("div");
-    btnsDiv.className = "phrase-btns";
-
+    const textsDiv = document.createElement("div"); textsDiv.className = "phrase-texts";
+    const origDiv  = document.createElement("div"); origDiv.className  = "phrase-orig";  origDiv.textContent  = fromText;
+    const transDiv = document.createElement("div"); transDiv.className = "phrase-trans"; transDiv.textContent = toText;
+    const enDiv    = document.createElement("div"); enDiv.className    = "phrase-en";    enDiv.textContent    = phrase.en;
+    textsDiv.appendChild(origDiv); textsDiv.appendChild(transDiv); textsDiv.appendChild(enDiv);
+    const btnsDiv = document.createElement("div"); btnsDiv.className = "phrase-btns";
     const playBtn = document.createElement("button");
-    playBtn.className = "phrase-btn phrase-play";
-    playBtn.textContent = "Play";
-    playBtn.dataset.text = toText;
-    playBtn.dataset.lang = toLang;
+    playBtn.className = "phrase-btn phrase-play"; playBtn.textContent = "Play";
+    playBtn.dataset.text = toText; playBtn.dataset.lang = toLang;
     playBtn.addEventListener("click", function() { autoPlay(this.dataset.text, this.dataset.lang); });
-
     const copyBtn = document.createElement("button");
-    copyBtn.className = "phrase-btn phrase-copy";
-    copyBtn.textContent = "Copy";
+    copyBtn.className = "phrase-btn phrase-copy"; copyBtn.textContent = "Copy";
     copyBtn.dataset.text = toText;
-    copyBtn.addEventListener("click", function() {
-      navigator.clipboard.writeText(this.dataset.text).then(() => showToast("Copied!")).catch(() => {});
-    });
-
-    btnsDiv.appendChild(playBtn);
-    btnsDiv.appendChild(copyBtn);
-
+    copyBtn.addEventListener("click", function() { navigator.clipboard.writeText(this.dataset.text).then(() => showToast("Copied!")).catch(() => {}); });
+    btnsDiv.appendChild(playBtn); btnsDiv.appendChild(copyBtn);
     if (isCustomPhrase) {
       const delBtn = document.createElement("button");
-      delBtn.className = "phrase-btn phrase-del";
-      delBtn.textContent = "✕";
-      delBtn.title = "Delete phrase";
+      delBtn.className = "phrase-btn phrase-del"; delBtn.textContent = "✕"; delBtn.title = "Delete phrase";
       const phraseEn = phrase.en;
       delBtn.addEventListener("click", () => deleteTravelPhrase(_cat, phraseEn));
       btnsDiv.appendChild(delBtn);
     }
-
-    card.appendChild(textsDiv);
-    card.appendChild(btnsDiv);
-    list.appendChild(card);
+    card.appendChild(textsDiv); card.appendChild(btnsDiv); list.appendChild(card);
   }
-
   const addRow = document.createElement("div");
   addRow.className = "phrase-add-row";
   addRow.innerHTML = `
     <input type="text" id="newPhraseInput" class="phrase-add-input" placeholder="Add a custom sentence in English…">
     <button class="phrase-btn phrase-play phrase-add-btn" onclick="addTravelPhrase()">Add</button>`;
   list.appendChild(addRow);
-
   if (loading) loading.style.display = "none";
 }
 
@@ -1527,22 +1157,18 @@ function addTravelPhrase() {
   const custom = _getTravelCustom();
   if (!custom[_cat]) custom[_cat] = [];
   if (custom[_cat].some(p => p.en === val)) { showToast("Already exists"); return; }
-  custom[_cat].push({ en: val });
-  _saveTravelCustom(custom);
+  custom[_cat].push({ en: val }); _saveTravelCustom(custom);
   if (input) input.value = "";
   showToast("Phrase added!");
-  clearTimeout(_tTimer);
-  _tTimer = setTimeout(renderTravelPhrases, 100);
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
 }
 
 function deleteTravelPhrase(cat, phraseEn) {
   const custom = _getTravelCustom();
   if (!custom[cat]) return;
   custom[cat] = custom[cat].filter(p => p.en !== phraseEn);
-  _saveTravelCustom(custom);
-  showToast("Phrase removed");
-  clearTimeout(_tTimer);
-  _tTimer = setTimeout(renderTravelPhrases, 100);
+  _saveTravelCustom(custom); showToast("Phrase removed");
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
 }
 
 function addTravelCategory() {
@@ -1551,783 +1177,9 @@ function addTravelCategory() {
   const key = name.trim().toLowerCase().replace(/\s+/g, "_");
   const custom = _getTravelCustom();
   if (custom[key] || TRAVEL_PHRASES_DEFAULT[key]) { showToast("Category already exists"); return; }
-  custom[key] = [];
-  _saveTravelCustom(custom);
-  _cat = key;
-  _renderCatTabs();
+  custom[key] = []; _saveTravelCustom(custom); _cat = key; _renderCatTabs();
   showToast(`Category "${name}" added!`);
-  clearTimeout(_tTimer);
-  _tTimer = setTimeout(renderTravelPhrases, 100);
-}
-
-// ══════════════════════════════════════════════════════════════════
-// OCR
-// ══════════════════════════════════════════════════════════════════
-
-function _fixBullets(text) {
-  if (!text) return text;
-  return text.split(/\r?\n/).map(line => {
-    let l = line;
-    l = l.replace(/^([e|o·•●■▪◦‣⁃➢➤►▶→]\s+)/, () => "• ");
-    l = l.replace(/^([\-\*]\s+)/, "• ");
-    l = l.replace(/^(e\s+e\s+)/, "• ");
-    return l;
-  }).join("\n");
-}
-
-async function _googleVisionOCR(blob, langCode) {
-  if (!VISION_API_KEY) return null;
-  const langHintMap = {
-    "te":"te","ta":"ta","hi":"hi","kn":"kn","ml":"ml","mr":"mr","bn":"bn",
-    "gu":"gu","pa":"pa","ur":"ur","or":"or","as":"as","ne":"ne","sa":"sa",
-    "en":"en","sd":"ur","mai":"hi","doi":"hi","kok":"mr","bho":"hi",
-    "mwr":"hi","tcy":"kn","ks":"ur",
-  };
-  const bcp47 = langHintMap[langCode] || "en";
-  try {
-    const arrayBuf = await blob.arrayBuffer();
-    const bytes    = new Uint8Array(arrayBuf);
-    let binary = "";
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-    const b64 = btoa(binary);
-    const payload = {
-      requests: [{
-        image: { content: b64 },
-        features: [{ type: "DOCUMENT_TEXT_DETECTION", maxResults: 1 }],
-        imageContext: { languageHints: [bcp47, "en"] }
-      }]
-    };
-    const r = await fetch(`${VISION_URL}?key=${VISION_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30000)
-    });
-    if (!r.ok) { console.warn("[Vision] HTTP", r.status); return null; }
-    const data = await r.json();
-    const resp = data.responses?.[0];
-    if (!resp || resp.error) { console.warn("[Vision] API error:", resp?.error); return null; }
-    const fullAnnotation = resp.fullTextAnnotation;
-    if (fullAnnotation) {
-      const reconstructed = _reconstructVisionText(fullAnnotation);
-      if (reconstructed && reconstructed.length > 2) return _fixBullets(reconstructed);
-    }
-    const simple = resp.textAnnotations?.[0]?.description;
-    if (simple && simple.trim().length > 2) return _fixBullets(simple.trim());
-    return null;
-  } catch (e) {
-    console.warn("[Vision OCR]", e.message);
-    return null;
-  }
-}
-
-function _reconstructVisionText(fullAnnotation) {
-  const pages = fullAnnotation.pages;
-  if (!pages || pages.length === 0) return (fullAnnotation.text || "").trim();
-  const blockTexts = [];
-  for (const page of pages) {
-    for (const block of (page.blocks || [])) {
-      const paraTexts = [];
-      for (const paragraph of (block.paragraphs || [])) {
-        let paraText = "";
-        for (const word of (paragraph.words || [])) {
-          let wordText = "";
-          for (const symbol of (word.symbols || [])) {
-            wordText += symbol.text || "";
-            const breakType = symbol.property?.detectedBreak?.type || "";
-            if (breakType === "LINE_BREAK" || breakType === "EOL_SURE_SPACE") wordText += "\n";
-            else if (breakType === "HYPHEN") wordText += "-";
-            else if (breakType === "SPACE" || breakType === "SURE_SPACE") wordText += " ";
-          }
-          paraText += wordText;
-        }
-        paraText = paraText.replace(/ +\n/g, "\n").replace(/\n +/g, "\n").replace(/ {2,}/g, " ").trim();
-        if (paraText) paraTexts.push(paraText);
-      }
-      if (paraTexts.length > 0) blockTexts.push(paraTexts.join("\n"));
-    }
-  }
-  return blockTexts.length > 0 ? blockTexts.join("\n\n").trim() : (fullAnnotation.text || "").trim();
-}
-
-function _loadTesseract() {
-  return new Promise((resolve, reject) => {
-    if (window.Tesseract) { resolve(window.Tesseract); return; }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js";
-    s.onload  = () => resolve(window.Tesseract);
-    s.onerror = () => reject(new Error("Failed to load Tesseract.js"));
-    document.head.appendChild(s);
-  });
-}
-
-function _loadCropper() {
-  return new Promise((resolve, reject) => {
-    if (window.Cropper) { resolve(window.Cropper); return; }
-    if (!document.getElementById("vaani-cropper-css")) {
-      const link = document.createElement("link");
-      link.id   = "vaani-cropper-css";
-      link.rel  = "stylesheet";
-      link.href = "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css";
-      document.head.appendChild(link);
-    }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js";
-    s.onload  = () => resolve(window.Cropper);
-    s.onerror = () => reject(new Error("Failed to load Cropper.js"));
-    document.head.appendChild(s);
-  });
-}
-
-const TESS_LANG_MAP = {
-  te:"tel", ta:"tam", hi:"hin", kn:"kan", ml:"mal", mr:"mar",
-  bn:"ben", gu:"guj", pa:"pan", ur:"urd", or:"ori", as:"asm",
-  ne:"nep", sa:"san", sd:"snd", mai:"hin", doi:"hin", kok:"mar",
-  bho:"hin", mwr:"hin", tcy:"kan", ks:"urd", sat:"ben",
-  "mni-Mtei":"ben", lus:"eng", brx:"hin", awa:"hin", mag:"hin",
-  hne:"hin", en:"eng",
-};
-
-function _optimizeImageForOCR(file) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-
-      const MAX = 2000;
-      const MIN = 1000;
-      let { width: w, height: h } = img;
-
-      // Scale down if too large
-      if (w > MAX || h > MAX) {
-        const scale = MAX / Math.max(w, h);
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-      }
-      // Scale up if too small
-      else if (w < MIN) {
-        const scale = MIN / w;
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width  = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-
-      // Draw original
-      ctx.drawImage(img, 0, 0, w, h);
-
-      // Convert to grayscale + increase contrast + sharpen
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const d = imageData.data;
-
-      // Step 1: Grayscale
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        d[i] = d[i + 1] = d[i + 2] = gray;
-      }
-
-      // Step 2: Contrast stretch (factor 1.8)
-      const contrast = 1.8;
-      for (let i = 0; i < d.length; i += 4) {
-        const c = Math.min(255, Math.max(0, contrast * (d[i] - 128) + 128));
-        d[i] = d[i + 1] = d[i + 2] = c;
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-
-      // Step 3: Sharpen via convolution
-      const sharpKernel = [
-         0, -1,  0,
-        -1,  5, -1,
-         0, -1,  0
-      ];
-      const src = ctx.getImageData(0, 0, w, h);
-      const dst = ctx.createImageData(w, h);
-      const sd = src.data, dd = dst.data;
-
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          let val = 0;
-          for (let ky = -1; ky <= 1; ky++) {
-            for (let kx = -1; kx <= 1; kx++) {
-              const idx = ((y + ky) * w + (x + kx)) * 4;
-              val += sd[idx] * sharpKernel[(ky + 1) * 3 + (kx + 1)];
-            }
-          }
-          val = Math.min(255, Math.max(0, val));
-          const out = (y * w + x) * 4;
-          dd[out] = dd[out + 1] = dd[out + 2] = val;
-          dd[out + 3] = 255;
-        }
-      }
-      ctx.putImageData(dst, 0, 0);
-
-      canvas.toBlob(blob => resolve(blob || file), "image/png");
-    };
-
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
-  });
-}
-
-function _preprocessImage(file) { return _optimizeImageForOCR(file); }
-
-async function _runOCR(blob, langCode) {
-  const Tesseract = await _loadTesseract();
-  const tessLang  = TESS_LANG_MAP[langCode] || "eng";
-  const langStr   = tessLang === "eng" ? "eng" : `${tessLang}+eng`;
-  const statusEl  = document.getElementById("imgStatus");
-  const worker = await Tesseract.createWorker(langStr, 1, {
-    logger: m => {
-      if (m.status === "recognizing text" && statusEl) {
-        statusEl.textContent = `Recognizing text… ${Math.round((m.progress || 0) * 100)}%`;
-      }
-    }
-  });
-  try {
-    const { data: { text } } = await worker.recognize(blob);
-    await worker.terminate();
-    return (text || "").trim();
-  } catch (e) {
-    try { await worker.terminate(); } catch(_){}
-    throw e;
-  }
-}
-
-function _cleanOcrText(raw) {
-  if (!raw) return "";
-
-  const lines = raw.split(/\r?\n/);
-  const cleaned = [];
-
-  for (let line of lines) {
-    // Remove non-printable control characters
-    line = line.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
-
-    const tokens = line.split(/\s+/);
-    const validTokens = [];
-
-    for (const token of tokens) {
-      if (!token) continue;
-
-      // Always keep punctuation-only tokens
-      if (/^[.,!?;:()\-"']+$/.test(token)) {
-        validTokens.push(token);
-        continue;
-      }
-
-      // Count Telugu characters in token
-      const teluguChars  = (token.match(/[\u0C00-\u0C7F]/g) || []).length;
-      // Count valid non-Telugu (digits, basic punctuation)
-      const neutralChars = (token.match(/[\d.,!?;:()\-"']/g) || []).length;
-      const totalChars   = token.replace(/\s/g, "").length;
-
-      if (totalChars === 0) continue;
-
-      const teluguRatio = teluguChars / totalChars;
-
-      // Keep token if majority Telugu
-      if (teluguRatio >= 0.5) {
-        // Strip any embedded non-Telugu/non-neutral chars
-        const stripped = token.replace(/[^\u0C00-\u0C7F\d.,!?;:()\-"']/g, "").trim();
-        if (stripped.length > 0) validTokens.push(stripped);
-        continue;
-      }
-
-      // Keep pure digit / neutral tokens
-      if (neutralChars === totalChars) {
-        validTokens.push(token);
-        continue;
-      }
-
-      // Drop: pure ASCII uppercase junk (DOA, ADD, CHEAT, etc.)
-      if (/^[A-Z]{2,}$/.test(token)) continue;
-
-      // Drop: mixed-script corrupted tokens (Latin mixed with Telugu)
-      if (teluguChars > 0 && /[a-zA-Z]/.test(token)) continue;
-
-      // Drop: pure Latin words that are not numbers/punctuation
-      if (/^[a-zA-Z]+$/.test(token)) continue;
-    }
-
-    const cleanedLine = validTokens.join(" ").trim();
-    if (cleanedLine.length > 0) cleaned.push(cleanedLine);
-  }
-
-  // Deduplicate consecutive identical lines
-  const deduped = [];
-  for (let i = 0; i < cleaned.length; i++) {
-    if (i === 0 || cleaned[i] !== cleaned[i - 1]) {
-      deduped.push(cleaned[i]);
-    }
-  }
-
-  return deduped
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/ {2,}/g, " ")
-    .replace(/ ([.,!?;:])/g, "$1")
-    .trim();
-}
-
-// ── IMAGE EDITING ─────────────────────────────────────────────────
-
-let _imgCurrentFile  = null;
-let _imgCroppedBlob  = null;
-let _cropperInstance = null;
-let _cropRotation    = 0;
-
-function openImagePreview(src) {
-  document.getElementById("vaaniImgModal")?.remove();
-  const modal = document.createElement("div");
-  modal.id = "vaaniImgModal";
-  modal.className = "vaani-img-modal";
-  modal.innerHTML = `
-    <div class="vim-backdrop"></div>
-    <div class="vim-content">
-      <button class="vim-close" aria-label="Close preview">
-        <svg viewBox="0 0 24 24" width="20" height="20"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-      <img class="vim-img" src="${src}" alt="Full preview">
-    </div>`;
-  document.body.appendChild(modal);
-  requestAnimationFrame(() => modal.classList.add("vim-open"));
-  const close = () => { modal.classList.remove("vim-open"); setTimeout(() => modal.remove(), 300); };
-  modal.querySelector(".vim-backdrop").addEventListener("click", close);
-  modal.querySelector(".vim-close").addEventListener("click", close);
-  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
-  document.addEventListener("keydown", onKey);
-}
-
-async function _openCropModal(file, onConfirm) {
-  document.getElementById("vaaniCropModal")?.remove();
-  if (_cropperInstance) { try { _cropperInstance.destroy(); } catch(_){} _cropperInstance = null; }
-  _cropRotation = 0;
-  await _loadCropper();
-  const objectUrl = URL.createObjectURL(file);
-  const modal = document.createElement("div");
-  modal.id = "vaaniCropModal";
-  modal.className = "vaani-crop-modal";
-  modal.innerHTML = `
-    <div class="vcm-backdrop"></div>
-    <div class="vcm-content">
-      <div class="vcm-header">
-        <span class="vcm-title">Crop &amp; Rotate Image</span>
-        <button class="vcm-close" aria-label="Cancel crop">
-          <svg viewBox="0 0 24 24" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <div class="vcm-rotate-bar">
-        <button class="vcm-rot-btn" id="vcmRotLeft">
-          <svg viewBox="0 0 24 24" width="16" height="16"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.43"/></svg>Rotate Left
-        </button>
-        <span class="vcm-rot-label" id="vcmRotLabel">0°</span>
-        <button class="vcm-rot-btn" id="vcmRotRight">
-          <svg viewBox="0 0 24 24" width="16" height="16"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-3.43"/></svg>Rotate Right
-        </button>
-      </div>
-      <div class="vcm-body"><img id="vcmCropImg" src="${objectUrl}" alt="Crop" style="max-width:100%"></div>
-      <div class="vcm-footer">
-        <button class="vcm-btn vcm-cancel">Cancel</button>
-        <button class="vcm-btn vcm-confirm">Crop &amp; Process</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  requestAnimationFrame(() => modal.classList.add("vcm-open"));
-  const cropImg = modal.querySelector("#vcmCropImg");
-  cropImg.onload = () => {
-    _cropperInstance = new Cropper(cropImg, {
-      viewMode: 1, autoCropArea: 0.9, responsive: true, background: false,
-      movable: true, zoomable: true, rotatable: true, scalable: true,
-      aspectRatio: NaN, cropBoxResizable: true, cropBoxMovable: true, toggleDragModeOnDblclick: true,
-    });
-  };
-  modal.querySelector("#vcmRotLeft").addEventListener("click", () => {
-    _cropRotation = (_cropRotation - 90 + 360) % 360;
-    _cropperInstance?.rotate(-90);
-    modal.querySelector("#vcmRotLabel").textContent = `${_cropRotation}°`;
-  });
-  modal.querySelector("#vcmRotRight").addEventListener("click", () => {
-    _cropRotation = (_cropRotation + 90) % 360;
-    _cropperInstance?.rotate(90);
-    modal.querySelector("#vcmRotLabel").textContent = `${_cropRotation}°`;
-  });
-  const close = () => {
-    modal.classList.remove("vcm-open");
-    setTimeout(() => {
-      URL.revokeObjectURL(objectUrl);
-      modal.remove();
-      if (_cropperInstance) { try { _cropperInstance.destroy(); } catch(_){} _cropperInstance = null; }
-    }, 300);
-  };
-  modal.querySelector(".vcm-cancel").addEventListener("click", close);
-  modal.querySelector(".vcm-close").addEventListener("click", close);
-  modal.querySelector(".vcm-backdrop").addEventListener("click", close);
-  modal.querySelector(".vcm-confirm").addEventListener("click", () => {
-    if (!_cropperInstance) return;
-    const canvas = _cropperInstance.getCroppedCanvas({ maxWidth: 2000, maxHeight: 2000 });
-    canvas.toBlob(blob => { close(); if (blob) onConfirm(blob); }, "image/png");
-  });
-}
-
-function _openChangeModal() {
-  document.getElementById("vaaniChangeModal")?.remove();
-  const modal = document.createElement("div");
-  modal.id = "vaaniChangeModal";
-  modal.className = "vaani-change-modal";
-  modal.innerHTML = `
-    <div class="vchm-backdrop"></div>
-    <div class="vchm-sheet">
-      <div class="vchm-title">Change Image</div>
-      <button class="vchm-opt" id="vchm-gallery">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        Upload from Gallery
-      </button>
-      <button class="vchm-opt" id="vchm-camera">
-        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-        Take a Photo (Back Camera)
-      </button>
-      <button class="vchm-cancel">Cancel</button>
-    </div>`;
-  document.body.appendChild(modal);
-  requestAnimationFrame(() => modal.classList.add("vchm-open"));
-  const close = () => { modal.classList.remove("vchm-open"); setTimeout(() => modal.remove(), 300); };
-  modal.querySelector(".vchm-backdrop").addEventListener("click", close);
-  modal.querySelector(".vchm-cancel").addEventListener("click", close);
-  modal.querySelector("#vchm-gallery").addEventListener("click", () => {
-    close();
-    const input = document.getElementById("imageInput");
-    if (input) { input.value = ""; input.click(); }
-  });
-  modal.querySelector("#vchm-camera").addEventListener("click", async () => {
-    close();
-    await _captureBackCamera();
-  });
-}
-
-let _cameraStream = null;
-let _cameraModal  = null;
-
-async function _captureBackCamera() {
-  if (_cameraModal) { _cameraModal.remove(); _cameraModal = null; }
-  _stopCameraStream();
-
-  const permitted = await handlePermission("video");
-  if (!permitted) return;
-
-  const modal = document.createElement("div");
-  modal.id = "vaaniCameraModal";
-  modal.className = "vaani-camera-modal";
-  modal.innerHTML = `
-    <div class="vcam-backdrop"></div>
-    <div class="vcam-content">
-      <div class="vcam-header">
-        <span class="vcam-title">📷 Back Camera</span>
-        <button class="vcam-close">
-          <svg viewBox="0 0 24 24" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <div class="vcam-body">
-        <video id="vcamVideo" autoplay playsinline muted style="width:100%;border-radius:8px;background:#000"></video>
-        <canvas id="vcamCanvas" style="display:none"></canvas>
-        <div class="vcam-status" id="vcamStatus">Starting camera…</div>
-      </div>
-      <div class="vcam-footer">
-        <button class="vcm-btn vcm-cancel" id="vcamCancelBtn">Cancel</button>
-        <button class="vcm-btn vcm-confirm" id="vcamCaptureBtn" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
-          Capture
-        </button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  _cameraModal = modal;
-  requestAnimationFrame(() => modal.classList.add("vcm-open"));
-
-  const close = () => {
-    _stopCameraStream();
-    modal.classList.remove("vcm-open");
-    setTimeout(() => { modal.remove(); if (_cameraModal === modal) _cameraModal = null; }, 300);
-  };
-  modal.querySelector(".vcam-close").addEventListener("click", close);
-  modal.querySelector(".vcam-backdrop").addEventListener("click", close);
-  modal.querySelector("#vcamCancelBtn").addEventListener("click", close);
-
-  const video      = modal.querySelector("#vcamVideo");
-  const canvas     = modal.querySelector("#vcamCanvas");
-  const statusEl   = modal.querySelector("#vcamStatus");
-  const captureBtn = modal.querySelector("#vcamCaptureBtn");
-
-  let stream = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-    statusEl.textContent = "Back camera active — point at text";
-  } catch (e1) {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      statusEl.textContent = "Camera active — point at text";
-    } catch (e2) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        statusEl.textContent = "Camera active (front — back not available)";
-        showToast("Back camera unavailable, using front");
-      } catch (e3) {
-        statusEl.textContent = "Camera access denied";
-        close();
-        _showPermissionDeniedGuide("video", async () => {
-          const ok = await _attemptGetUserMedia("video");
-          if (ok) showToast("Camera enabled! Tap Take Photo again.");
-        });
-        return;
-      }
-    }
-  }
-
-  _cameraStream = stream;
-  video.srcObject = stream;
-  captureBtn.disabled = false;
-  captureBtn.addEventListener("click", () => {
-    canvas.width  = video.videoWidth  || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => { close(); if (blob) processImageFile(blob); }, "image/jpeg", 0.95);
-  });
-}
-
-function _stopCameraStream() {
-  if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
-}
-
-function _showPreviewBox(objectUrl) {
-  const pb = document.getElementById("imgPreviewBox");
-  const p  = document.getElementById("imgPreview");
-  const b  = document.getElementById("imgTranslateBtn");
-  const up = document.getElementById("uploadArea");
-  if (p) { p.src = objectUrl; p.style.cursor = "zoom-in"; p.onclick = () => openImagePreview(p.src); }
-  if (pb) pb.style.display = "block";
-  if (b)  b.style.display  = "flex";
-  if (up) up.style.display = "none";
-}
-
-async function processImageFile(file) {
-  if (!file || !(file instanceof Blob)) { showToast("Please upload an image file"); return; }
-  _imgCurrentFile = file;
-  await _openCropModal(file, (croppedBlob) => {
-    _imgCroppedBlob = croppedBlob;
-    const croppedUrl = URL.createObjectURL(croppedBlob);
-    _showPreviewBox(croppedUrl);
-    document.getElementById("imgResults").style.display = "none";
-    document.getElementById("imgStatus").textContent = "";
-    _resetEditableExtracted();
-    resetTimeline("Img");
-  });
-}
-
-function handleDrop(e) {
-  e.preventDefault();
-  document.getElementById("uploadArea")?.classList.remove("drag-over");
-  const f = e.dataTransfer?.files?.[0];
-  if (f) processImageFile(f);
-}
-
-function handleImageUpload(e) {
-  const f = e.target?.files?.[0];
-  if (f) processImageFile(f);
-}
-
-function _resetEditableExtracted() {
-  const ta = document.getElementById("imgExtractedTextEdit");
-  if (ta) ta.value = "";
-  const confirmBtn = document.getElementById("imgConfirmTranslateBtn");
-  if (confirmBtn) confirmBtn.style.display = "none";
-}
-
-function _showEditableExtracted(text) {
-  const ta = document.getElementById("imgExtractedTextEdit");
-  const confirmBtn = document.getElementById("imgConfirmTranslateBtn");
-  if (ta) { ta.value = text; ta.style.display = "block"; }
-  if (confirmBtn) confirmBtn.style.display = "flex";
-}
-
-async function confirmAndTranslate() {
-  const ta = document.getElementById("imgExtractedTextEdit");
-  const extractedText = (ta?.value || "").trim();
-  if (!extractedText) { showToast("No text to translate"); return; }
-  const fromLang = document.getElementById("imgFromLang")?.value || "en";
-  const toLang   = document.getElementById("imgToLang")?.value   || "en";
-  const status   = document.getElementById("imgStatus");
-  const btn      = document.getElementById("imgConfirmTranslateBtn");
-  if (btn) btn.disabled = true;
-  if (status) status.textContent = "Translating…";
-  let translated = "";
-  if (fromLang === toLang) {
-    translated = extractedText;
-  } else {
-    try {
-      const paragraphs = extractedText.split(/\n\n+/);
-      const translatedParas = await Promise.all(paragraphs.map(async (para) => {
-        if (!para.trim()) return "";
-        const lines = para.split("\n");
-        const translatedLines = await Promise.all(lines.map(async (line) => {
-          const l = line.trim();
-          if (!l) return "";
-          try { return await translateText(l, fromLang, toLang); } catch (_) { return l; }
-        }));
-        return translatedLines.join("\n");
-      }));
-      translated = translatedParas.join("\n\n").trim();
-    } catch(tErr) {
-      console.warn("[Image] Translation error:", tErr);
-      translated = extractedText;
-    }
-  }
-  const transEl = document.getElementById("imgTranslatedText");
-  if (transEl) transEl.textContent = translated || "—";
-  if (status) status.textContent = "Translation complete ✓";
-  if (btn) btn.disabled = false;
-  if (translated && translated !== extractedText) await autoPlay(translated, toLang, "Img", transEl);
-}
-
-function _splitIntoSentences(text) {
-  if (!text) return [];
-  // Split on Telugu purna virama, danda, or common punctuation
-  const parts = text.split(/(?<=[.!?।॥\u0C0E\u0C14])\s+/);
-  return parts.map(s => s.trim()).filter(s => s.length > 1);
-}
-
-async function translateImage() {
-  const fromLang   = document.getElementById("imgFromLang")?.value || "en";
-  const toLang     = document.getElementById("imgToLang")?.value   || "en";
-  const status     = document.getElementById("imgStatus");
-  const btn        = document.getElementById("imgTranslateBtn");
-  const sourceBlob = _imgCroppedBlob || _imgCurrentFile;
-
-  if (!sourceBlob) { showToast("No image selected"); return; }
-
-  if (btn)    btn.disabled        = true;
-  if (status) status.textContent  = "Optimizing image…";
-  document.getElementById("imgResults").style.display = "none";
-  _resetEditableExtracted();
-  resetTimeline("Img");
-
-  try {
-    // Step 1: Preprocess image
-    if (status) status.textContent = "Enhancing image for OCR…";
-    const optimizedBlob = await _optimizeImageForOCR(sourceBlob);
-
-    // Step 2: OCR — Vision API first, Tesseract fallback
-    let rawText  = "";
-    let ocrEngine = "unknown";
-
-    if (status) status.textContent = "Running OCR (Google Vision)…";
-    const visionResult = await _googleVisionOCR(optimizedBlob, fromLang);
-
-    if (visionResult && visionResult.trim().length > 5) {
-      rawText   = visionResult;
-      ocrEngine = "Google Vision";
-    } else {
-      // Vision failed or returned noise — try backend then Tesseract
-      if (status) status.textContent = "Vision unclear, trying server OCR…";
-      try {
-        const fd = new FormData();
-        fd.append("file", optimizedBlob, "image.png");
-        fd.append("from_lang", fromLang);
-        fd.append("to_lang", toLang);
-        const resp = await fetch(`${API_URL}/image-translate`, {
-          method: "POST", body: fd, signal: AbortSignal.timeout(40000)
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data?.extracted && data.extracted.trim().length > 5) {
-            rawText   = data.extracted;
-            ocrEngine = data.engine || "server";
-            // If backend also returned translation, use it directly
-            if (data.translated?.trim()) {
-              const cleaned = _cleanOcrText(rawText);
-              _showEditableExtracted(cleaned);
-              document.getElementById("imgResults").style.display = "block";
-              const transEl = document.getElementById("imgTranslatedText");
-              if (transEl) transEl.textContent = data.translated.trim();
-              if (status) status.textContent = `OCR: ${ocrEngine} ✓`;
-              showTimeline("Img");
-              autoPlay(data.translated.trim(), toLang, "Img", transEl);
-              return;
-            }
-          }
-        }
-      } catch (backendErr) {
-        console.warn("[Image] Backend OCR error:", backendErr);
-      }
-
-      // Final fallback: Tesseract
-      if (!rawText) {
-        if (status) status.textContent = "Running Tesseract OCR…";
-        try {
-          rawText   = await _runOCR(optimizedBlob, fromLang);
-          ocrEngine = "Tesseract";
-        } catch (tessErr) {
-          console.warn("[Image] Tesseract error:", tessErr);
-        }
-      }
-    }
-
-    // Step 3: Clean OCR output
-    const cleanedText = _cleanOcrText(rawText || "");
-
-    if (!cleanedText || cleanedText.length < 3) {
-      _showEditableExtracted("");
-      const transEl = document.getElementById("imgTranslatedText");
-      if (transEl) transEl.textContent = "Text not detected clearly. Try a better image.";
-      document.getElementById("imgResults").style.display = "block";
-      if (status) status.textContent = "";
-      return;
-    }
-
-    _showEditableExtracted(cleanedText);
-    if (status) status.textContent = `OCR: ${ocrEngine} ✓ — Translating…`;
-
-    // Step 4: Sentence-level translation
-    let translated = "";
-    if (fromLang === toLang) {
-      translated = cleanedText;
-    } else {
-      const sentences = _splitIntoSentences(cleanedText);
-      if (sentences.length === 0) {
-        translated = await translateText(cleanedText, fromLang, toLang);
-      } else {
-        const translatedSentences = await Promise.all(
-          sentences.map(async (sentence) => {
-            try {
-              return await translateText(sentence, fromLang, toLang);
-            } catch (_) {
-              return sentence;
-            }
-          })
-        );
-        translated = translatedSentences.join(" ").trim();
-      }
-    }
-
-    const transEl = document.getElementById("imgTranslatedText");
-    if (transEl) transEl.textContent = translated || "—";
-    document.getElementById("imgResults").style.display = "block";
-    if (status) status.textContent = `OCR: ${ocrEngine} ✓`;
-    showTimeline("Img");
-    if (translated && translated !== cleanedText) autoPlay(translated, toLang, "Img", transEl);
-
-  } catch (e) {
-    console.error("[Vaani] translateImage:", e);
-    if (status) status.textContent = "Error: " + e.message;
-    showToast("Image processing failed");
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2363,9 +1215,7 @@ function saveToHistory(orig, trans, fromLang, toLang) {
 function deleteHistory(i) {
   const h = _readHistory();
   if (i < 0 || i >= h.length) return;
-  h.splice(i, 1);
-  _writeHistory(h);
-  renderHistory();
+  h.splice(i, 1); _writeHistory(h); renderHistory();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2400,8 +1250,7 @@ function saveFavourite(orig, trans, fromLang, toLang) {
   const favs = _readFavs();
   if (favs.some(f => f.original === orig && f.toLang === toLang)) { showToast("Already saved!"); return; }
   favs.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
-  _writeFavs(favs);
-  showToast("Saved to favourites");
+  _writeFavs(favs); showToast("Saved to favourites");
   const favsPage = document.getElementById("pageFavourites");
   if (favsPage && favsPage.classList.contains("active")) renderFavourites();
 }
@@ -2409,9 +1258,7 @@ function saveFavourite(orig, trans, fromLang, toLang) {
 function deleteFavourite(i) {
   const favs = _readFavs();
   if (i < 0 || i >= favs.length) return;
-  favs.splice(i, 1);
-  _writeFavs(favs);
-  renderFavourites();
+  favs.splice(i, 1); _writeFavs(favs); renderFavourites();
 }
 
 // ── RENDER HISTORY ────────────────────────────────────────────────
@@ -2456,67 +1303,26 @@ function renderFavourites() {
   const favs = _readFavs();
   const list = document.getElementById("favouritesList");
   if (!list) return;
-
   if (!favs.length) {
     list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating</p></div>`;
     return;
   }
-
   list.innerHTML = "";
-
   favs.forEach((f, i) => {
-    const card = document.createElement("div");
-    card.className = "hist-card fav-card";
-
-    const langs = document.createElement("div");
-    langs.className = "hist-langs";
+    const card = document.createElement("div"); card.className = "hist-card fav-card";
+    const langs = document.createElement("div"); langs.className = "hist-langs";
     langs.textContent = `${LANG_NAMES[f.fromLang] || f.fromLang} → ${LANG_NAMES[f.toLang] || f.toLang}`;
-
-    const orig = document.createElement("div");
-    orig.className = "hist-orig";
-    orig.textContent = f.original;
-
-    const trans = document.createElement("div");
-    trans.className = "hist-trans";
-    trans.textContent = f.translated;
-
-    const actions = document.createElement("div");
-    actions.className = "hist-actions";
-
-    // Play button
-    const playBtn = document.createElement("button");
-    playBtn.className = "hist-btn";
-    playBtn.textContent = "Play";
-    playBtn.addEventListener("click", () => {
-       playFavorite(f.translated, f.toLang);
-    });
-    
-
-    // Copy button
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "hist-btn";
-    copyBtn.textContent = "Copy";
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(f.translated)
-        .then(() => showToast("Copied!"))
-        .catch(() => showToast("Copy failed"));
-    });
-
-    // Remove button
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "hist-btn del";
-    removeBtn.textContent = "Remove";
+    const orig  = document.createElement("div"); orig.className  = "hist-orig";  orig.textContent  = f.original;
+    const trans = document.createElement("div"); trans.className = "hist-trans"; trans.textContent = f.translated;
+    const actions = document.createElement("div"); actions.className = "hist-actions";
+    const playBtn = document.createElement("button"); playBtn.className = "hist-btn"; playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => { playFavorite(f.translated, f.toLang); });
+    const copyBtn = document.createElement("button"); copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => { navigator.clipboard.writeText(f.translated).then(() => showToast("Copied!")).catch(() => showToast("Copy failed")); });
+    const removeBtn = document.createElement("button"); removeBtn.className = "hist-btn del"; removeBtn.textContent = "Remove";
     removeBtn.addEventListener("click", () => deleteFavourite(i));
-
-    actions.appendChild(playBtn);
-    actions.appendChild(copyBtn);
-    actions.appendChild(removeBtn);
-
-    card.appendChild(langs);
-    card.appendChild(orig);
-    card.appendChild(trans);
-    card.appendChild(actions);
-
+    actions.appendChild(playBtn); actions.appendChild(copyBtn); actions.appendChild(removeBtn);
+    card.appendChild(langs); card.appendChild(orig); card.appendChild(trans); card.appendChild(actions);
     list.appendChild(card);
   });
 }
@@ -2529,15 +1335,8 @@ const SESSION_KEY = "vaani_user_session";
 
 function _persistUserSession(user) {
   if (user) {
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({
-        uid: user.uid, displayName: user.displayName || "",
-        email: user.email || "", photoURL: user.photoURL || "", ts: Date.now()
-      }));
-    } catch (_) {}
-  } else {
-    try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
-  }
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify({ uid: user.uid, displayName: user.displayName || "", email: user.email || "", photoURL: user.photoURL || "", ts: Date.now() })); } catch (_) {}
+  } else { try { localStorage.removeItem(SESSION_KEY); } catch (_) {} }
 }
 
 function _restoreUserSession() {
@@ -2545,10 +1344,7 @@ function _restoreUserSession() {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw);
-    if (Date.now() - (session.ts || 0) > 30 * 24 * 60 * 60 * 1000) {
-      localStorage.removeItem(SESSION_KEY);
-      return null;
-    }
+    if (Date.now() - (session.ts || 0) > 30 * 24 * 60 * 60 * 1000) { localStorage.removeItem(SESSION_KEY); return null; }
     return session;
   } catch (_) { return null; }
 }
@@ -2560,10 +1356,7 @@ function _applyUserToUI(user) {
   const avatar = document.getElementById("menuAvatar");
   const name   = document.getElementById("menuUserName");
   if (!user) {
-    if (card) card.style.display = "block";
-    if (out)  out.style.display  = "none";
-    if (uEl)  uEl.style.display  = "none";
-    return;
+    if (card) card.style.display = "block"; if (out) out.style.display = "none"; if (uEl) uEl.style.display = "none"; return;
   }
   if (card)   card.style.display   = "none";
   if (out)    out.style.display    = "block";
@@ -2621,8 +1414,7 @@ function renderSettingsPage() {
     <div class="stg-section">
       <div class="stg-title">About</div>
       <div class="stg-about">
-        <div>Vaani — Indian Language Translator v5.4</div>
-        <div>OCR: Google Vision API + Tesseract fallback</div>
+        <div>Vaani — Indian Language Translator v5.5</div>
         <div>Translation: Bhashini NMT + Google Translate fallback</div>
         <div>Speech: Bhashini TTS + gTTS + Browser TTS fallback</div>
         <div>30+ Indian languages supported</div>
@@ -2630,46 +1422,18 @@ function renderSettingsPage() {
     </div>`;
 }
 
-function stgSaveLang(field, val) {
-  localStorage.setItem(`vaani_lang_${field}`, val);
-  const el = document.getElementById(field);
-  if (el && LANG_CONFIG[val]) el.value = val;
-}
-function applyTheme(t) {
-  document.documentElement.setAttribute("data-theme", t);
-  localStorage.setItem("vaani_theme", t);
-}
-function stgClearHistory() {
-  if (!confirm("Clear all translation history?")) return;
-  localStorage.removeItem("vaani_history");
-  showToast("History cleared");
-  renderHistory();
-}
-function stgClearFavs() {
-  if (!confirm("Clear all favourites?")) return;
-  localStorage.removeItem("vaani_favs");
-  showToast("Favourites cleared");
-  renderFavourites();
-}
-function stgClearTravel() {
-  if (!confirm("Clear all custom travel phrases?")) return;
-  localStorage.removeItem("vaani_travel_custom");
-  _tCache = {};
-  showToast("Custom travel phrases cleared");
-}
-function stgResetAll() {
-  if (!confirm("Reset ALL app data? Cannot be undone.")) return;
-  localStorage.clear();
-  cacheClear();
-  showToast("All data reset");
-  setTimeout(() => location.reload(), 800);
-}
+function stgSaveLang(field, val) { localStorage.setItem(`vaani_lang_${field}`, val); const el = document.getElementById(field); if (el && LANG_CONFIG[val]) el.value = val; }
+function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("vaani_theme", t); }
+function stgClearHistory() { if (!confirm("Clear all translation history?")) return; localStorage.removeItem("vaani_history"); showToast("History cleared"); renderHistory(); }
+function stgClearFavs()    { if (!confirm("Clear all favourites?")) return; localStorage.removeItem("vaani_favs"); showToast("Favourites cleared"); renderFavourites(); }
+function stgClearTravel()  { if (!confirm("Clear all custom travel phrases?")) return; localStorage.removeItem("vaani_travel_custom"); _tCache = {}; showToast("Custom travel phrases cleared"); }
+function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.")) return; localStorage.clear(); cacheClear(); showToast("All data reset"); setTimeout(() => location.reload(), 800); }
 
 // ══════════════════════════════════════════════════════════════════
-// NAVIGATION
+// NAVIGATION  — "Image" removed from PAGES
 // ══════════════════════════════════════════════════════════════════
 
-const PAGES = ["Home","Single","Conversation","Travel","Image","History","Favourites","Settings"];
+const PAGES = ["Home","Single","Conversation","Travel","History","Favourites","Settings"];
 const _navStack = [];
 
 function navigateTo(page) {
@@ -2681,15 +1445,9 @@ function navigateTo(page) {
   closeMenu();
   const currentHash = location.hash.replace("#", "").toLowerCase();
   const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
-  if (currentPage !== page) {
-    history.pushState({ page }, "", `#${page.toLowerCase()}`);
-    _navStack.push(page);
-  } else {
-    history.replaceState({ page }, "", `#${page.toLowerCase()}`);
-    if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
-  }
+  if (currentPage !== page) { history.pushState({ page }, "", `#${page.toLowerCase()}`); _navStack.push(page); }
+  else { history.replaceState({ page }, "", `#${page.toLowerCase()}`); if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page); }
   _onPageActivate(page);
-  // FIX 5: Kill all mics on navigation — prevents ghost listeners
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
 }
@@ -2707,41 +1465,28 @@ window.addEventListener("popstate", (e) => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
-  closeMenu();
-  _onPageActivate(page);
+  closeMenu(); _onPageActivate(page);
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn","micBtnA","micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
 });
 
-function toggleMenu() {
-  document.getElementById("sideMenu")?.classList.toggle("open");
-  document.getElementById("menuOverlay")?.classList.toggle("open");
-}
-function closeMenu() {
-  document.getElementById("sideMenu")?.classList.remove("open");
-  document.getElementById("menuOverlay")?.classList.remove("open");
-}
-function toggleTheme() {
-  applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
-}
+function toggleMenu()  { document.getElementById("sideMenu")?.classList.toggle("open"); document.getElementById("menuOverlay")?.classList.toggle("open"); }
+function closeMenu()   { document.getElementById("sideMenu")?.classList.remove("open"); document.getElementById("menuOverlay")?.classList.remove("open"); }
+function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
 
 // ── TOAST ─────────────────────────────────────────────────────────
 let _toastTimer = null;
 function showToast(msg) {
   const t = document.getElementById("toast");
   if (!t) return;
-  t.textContent = msg;
-  t.classList.add("show");
-  clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(_toastTimer); _toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
 // ── KEEP-ALIVE ────────────────────────────────────────────────────
 function pingBackend() {
   fetch(`${API_URL}/ping`, { signal: AbortSignal.timeout(10000) })
-    .then(r => r.json())
-    .then(d => console.log("[Vaani] ping:", d.status))
-    .catch(() => {});
+    .then(r => r.json()).then(d => console.log("[Vaani] ping:", d.status)).catch(() => {});
 }
 pingBackend();
 setInterval(pingBackend, 10 * 60 * 1000);
@@ -2752,20 +1497,15 @@ if (typeof window.signInWithGoogle === "undefined") {
 }
 if (typeof window.signOutUser === "undefined") {
   window.signOutUser = () => {
-    window._vaaniCurrentUser = null;
-    _persistUserSession(null);
-    _applyUserToUI(null);
+    window._vaaniCurrentUser = null; _persistUserSession(null); _applyUserToUI(null);
     showToast("Signed out");
     const histPage = document.getElementById("pageHistory");
     if (histPage && histPage.classList.contains("active")) renderHistory();
   };
 }
 window._vaaniCurrentUser = null;
-
 window._vaaniOnAuthChange = function(user) {
-  window._vaaniCurrentUser = user || null;
-  _persistUserSession(user);
-  _applyUserToUI(user);
+  window._vaaniCurrentUser = user || null; _persistUserSession(user); _applyUserToUI(user);
   const histPage = document.getElementById("pageHistory");
   if (histPage && histPage.classList.contains("active")) renderHistory();
 };
@@ -2775,31 +1515,15 @@ document.addEventListener("DOMContentLoaded", () => {
   applyTheme(localStorage.getItem("vaani_theme") || "dark");
 
   const restoredSession = _restoreUserSession();
-  if (restoredSession) {
-    window._vaaniCurrentUser = restoredSession;
-    _applyUserToUI(restoredSession);
-  }
+  if (restoredSession) { window._vaaniCurrentUser = restoredSession; _applyUserToUI(restoredSession); }
 
   initLanguageSelects();
-
   _initTimelineControls("");
-  _initTimelineControls("Img");
 
   if (window.speechSynthesis) _loadVoices().catch(() => {});
 
-  const changeBtn = document.getElementById("imgChangeBtn");
-  if (changeBtn) changeBtn.addEventListener("click", (e) => { e.stopPropagation(); _openChangeModal(); });
-
-  const camSrcBtn = document.getElementById("cameraSrcBtn");
-  if (camSrcBtn) camSrcBtn.addEventListener("click", async (e) => { e.preventDefault(); await _captureBackCamera(); });
-
-  const cameraInput = document.getElementById("cameraInput");
-  if (cameraInput) {
-    cameraInput.setAttribute("capture", "environment");
-    cameraInput.addEventListener("change", handleImageUpload);
-  }
-
   const hash = location.hash.replace("#", "").toLowerCase();
+  // Redirect any old #image bookmarks to home
   const initialPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
   history.replaceState({ page: initialPage }, "", `#${initialPage.toLowerCase()}`);
   _navStack.push(initialPage);
@@ -2807,27 +1531,14 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
-  //_onPageActivate(initialPage);
-  function _onPageActivate(page) {
-     if (page === "Favourites") renderFavourites();
-  }
+
   renderHistory();
   detectUserLocation();
 
-  // FIX 4 & 5: Silently cache permission state — no UI, no popup on load
   if (navigator.permissions) {
     navigator.permissions.query({ name: "microphone" }).then(r => {
       if (r.state === "granted") _permissionGranted.audio = true;
-      // FIX 5: Listen for future changes so we update state without reload
-      r.addEventListener("change", () => {
-        _permissionGranted.audio = r.state === "granted";
-      });
-    }).catch(() => {});
-    navigator.permissions.query({ name: "camera" }).then(r => {
-      if (r.state === "granted") _permissionGranted.video = true;
-      r.addEventListener("change", () => {
-        _permissionGranted.video = r.state === "granted";
-      });
+      r.addEventListener("change", () => { _permissionGranted.audio = r.state === "granted"; });
     }).catch(() => {});
   }
 });
