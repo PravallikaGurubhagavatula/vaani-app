@@ -16,6 +16,15 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20250325a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
+  <!-- in <head>, after permission-guide.css -->
+  <link rel="stylesheet" href="camera-ocr.css?v=1">
+  
+  <!-- in <body>, after app.js -->
+  <script src="camera-ocr.js?v=1"></script>
+  <!-- in the existing <script> block -->
+  window.VAANI_VISION_KEY = "YOUR_KEY_HERE";
+  window.API_URL          = "https://vaani-app-ui0z.onrender.com";
+  
 </head>
 <body>
 
