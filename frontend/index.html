@@ -18,13 +18,6 @@
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
   <!-- in <head>, after permission-guide.css -->
   <link rel="stylesheet" href="camera-ocr.css?v=1">
-  
-  <!-- in <body>, after app.js -->
-  <script src="camera-ocr.js?v=1"></script>
-  <!-- in the existing <script> block -->
-  window.VAANI_VISION_KEY = "YOUR_KEY_HERE";
-  window.API_URL          = "https://vaani-app-ui0z.onrender.com";
-  
 </head>
 <body>
 
@@ -461,86 +454,61 @@
 <!-- ══ TOAST ════════════════════════════════════════════════════════ -->
 <div id="toast" class="toast"></div>
 
-<!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
+<!-- ══ SCRIPTS — CORRECT ORDER, NO DUPLICATES ══════════════════════ -->
+
+<!-- Step 1: Global config -->
 <script>
-  window.VAANI_VERSION = "20250325a";
+  window.VAANI_VERSION    = "20250325a";
   window.VAANI_VISION_KEY = "";
 </script>
-<script type="module" src="firebase.js?v=20250325a"></script>
+
+<!-- Step 2: Enhancement helpers (plain scripts, load before app.js) -->
+<script src="slangDictionary.js?v=2"></script>
+<script src="toneDetector.js?v=2"></script>
+<script src="contextTranslator.js?v=2"></script>
+<script src="llmEnhancer.js?v=2"></script>
+
+<!-- Step 3: Main app (classic script — NOT type="module") -->
 <script src="app.js?v=20250325a"></script>
-  <!-- ① Slang dictionary (no dependencies) -->
-  <script src="slangDictionary.js?v=2"></script>
- 
-  <!-- ② Tone detector (depends on slangDictionary) -->
-  <script src="toneDetector.js?v=2"></script>
- 
-  <!-- ③ Context translator (depends on slang + tone) -->
-  <script src="contextTranslator.js?v=2"></script>
- 
-  <!-- ④ LLM enhancer stub (no dependencies) -->
-  <script src="llmEnhancer.js?v=2"></script>
- 
-  <!-- ⑤ Main app (must come AFTER the helpers above) -->
-  <script src="app.js?v=20250325a"></script>
- 
-  <!-- ⑥ Integration bridge — MUST be last, plain script, NO type="module" -->
-  <script src="translationIntegration.js?v=2"></script>
+
+<!-- Step 4: Integration bridge (MUST be after app.js, plain script) -->
+<script src="translationIntegration.js?v=2"></script>
+
+<!-- Step 5: Firebase (module is fine here — it doesn't affect onclick handlers) -->
+<script type="module" src="firebase.js?v=20250325a"></script>
+
+<!-- Step 6: Service worker + PWA install prompt (unchanged) -->
 <script>
-  // ── FIX 2: SERVICE WORKER — network-first, auto-update on new version ──
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', {
-        updateViaCache: 'none'  // Never serve sw.js from cache
-      })
-      .then(reg => {
-        console.log('[Vaani] SW registered:', reg.scope);
-
-        // Check for updates immediately and every 30s
-        reg.update().catch(() => {});
-        setInterval(() => reg.update().catch(() => {}), 30000);
-
-        // Check on tab focus
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') {
-            reg.update().catch(() => {});
-          }
-        });
-
-        // When a new SW is found installing
-        reg.addEventListener('updatefound', () => {
-          const newSW = reg.installing;
-          if (!newSW) return;
-          newSW.addEventListener('statechange', () => {
-            if (newSW.state === 'installed') {
-              // FIX 2: Tell new SW to skip waiting immediately
-              newSW.postMessage('SKIP_WAITING');
-            }
+      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+        .then(reg => {
+          reg.update().catch(() => {});
+          setInterval(() => reg.update().catch(() => {}), 30000);
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update().catch(() => {});
           });
-        });
-      })
-      .catch(e => console.warn('[Vaani] SW registration failed:', e));
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            if (!newSW) return;
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'installed') newSW.postMessage('SKIP_WAITING');
+            });
+          });
+        })
+        .catch(e => console.warn('[Vaani] SW registration failed:', e));
 
-      // FIX 2: Listen for SW_UPDATED message → reload page
       navigator.serviceWorker.addEventListener('message', e => {
-        if (e.data?.type === 'SW_UPDATED') {
-          console.log('[Vaani] New version available, reloading…');
-          window.location.reload(true);
-        }
+        if (e.data?.type === 'SW_UPDATED') window.location.reload(true);
       });
 
-      // FIX 2: Controller change → reload (new SW took control)
       let _reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!_reloading) {
-          _reloading = true;
-          console.log('[Vaani] SW controller changed, reloading…');
-          window.location.reload(true);
-        }
+        if (!_reloading) { _reloading = true; window.location.reload(true); }
       });
     });
   }
 
-  // ── PWA INSTALL PROMPT ──
   let deferredPrompt;
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault();
