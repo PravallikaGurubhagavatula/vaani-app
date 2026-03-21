@@ -826,6 +826,12 @@ function clearSingleResults() {
   const a = document.getElementById("actionBtns");
   if (o) o.textContent = "—"; if (t) t.textContent = "—"; if (a) a.style.display = "none";
   resetTimeline("");
+  // Reset star to unfilled when results are cleared
+  const saveBtn = document.getElementById("saveBtn");
+  if (saveBtn) {
+    saveBtn.innerHTML = _starSvg(false) + "Save";
+    saveBtn.style.background = ""; saveBtn.style.borderColor = ""; saveBtn.style.color = "";
+  }
 }
 
 function showOriginalText(text) {
@@ -847,6 +853,8 @@ function showFinalTranslation(original, translated) {
   if (t) t.textContent = translated || "—";
   if (a) a.style.display = translated ? "flex" : "none";
   showTimeline("");
+  // Update star to reflect whether this translation is already saved
+  _updateSingleStarBtn();
 }
 
 // ── TEXT MODE ─────────────────────────────────────────────────────
@@ -1230,13 +1238,59 @@ function _writeFavs(arr) {
   try { localStorage.setItem("vaani_favs", JSON.stringify(arr)); } catch (_) {}
 }
 
+// ── STAR SVG HELPERS ─────────────────────────────────────────────
+// Returns SVG markup for the star — filled (gold) or outline (default).
+function _starSvg(filled) {
+  return filled
+    ? `<svg viewBox="0 0 24 24" style="fill:#eab308;stroke:#eab308"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
+    : `<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+}
+
+// Check if the current Single-mode result is already saved
+function _isSingleResultSaved() {
+  const t  = document.getElementById("translatedText")?.textContent;
+  const tl = document.getElementById("toLang")?.value;
+  if (!t || t === "—" || t === "…") return false;
+  return _readFavs().some(f => f.translated === t && f.toLang === tl);
+}
+
+// Update the Save button star in Single mode to match saved state
+function _updateSingleStarBtn() {
+  const btn = document.getElementById("saveBtn");
+  if (!btn) return;
+  const saved = _isSingleResultSaved();
+  btn.innerHTML = _starSvg(saved) + (saved ? "Saved" : "Save");
+  btn.style.background    = saved ? "rgba(234,179,8,0.18)" : "";
+  btn.style.borderColor   = saved ? "rgba(234,179,8,0.5)"  : "";
+  btn.style.color         = saved ? "#eab308"               : "";
+}
+
 function saveSingleToFavourites() {
   const o  = document.getElementById("originalText")?.textContent;
   const t  = document.getElementById("translatedText")?.textContent;
   const f  = document.getElementById("fromLang")?.value;
   const tl = document.getElementById("toLang")?.value;
   if (!t || t === "—" || t === "…") return;
-  saveFavourite(o, t, f, tl);
+
+  const favs = _readFavs();
+  const already = favs.some(fav => fav.translated === t && fav.toLang === tl);
+
+  if (already) {
+    // Unsave — remove from favourites
+    const idx = favs.findIndex(fav => fav.translated === t && fav.toLang === tl);
+    if (idx !== -1) favs.splice(idx, 1);
+    _writeFavs(favs);
+    showToast("Removed from favourites");
+  } else {
+    // Save
+    favs.unshift({ original: o, translated: t, fromLang: f, toLang: tl, ts: Date.now() });
+    _writeFavs(favs);
+    showToast("Saved to favourites");
+  }
+
+  _updateSingleStarBtn();
+  const favsPage = document.getElementById("pageFavourites");
+  if (favsPage && favsPage.classList.contains("active")) renderFavourites();
 }
 
 function saveFavourite(orig, trans, fromLang, toLang) {
@@ -1244,6 +1298,8 @@ function saveFavourite(orig, trans, fromLang, toLang) {
   if (favs.some(f => f.original === orig && f.toLang === toLang)) { showToast("Already saved!"); return; }
   favs.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
   _writeFavs(favs); showToast("Saved to favourites");
+  // Update single-mode star if same item is visible there
+  _updateSingleStarBtn();
   const favsPage = document.getElementById("pageFavourites");
   if (favsPage && favsPage.classList.contains("active")) renderFavourites();
 }
@@ -1302,8 +1358,30 @@ function renderHistory() {
     const copyBtn = document.createElement("button"); copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
     copyBtn.addEventListener("click", () => navigator.clipboard.writeText(h.translated).then(() => showToast("Copied!")).catch(() => {}));
 
-    const saveBtn = document.createElement("button"); saveBtn.className = "hist-btn"; saveBtn.textContent = "Save";
-    saveBtn.addEventListener("click", () => saveFavourite(h.original, h.translated, h.fromLang, h.toLang));
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "hist-btn hist-btn-star";
+    const alreadySaved = _readFavs().some(f => f.translated === h.translated && f.toLang === h.toLang);
+    saveBtn.innerHTML = _starSvg(alreadySaved) + (alreadySaved ? " Saved" : " Save");
+    if (alreadySaved) { saveBtn.style.color = "#eab308"; saveBtn.style.borderColor = "rgba(234,179,8,0.4)"; }
+    saveBtn.addEventListener("click", () => {
+      const favs = _readFavs();
+      const idx = favs.findIndex(f => f.translated === h.translated && f.toLang === h.toLang);
+      if (idx !== -1) {
+        favs.splice(idx, 1); _writeFavs(favs);
+        saveBtn.innerHTML = _starSvg(false) + " Save";
+        saveBtn.style.color = ""; saveBtn.style.borderColor = "";
+        showToast("Removed from favourites");
+      } else {
+        favs.unshift({ original: h.original, translated: h.translated, fromLang: h.fromLang, toLang: h.toLang, ts: Date.now() });
+        _writeFavs(favs);
+        saveBtn.innerHTML = _starSvg(true) + " Saved";
+        saveBtn.style.color = "#eab308"; saveBtn.style.borderColor = "rgba(234,179,8,0.4)";
+        showToast("Saved to favourites");
+      }
+      _updateSingleStarBtn();
+      const favsPage = document.getElementById("pageFavourites");
+      if (favsPage && favsPage.classList.contains("active")) renderFavourites();
+    });
 
     const delBtn = document.createElement("button"); delBtn.className = "hist-btn del"; delBtn.textContent = "Delete";
     delBtn.addEventListener("click", () => deleteHistory(i));
