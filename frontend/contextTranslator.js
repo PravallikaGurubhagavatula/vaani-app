@@ -2,384 +2,290 @@
  * Vaani — contextTranslator.js
  * ═══════════════════════════════════════════════════════════════════
  * Context-aware translation enhancer.
- * Takes a raw machine translation and makes it natural by:
- *   1. Detecting tone of the original
- *   2. Identifying slang / colloquial triggers in the original
- *   3. Applying phrase-level rewrites (pattern → natural output)
- *   4. Injecting natural tone markers (bro, please, etc.)
- *   5. Falling back to original translation if confidence is low
+ * Takes a raw machine translation and makes it sound natural by:
  *
- * NEVER modifies meaning — only naturalness.
- * NEVER throws — always returns a string.
+ *   1. Slang injection   — replace literal slang translations with
+ *                          colloquial English equivalents
+ *   2. Tone wrapping     — add natural tone markers (bro, please, etc.)
+ *                          based on detected tone
+ *   3. Phrase rewriting  — known awkward literal → natural rewrites
+ *   4. Cleanup           — strip double spaces, fix capitalisation
+ *
+ * Always falls back to `translated` (or `original`) if any step fails.
+ * Synchronous, zero network calls, safe on every keystroke.
  * ═══════════════════════════════════════════════════════════════════
  */
 
-import { detectTone, TONES }   from "./toneDetector.js";
-import { lookupSlang,
-         getSlangForLang }      from "./slangDictionary.js";
+import { getSlangForLang } from "./slangDictionary.js";
+import { detectTone, TONES } from "./toneDetector.js";
 
-// ── CONFIDENCE THRESHOLD ───────────────────────────────────────────
-// If total rewrite confidence < this value, return original translated.
-const MIN_CONFIDENCE = 0.35;
-
-// ── TONE → NATURAL ENGLISH SUFFIX / PREFIX MARKERS ────────────────
-// Applied at the sentence level when tone is clearly detected.
-const TONE_MARKERS = {
-  [TONES.FRIENDLY]:   { suffix: " bro",    prefix: ""         },
-  [TONES.CASUAL]:     { suffix: "",        prefix: ""         },
-  [TONES.ANGRY]:      { suffix: "!",       prefix: ""         },
-  [TONES.RESPECTFUL]: { suffix: "",        prefix: "Please "  },
-  [TONES.NEUTRAL]:    { suffix: "",        prefix: ""         },
-};
-
-// ── PHRASE REWRITE TABLES ──────────────────────────────────────────
-// Structure:
-//   lang → [ { triggers: string[], rewrite: string, confidence: number } ]
-//
-// triggers  : tokens from the ORIGINAL text that activate this rewrite
-// rewrite   : the natural English phrase to use instead of raw translation
-// confidence: 0–1, how sure we are this rewrite is appropriate
-//
-// A rewrite fires when ANY trigger token is found in the original.
-// Multiple rewrites can fire; highest-confidence one wins per sentence.
+// ── PHRASE-LEVEL REWRITE TABLES ────────────────────────────────────
+// Keyed by source language code.
+// Each entry: { pattern: RegExp | string, replacement: string }
+// Patterns are matched against the TRANSLATED (English) string.
+// More specific patterns must come before generic ones.
 
 const PHRASE_REWRITES = {
 
-  // ── Telugu ───────────────────────────────────────────────────
+  // ── Telugu source ───────────────────────────────────────────────
   te: [
-    { triggers: ["enti ra","enti ri"],        rewrite: "what's up bro?",        confidence: 0.95 },
-    { triggers: ["ra bey","ra bei"],          rewrite: "come on bro",            confidence: 0.92 },
-    { triggers: ["em chestunnav"],            rewrite: "what are you doing bro?",confidence: 0.90 },
-    { triggers: ["ela unnav","ela unnavu"],   rewrite: "how are you bro?",       confidence: 0.90 },
-    { triggers: ["poru","poru ra"],           rewrite: "leave it bro",           confidence: 0.88 },
-    { triggers: ["chala bagundi"],            rewrite: "that's really great!",   confidence: 0.85 },
-    { triggers: ["abbaa"],                    rewrite: "oh wow!",                confidence: 0.80 },
-    { triggers: ["nayana"],                   rewrite: "dear",                   confidence: 0.75 },
-    { triggers: ["babu"],                     rewrite: "buddy",                  confidence: 0.72 },
-    { triggers: ["enti","emiti"],             rewrite: "what?",                  confidence: 0.65 },
-    { triggers: ["ra"],                       rewrite: "bro",                    confidence: 0.60 },
-    { triggers: ["bey","bei"],                rewrite: "dude",                   confidence: 0.60 },
-    { triggers: ["chala"],                    rewrite: "really",                 confidence: 0.55 },
-    { triggers: ["ayindi"],                   rewrite: "that's done",            confidence: 0.55 },
-    { triggers: ["ledu"],                     rewrite: "there isn't any",        confidence: 0.50 },
-    { triggers: ["jagratta"],                 rewrite: "be careful!",            confidence: 0.70 },
-    { triggers: ["tondara"],                  rewrite: "hurry up",               confidence: 0.70 },
-    { triggers: ["dabbu"],                    rewrite: "money",                  confidence: 0.50 },
-    // native script triggers
-    { triggers: ["ఏంటి రా"],                 rewrite: "what's up bro?",         confidence: 0.95 },
-    { triggers: ["రా"],                       rewrite: "bro",                    confidence: 0.60 },
+    { pattern: /\bwhat is it\b/gi,            replacement: "what's up" },
+    { pattern: /\bwhat is this\b/gi,           replacement: "what's this" },
+    { pattern: /\bwhat happened\b/gi,          replacement: "what happened" },
+    { pattern: /\bhow are you doing\b/gi,      replacement: "how's it going" },
+    { pattern: /\bgo away\b/gi,               replacement: "get lost" },
+    { pattern: /\bleave it\b/gi,              replacement: "forget it" },
+    { pattern: /\bdo not worry\b/gi,          replacement: "don't worry" },
+    { pattern: /\bvery good\b/gi,             replacement: "nice one" },
+    { pattern: /\bvery nice\b/gi,             replacement: "so good" },
+    { pattern: /\bwhat brother\b/gi,          replacement: "what bro" },
+    { pattern: /\bwhat sister\b/gi,           replacement: "what sis" },
+    { pattern: /\bokay brother\b/gi,          replacement: "okay bro" },
+    { pattern: /\byou come\b/gi,              replacement: "come on" },
+    { pattern: /\bsay it\b/gi,               replacement: "tell me" },
+    { pattern: /\bwhat do you mean\b/gi,      replacement: "what do you mean" },
+    { pattern: /\bsmall amount\b/gi,          replacement: "a little" },
+    { pattern: /\bcome here brother\b/gi,     replacement: "come here bro" },
+    { pattern: /\bcome bro\b/gi,             replacement: "come on bro" },
+    { pattern: /\byes brother\b/gi,          replacement: "yes bro" },
+    { pattern: /\bno brother\b/gi,           replacement: "no bro" },
+    { pattern: /\btell brother\b/gi,         replacement: "tell me bro" },
   ],
 
-  // ── Hindi ────────────────────────────────────────────────────
+  // ── Hindi source ────────────────────────────────────────────────
   hi: [
-    { triggers: ["kya scene hai","kya scene"],rewrite: "what's going on?",       confidence: 0.92 },
-    { triggers: ["kya kar raha hai"],         rewrite: "what are you doing bro?",confidence: 0.90 },
-    { triggers: ["kaise ho yaar"],            rewrite: "how are you bro?",       confidence: 0.90 },
-    { triggers: ["chad yaar","chod yaar"],    rewrite: "forget it bro",          confidence: 0.88 },
-    { triggers: ["arre yaar"],                rewrite: "oh come on bro",         confidence: 0.88 },
-    { triggers: ["bindaas"],                  rewrite: "chill, it's cool",       confidence: 0.85 },
-    { triggers: ["jugaad karo","jugaad"],     rewrite: "figure out a workaround",confidence: 0.82 },
-    { triggers: ["dhamaal"],                  rewrite: "what a blast!",          confidence: 0.80 },
-    { triggers: ["mast hai","mast"],          rewrite: "awesome!",               confidence: 0.78 },
-    { triggers: ["bakwaas"],                  rewrite: "nonsense!",              confidence: 0.75 },
-    { triggers: ["lafda"],                    rewrite: "there's trouble",        confidence: 0.72 },
-    { triggers: ["timepass"],                 rewrite: "just killing time",      confidence: 0.70 },
-    { triggers: ["yaar"],                     rewrite: "bro",                    confidence: 0.60 },
-    { triggers: ["bhai"],                     rewrite: "bro",                    confidence: 0.60 },
-    { triggers: ["arre"],                     rewrite: "hey",                    confidence: 0.55 },
-    { triggers: ["jaldi kar"],                rewrite: "hurry up!",              confidence: 0.75 },
-    { triggers: ["paisa","paise"],            rewrite: "money",                  confidence: 0.50 },
-    // native script
-    { triggers: ["यार"],                      rewrite: "bro",                    confidence: 0.60 },
-    { triggers: ["भाई"],                      rewrite: "bro",                    confidence: 0.60 },
-    { triggers: ["अरे"],                      rewrite: "hey",                    confidence: 0.55 },
+    { pattern: /\bwhat is it\b/gi,            replacement: "what's up" },
+    { pattern: /\bwhat is the matter\b/gi,    replacement: "what's the matter" },
+    { pattern: /\bhow are you\b/gi,           replacement: "how are you doing" },
+    { pattern: /\bfriend\b/gi,               replacement: "buddy" },
+    { pattern: /\bbrother\b/gi,              replacement: "bro" },
+    { pattern: /\bgo away\b/gi,             replacement: "get out of here" },
+    { pattern: /\bleave it\b/gi,            replacement: "forget it" },
+    { pattern: /\bno problem\b/gi,          replacement: "no worries" },
+    { pattern: /\bvery good\b/gi,           replacement: "nice one" },
+    { pattern: /\bnonsense\b/gi,            replacement: "nonsense" },
+    { pattern: /\bkill time\b/gi,           replacement: "timepass" },
+    { pattern: /\bcaught in trouble\b/gi,   replacement: "in a mess" },
+    { pattern: /\bthere is no problem\b/gi, replacement: "no worries" },
+    { pattern: /\bdo not worry\b/gi,        replacement: "don't worry" },
+    { pattern: /\bcome quickly\b/gi,        replacement: "come fast" },
+    { pattern: /\bwhat the news\b/gi,       replacement: "what's the news" },
+    { pattern: /\bmy friend\b/gi,           replacement: "my buddy" },
+    { pattern: /\bolder brother\b/gi,       replacement: "bro" },
   ],
 
-  // ── Tamil ────────────────────────────────────────────────────
+  // ── Tamil source ────────────────────────────────────────────────
   ta: [
-    { triggers: ["enna da solre","enna da"], rewrite: "what are you saying bro?",confidence: 0.92 },
-    { triggers: ["epdi da iruka"],           rewrite: "how are you bro?",        confidence: 0.90 },
-    { triggers: ["vera level"],              rewrite: "that's on another level!", confidence: 0.90 },
-    { triggers: ["semma da","semma"],        rewrite: "absolutely awesome!",      confidence: 0.88 },
-    { triggers: ["poda da","poda"],          rewrite: "get out of here bro",      confidence: 0.85 },
-    { triggers: ["super da","super"],        rewrite: "super bro!",               confidence: 0.83 },
-    { triggers: ["enna da"],                 rewrite: "what bro?",                confidence: 0.80 },
-    { triggers: ["paathukko"],               rewrite: "take care!",               confidence: 0.78 },
-    { triggers: ["machan"],                  rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["da"],                      rewrite: "bro",                      confidence: 0.55 },
-    { triggers: ["di"],                      rewrite: "girl",                     confidence: 0.55 },
-    { triggers: ["dei"],                     rewrite: "dude",                     confidence: 0.58 },
-    { triggers: ["aama"],                    rewrite: "yeah",                     confidence: 0.50 },
-    { triggers: ["illa"],                    rewrite: "nope",                     confidence: 0.50 },
-    { triggers: ["kadaisi"],                 rewrite: "finally",                  confidence: 0.52 },
-    // native script
-    { triggers: ["மச்சான்"],                 rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["டா"],                      rewrite: "bro",                      confidence: 0.55 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's up" },
+    { pattern: /\bwhat brother\b/gi,         replacement: "what bro" },
+    { pattern: /\bwhat man\b/gi,             replacement: "what bro" },
+    { pattern: /\bhow brother\b/gi,          replacement: "how bro" },
+    { pattern: /\bvery good\b/gi,            replacement: "super" },
+    { pattern: /\bgo away\b/gi,              replacement: "get lost" },
+    { pattern: /\bnext level\b/gi,           replacement: "next level" },
+    { pattern: /\bdo not disturb\b/gi,       replacement: "stop bothering" },
+    { pattern: /\bcome quickly\b/gi,         replacement: "come fast" },
+    { pattern: /\bok ok\b/gi,                replacement: "okay okay" },
+    { pattern: /\bsuperb\b/gi,              replacement: "awesome" },
   ],
 
-  // ── Kannada ──────────────────────────────────────────────────
+  // ── Kannada source ──────────────────────────────────────────────
   kn: [
-    { triggers: ["yen guru","yen maadle"],   rewrite: "what's up bro?",          confidence: 0.92 },
-    { triggers: ["hengide guru"],            rewrite: "how are you bro?",         confidence: 0.90 },
-    { triggers: ["onde kathe guru"],         rewrite: "same old story bro",       confidence: 0.88 },
-    { triggers: ["hogbidi","hogbeku"],        rewrite: "just leave it",           confidence: 0.85 },
-    { triggers: ["sahi haelu","sahi"],       rewrite: "that's right!",            confidence: 0.78 },
-    { triggers: ["sullu"],                   rewrite: "that's a lie!",            confidence: 0.75 },
-    { triggers: ["bega"],                    rewrite: "quickly!",                 confidence: 0.70 },
-    { triggers: ["guru"],                    rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["machaa"],                  rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["bekilla"],                 rewrite: "no need",                  confidence: 0.60 },
-    // native script
-    { triggers: ["ಗುರು"],                    rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["ದಯವಿಟ್ಟು"],               rewrite: "please",                   confidence: 0.70 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's up" },
+    { pattern: /\bhow are you\b/gi,          replacement: "how's it going" },
+    { pattern: /\bwhat man\b/gi,             replacement: "what bro" },
+    { pattern: /\bgo away\b/gi,              replacement: "get lost" },
+    { pattern: /\bvery correct\b/gi,         replacement: "spot on" },
+    { pattern: /\bone story\b/gi,            replacement: "same old story" },
+    { pattern: /\bneed not\b/gi,             replacement: "don't need it" },
   ],
 
-  // ── Malayalam ────────────────────────────────────────────────
+  // ── Malayalam source ────────────────────────────────────────────
   ml: [
-    { triggers: ["enthu cheyva da"],         rewrite: "what are you doing bro?", confidence: 0.92 },
-    { triggers: ["adipoli da","adipoli"],     rewrite: "that's awesome bro!",     confidence: 0.90 },
-    { triggers: ["enthu parayva","enthu"],   rewrite: "what are you saying?",    confidence: 0.85 },
-    { triggers: ["poda da","poda"],          rewrite: "get lost bro",            confidence: 0.83 },
-    { triggers: ["sheri da","sheri"],        rewrite: "okay bro",                confidence: 0.80 },
-    { triggers: ["thalleda"],                rewrite: "that's not true!",        confidence: 0.78 },
-    { triggers: ["mone"],                    rewrite: "dear",                    confidence: 0.65 },
-    { triggers: ["mol"],                     rewrite: "dear",                    confidence: 0.65 },
-    { triggers: ["chetta"],                  rewrite: "bro",                     confidence: 0.65 },
-    { triggers: ["machaan"],                 rewrite: "bro",                     confidence: 0.65 },
-    // native script
-    { triggers: ["മോനേ"],                    rewrite: "dear",                    confidence: 0.65 },
-    { triggers: ["ദയവായി"],                  rewrite: "please",                  confidence: 0.70 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's up" },
+    { pattern: /\bhow is it\b/gi,            replacement: "how's it going" },
+    { pattern: /\bgo away\b/gi,              replacement: "get lost" },
+    { pattern: /\bdo not disturb\b/gi,       replacement: "stop bothering" },
+    { pattern: /\bexcellent\b/gi,            replacement: "awesome" },
+    { pattern: /\bokay okay\b/gi,            replacement: "alright alright" },
+    { pattern: /\bwhere are you going\b/gi,  replacement: "where you off to" },
+    { pattern: /\bnot true\b/gi,            replacement: "that's not true" },
   ],
 
-  // ── Bengali ──────────────────────────────────────────────────
+  // ── Bengali source ──────────────────────────────────────────────
   bn: [
-    { triggers: ["ki korcho re","ki korcho"], rewrite: "what are you doing bro?",confidence: 0.92 },
-    { triggers: ["kemon acho re","kemon acho"],rewrite: "how are you bro?",      confidence: 0.90 },
-    { triggers: ["jhol ache","jhol"],         rewrite: "there's a mess",         confidence: 0.85 },
-    { triggers: ["pagol na ki"],              rewrite: "are you crazy?",          confidence: 0.83 },
-    { triggers: ["faka"],                     rewrite: "free / empty",            confidence: 0.70 },
-    { triggers: ["thik ache","thik"],         rewrite: "it's alright",            confidence: 0.68 },
-    { triggers: ["bhai"],                     rewrite: "bro",                     confidence: 0.60 },
-    { triggers: ["dada"],                     rewrite: "bro",                     confidence: 0.60 },
-    // native script
-    { triggers: ["ভাই"],                      rewrite: "bro",                     confidence: 0.60 },
-    { triggers: ["দয়া করে"],                 rewrite: "please",                  confidence: 0.70 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's up" },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bgo away\b/gi,              replacement: "get out" },
+    { pattern: /\bcomplicated\b/gi,          replacement: "messy" },
+    { pattern: /\bvery good\b/gi,           replacement: "nice one" },
   ],
 
-  // ── Marathi ──────────────────────────────────────────────────
+  // ── Marathi source ──────────────────────────────────────────────
   mr: [
-    { triggers: ["kay karto re","kay karto"], rewrite: "what are you doing bro?",confidence: 0.92 },
-    { triggers: ["kasa ahe re","kasa ahe"],   rewrite: "how are you bro?",       confidence: 0.90 },
-    { triggers: ["bhaari ahe","bhaari"],      rewrite: "that's awesome!",         confidence: 0.88 },
-    { triggers: ["ghanta"],                   rewrite: "absolutely nothing!",     confidence: 0.85 },
-    { triggers: ["fokat"],                    rewrite: "for free",                confidence: 0.80 },
-    { triggers: ["kharach"],                  rewrite: "for real?",               confidence: 0.75 },
-    { triggers: ["chaan"],                    rewrite: "nice!",                   confidence: 0.70 },
-    { triggers: ["bhau"],                     rewrite: "bro",                     confidence: 0.65 },
-    { triggers: ["dada"],                     rewrite: "bro",                     confidence: 0.60 },
-    // native script
-    { triggers: ["भाऊ"],                      rewrite: "bro",                     confidence: 0.65 },
-    { triggers: ["कृपया"],                    rewrite: "please",                  confidence: 0.70 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's up" },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bgo away\b/gi,              replacement: "get lost" },
+    { pattern: /\bfree of cost\b/gi,         replacement: "for free" },
+    { pattern: /\bvery heavy\b/gi,           replacement: "really intense" },
   ],
 
-  // ── Gujarati ─────────────────────────────────────────────────
+  // ── Gujarati source ─────────────────────────────────────────────
   gu: [
-    { triggers: ["kem cho yaar","kem cho"],   rewrite: "how are you bro?",        confidence: 0.92 },
-    { triggers: ["su thayun yaar","su thayun"],rewrite: "what happened bro?",     confidence: 0.90 },
-    { triggers: ["mast che","mast"],          rewrite: "that's awesome!",          confidence: 0.85 },
-    { triggers: ["dhama"],                    rewrite: "what a party!",            confidence: 0.80 },
-    { triggers: ["gando"],                    rewrite: "you're crazy!",            confidence: 0.78 },
-    { triggers: ["bhai"],                     rewrite: "bro",                      confidence: 0.60 },
-    { triggers: ["yaar"],                     rewrite: "bro",                      confidence: 0.60 },
-    // native script
-    { triggers: ["ભાઈ"],                      rewrite: "bro",                      confidence: 0.60 },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bgo away\b/gi,              replacement: "get lost" },
+    { pattern: /\bvery good\b/gi,           replacement: "nice one" },
   ],
 
-  // ── Punjabi ──────────────────────────────────────────────────
+  // ── Punjabi source ──────────────────────────────────────────────
   pa: [
-    { triggers: ["kiddan yaar","kiddan"],     rewrite: "what's up bro?",          confidence: 0.92 },
-    { triggers: ["ki haal yaar","ki haal"],   rewrite: "how are you bro?",        confidence: 0.90 },
-    { triggers: ["chad yaar"],                rewrite: "leave it bro",             confidence: 0.88 },
-    { triggers: ["panga na le"],              rewrite: "don't start trouble",      confidence: 0.85 },
-    { triggers: ["oye"],                      rewrite: "hey",                      confidence: 0.68 },
-    { triggers: ["paaji"],                    rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["yaar"],                     rewrite: "bro",                      confidence: 0.60 },
-    { triggers: ["veer"],                     rewrite: "bro",                      confidence: 0.60 },
-    // native script
-    { triggers: ["ਯਾਰ"],                      rewrite: "bro",                      confidence: 0.60 },
-    { triggers: ["ਪਾਜੀ"],                     rewrite: "bro",                      confidence: 0.65 },
+    { pattern: /\bhow are you\b/gi,          replacement: "how's it going" },
+    { pattern: /\bgo away\b/gi,              replacement: "get out" },
+    { pattern: /\bwell done\b/gi,            replacement: "well done" },
+    { pattern: /\bleave it friend\b/gi,      replacement: "forget it yaar" },
+    { pattern: /\bhack\b/gi,               replacement: "jugaad" },
   ],
 
-  // ── Urdu ─────────────────────────────────────────────────────
+  // ── Urdu source ─────────────────────────────────────────────────
   ur: [
-    { triggers: ["kya scene yaar"],           rewrite: "what's going on bro?",    confidence: 0.92 },
-    { triggers: ["zabardast"],                rewrite: "that's incredible!",       confidence: 0.88 },
-    { triggers: ["bakwaas"],                  rewrite: "nonsense!",                confidence: 0.80 },
-    { triggers: ["mast"],                     rewrite: "awesome!",                 confidence: 0.75 },
-    { triggers: ["yaar"],                     rewrite: "bro",                      confidence: 0.60 },
-    { triggers: ["bhai"],                     rewrite: "bro",                      confidence: 0.60 },
-    { triggers: ["jaan"],                     rewrite: "dear",                     confidence: 0.65 },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bgo away\b/gi,              replacement: "get out" },
+    { pattern: /\bvery good\b/gi,           replacement: "nice one" },
+    { pattern: /\brespected one\b/gi,        replacement: "sir" },
   ],
 
-  // ── Odia ─────────────────────────────────────────────────────
+  // ── Odia source ─────────────────────────────────────────────────
   or: [
-    { triggers: ["ki khobor re","ki khobor"], rewrite: "what's up bro?",          confidence: 0.90 },
-    { triggers: ["kemiti acha re"],           rewrite: "how are you bro?",         confidence: 0.88 },
-    { triggers: ["bhai"],                     rewrite: "bro",                      confidence: 0.60 },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bwhat is the news\b/gi,     replacement: "what's up" },
+    { pattern: /\bvery good\b/gi,           replacement: "nice one" },
   ],
 
-  // ── Assamese ─────────────────────────────────────────────────
-  as: [
-    { triggers: ["ki khobor re","ki khobor"], rewrite: "what's up bro?",          confidence: 0.90 },
-    { triggers: ["kene acho re"],             rewrite: "how are you bro?",         confidence: 0.88 },
-    { triggers: ["jordar"],                   rewrite: "that's powerful!",          confidence: 0.82 },
-    { triggers: ["bhai"],                     rewrite: "bro",                      confidence: 0.60 },
-  ],
-
-  // ── Nepali ───────────────────────────────────────────────────
-  ne: [
-    { triggers: ["ke cha dai","ke cha"],      rewrite: "what's up bro?",          confidence: 0.92 },
-    { triggers: ["kasto cha dai"],            rewrite: "how are you bro?",         confidence: 0.90 },
-    { triggers: ["chatpat"],                  rewrite: "quickly!",                 confidence: 0.78 },
-    { triggers: ["jhyaure"],                  rewrite: "you slowpoke",             confidence: 0.75 },
-    { triggers: ["dai"],                      rewrite: "bro",                      confidence: 0.65 },
-    { triggers: ["sathi"],                    rewrite: "buddy",                    confidence: 0.62 },
-  ],
-
-  // ── Bhojpuri ─────────────────────────────────────────────────
+  // ── Bhojpuri source ─────────────────────────────────────────────
   bho: [
-    { triggers: ["ka ba yaar","ka ba"],       rewrite: "what's up bro?",          confidence: 0.90 },
-    { triggers: ["baa"],                      rewrite: "yeah",                     confidence: 0.65 },
-    { triggers: ["bhaiya"],                   rewrite: "bro",                      confidence: 0.65 },
+    { pattern: /\bwhat is it\b/gi,           replacement: "what's going on" },
+    { pattern: /\bhow are you\b/gi,          replacement: "how are you doing" },
+    { pattern: /\bbrother\b/gi,             replacement: "bro" },
   ],
 
-  // ── Haryanvi ─────────────────────────────────────────────────
-  bgc: [
-    { triggers: ["ke hoga yaar","ke hoga"],   rewrite: "what happened bro?",      confidence: 0.88 },
-    { triggers: ["mhara"],                    rewrite: "mine",                     confidence: 0.60 },
-    { triggers: ["bhai"],                     rewrite: "bro",                      confidence: 0.60 },
-  ],
-
-  // ── Rajasthani / Marwari ──────────────────────────────────────
-  raj: [
-    { triggers: ["kem cho yaar"],             rewrite: "how are you bro?",        confidence: 0.88 },
-    { triggers: ["sa"],                       rewrite: "sir",                      confidence: 0.58 },
-  ],
-
-  // ── Common cross-language rewrites (applied to all) ──────────
+  // ── Common rewrites applied to ALL languages ────────────────────
   _common: [
-    { triggers: ["come here!","come here now","get here"],
-      rewrite: "get over here!",              confidence: 0.70 },
-    { triggers: ["what are you doing?","what r u doing"],
-      rewrite: "what are you up to?",         confidence: 0.65 },
-    { triggers: ["how are you?","how r u"],
-      rewrite: "how are you doing?",          confidence: 0.60 },
-    { triggers: ["okay okay","ok ok"],
-      rewrite: "alright, alright",            confidence: 0.65 },
-    { triggers: ["no problem","no issue"],
-      rewrite: "don't worry about it",        confidence: 0.62 },
-    { triggers: ["very good","very nice"],
-      rewrite: "really great!",               confidence: 0.60 },
+    { pattern: /\bdo not\b/gi,              replacement: "don't" },
+    { pattern: /\bcannot\b/gi,              replacement: "can't" },
+    { pattern: /\bwill not\b/gi,            replacement: "won't" },
+    { pattern: /\bshould not\b/gi,          replacement: "shouldn't" },
+    { pattern: /\bwould not\b/gi,           replacement: "wouldn't" },
+    { pattern: /\bcould not\b/gi,           replacement: "couldn't" },
+    { pattern: /\bI am\b/g,                replacement: "I'm" },
+    { pattern: /\bhe is\b/gi,              replacement: "he's" },
+    { pattern: /\bshe is\b/gi,             replacement: "she's" },
+    { pattern: /\bit is\b/gi,              replacement: "it's" },
+    { pattern: /\bthey are\b/gi,           replacement: "they're" },
+    { pattern: /\bwe are\b/gi,             replacement: "we're" },
+    { pattern: /\byou are\b/gi,            replacement: "you're" },
+    { pattern: /\bwhat is happening\b/gi,  replacement: "what's happening" },
+    { pattern: /\bwhat is going on\b/gi,   replacement: "what's going on" },
+    { pattern: /\bhow is it going\b/gi,    replacement: "how's it going" },
+    { pattern: /\bthat is right\b/gi,      replacement: "that's right" },
+    { pattern: /\bthat is wrong\b/gi,      replacement: "that's wrong" },
+    { pattern: /\bvery much\b/gi,          replacement: "a lot" },
+    { pattern: /\bok ok\b/gi,              replacement: "okay okay" },
+    { pattern: /\bwhat brother\b/gi,       replacement: "what bro" },
+    { pattern: /\bcome brother\b/gi,       replacement: "come on bro" },
+    { pattern: /\byes brother\b/gi,        replacement: "yes bro" },
+    { pattern: /\bno brother\b/gi,         replacement: "no bro" },
   ],
 };
 
-// ── HELPERS ────────────────────────────────────────────────────────
+// ── TONE WRAPPERS ──────────────────────────────────────────────────
+// After rewriting, optionally inject a tone marker so the sentence
+// feels natural. Rules: { tone, position, marker, condition? }
+//   position: "append" | "prepend" | "none"
+//   condition: optional fn(translated) => bool — skip if false
 
-/**
- * Lowercase + normalise text for trigger matching.
- */
-function normalise(text) {
-  return (text || "").toLowerCase().trim();
-}
+const TONE_WRAPPERS = {
+  [TONES.FRIENDLY]: [
+    {
+      marker: "bro",
+      position: "append",
+      condition: t => !/\bbro\b|\bman\b|\bdude\b|\byaar\b|\bda\b|\bdi\b|\bmachan\b/i.test(t),
+    },
+  ],
+  [TONES.CASUAL]:     [],
+  [TONES.ANGRY]:      [],
+  [TONES.RESPECTFUL]: [
+    {
+      marker: "please",
+      position: "prepend",
+      condition: t =>
+        !/\bplease\b|\bkindly\b/i.test(t) &&
+        /^(come|go|tell|give|help|show|send|bring|make|do)/i.test(t.trim()),
+    },
+  ],
+  [TONES.NEUTRAL]: [],
+};
 
-/**
- * Check whether any trigger phrase appears in the normalised original.
- * Supports both single-word and multi-word triggers.
- */
-function matchesTrigger(normOriginal, triggers) {
-  for (const trigger of triggers) {
-    const t = normalise(trigger);
-    if (normOriginal.includes(t)) return true;
-  }
-  return false;
-}
+// ── SLANG MEANING → LIKELY LITERAL TRANSLATIONS ────────────────────
+// When a slang word in the source maps to a meaning, these are the
+// over-literal English words a machine translator might produce.
 
-/**
- * Find the highest-confidence rewrite that matches the original text.
- * Checks language-specific table first, then _common.
- *
- * @returns {{ rewrite: string, confidence: number } | null}
- */
-function findBestRewrite(normOriginal, lang) {
-  let best = null;
+const SLANG_LITERAL_MAP = {
+  "bro":                        ["brother","male sibling"],
+  "bro / hey (masculine)":      ["brother","male friend","hey there"],
+  "hey (feminine)":             ["sister","female friend","girl","female"],
+  "friend / bro":               ["friend","companion","comrade","associate","ally"],
+  "buddy":                      ["buddy","companion","associate"],
+  "dude":                       ["man","person","individual"],
+  "darling / dear":             ["darling","dear","beloved","sweetheart"],
+  "what's up":                  ["what is happening","what is it","what is going on","what is this"],
+  "very / a lot":               ["very much","a lot","greatly","extremely","a great deal"],
+  "no / nothing":               ["there is nothing","there is no","nothing exists","not present"],
+  "leave it / forget it":       ["leave it","forget it","let it go","abandon it"],
+  "hurry up":                   ["come quickly","move fast","hurry","rush","be quick"],
+  "money":                      ["currency","funds","cash","finances"],
+  "awesome / great":            ["very good","excellent","wonderful","marvelous","outstanding"],
+  "carefree / cool":            ["carefree","free spirited","unworried","relaxed"],
+  "nonsense":                   ["rubbish","garbage","meaningless","absurd"],
+  "hack / workaround":          ["hack","workaround","temporary solution","adjustment","fix"],
+  "fun / chaos":                ["entertainment","excitement","chaos","disorder"],
+  "get lost":                   ["go away","leave","depart","go","go from here"],
+  "next level / amazing":       ["next level","extraordinary","superior","beyond normal"],
+  "take care / be careful":     ["be careful","take care","be cautious","be alert"],
+  "come on bro":                ["come here","come now","come here brother"],
+  "elder bro / bro":            ["elder brother","older brother","senior brother"],
+  "awesome / excellent":        ["excellent","very good","outstanding","perfect"],
+  "okay / alright":             ["okay","alright","it is fine","it is okay","that is fine"],
+};
 
-  const tables = [
-    ...(PHRASE_REWRITES[lang] || []),
-    ...PHRASE_REWRITES._common,
-  ];
+// ── SLANG INJECTION ────────────────────────────────────────────────
 
-  for (const entry of tables) {
-    if (matchesTrigger(normOriginal, entry.triggers)) {
-      if (!best || entry.confidence > best.confidence) {
-        best = entry;
-      }
-    }
-  }
+const _INJECT_BLOCKLIST = new Set([
+  "is","am","are","was","were","be","been","being","do","does","did",
+  "have","has","had","will","would","can","could","shall","should",
+  "the","a","an","in","on","at","to","of","and","or","but","if","as",
+  "this","that","it","he","she","we","they","you","i","my","your",
+]);
 
-  return best;
-}
+function injectSlangMeanings(original, translated, lang) {
+  const slangDict  = getSlangForLang(lang);
+  if (!slangDict || Object.keys(slangDict).length === 0) return translated;
 
-/**
- * Collect all slang words found in the original text for a given lang.
- * Returns array of { slang, meaning, tone } sorted by position in text.
- */
-function findSlangHits(normOriginal, lang) {
-  const dict  = getSlangForLang(lang);
-  const hits  = [];
-  const words = normOriginal.split(/\s+/);
+  const origTokens = original.toLowerCase().split(/\s+/);
+  let   result     = translated;
 
-  for (const word of words) {
-    const entry = dict[word];
-    if (entry) {
-      hits.push({ slang: word, meaning: entry.meaning, tone: entry.tone });
-    }
-  }
-  return hits;
-}
+  for (const token of origTokens) {
+    const clean = token.replace(/[^a-z\u0900-\u0DFF\u0C00-\u0C7F\u0B80-\u0BFF\u0A80-\u0AFF\u0A00-\u0A7F\u0980-\u09FF\u0B00-\u0B7F\u0C80-\u0CFF\u0D00-\u0D7F]/gi, "");
+    if (!clean || _INJECT_BLOCKLIST.has(clean)) continue;
 
-/**
- * Apply tone marker to translated text based on detected tone.
- * Only appends suffix / prefix if:
- *   - The suffix is not already present
- *   - The translation is not empty
- */
-function applyToneMarker(translated, tone) {
-  const marker = TONE_MARKERS[tone] || TONE_MARKERS[TONES.NEUTRAL];
-  let result   = translated.trim();
+    const entry = slangDict[clean];
+    if (!entry?.meaning) continue;
 
-  if (!result) return result;
-
-  // Prefix (e.g. "Please ")
-  if (marker.prefix && !result.toLowerCase().startsWith(marker.prefix.toLowerCase().trim())) {
-    result = marker.prefix + result;
-  }
-
-  // Suffix (e.g. " bro", "!")
-  if (marker.suffix) {
-    const sfx = marker.suffix.trim();
-    // Don't double-add suffix
-    if (sfx && !result.toLowerCase().endsWith(sfx.toLowerCase())) {
-      // Don't add " bro" if text already has bro/dude/man/buddy/pal
-      const hasSocial = /\b(bro|dude|man|buddy|pal|dear|sir|madam)\b/i.test(result);
-      if (!(sfx === "bro" && hasSocial)) {
-        // Insert before terminal punctuation if present
-        const termMatch = result.match(/([!?.,…]+)$/);
-        if (termMatch) {
-          const punct = termMatch[1];
-          result = result.slice(0, -punct.length) + " " + sfx + punct;
-        } else {
-          result = result + " " + sfx;
-        }
+    const literalVariants = SLANG_LITERAL_MAP[entry.meaning] || [entry.meaning];
+    for (const variant of literalVariants) {
+      const rx = new RegExp(`\\b${_escapeRegex(variant)}\\b`, "gi");
+      if (rx.test(result)) {
+        result = result.replace(rx, entry.meaning);
+        break;
       }
     }
   }
@@ -387,157 +293,160 @@ function applyToneMarker(translated, tone) {
   return result;
 }
 
-/**
- * Capitalise first letter of a string.
- */
-function capitaliseFirst(str) {
-  if (!str) return str;
-  return str.charAt(0).toUpperCase() + str.slice(1);
+function _escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── PHRASE REWRITER ────────────────────────────────────────────────
+
+function applyRewrites(text, lang) {
+  let result = text;
+
+  const langRules = PHRASE_REWRITES[lang] || [];
+  for (const rule of langRules) {
+    result = result.replace(rule.pattern, rule.replacement);
+  }
+
+  for (const rule of PHRASE_REWRITES._common) {
+    result = result.replace(rule.pattern, rule.replacement);
+  }
+
+  return result;
+}
+
+// ── TONE WRAPPER ───────────────────────────────────────────────────
+
+function applyToneWrapper(text, tone) {
+  const rules = TONE_WRAPPERS[tone] || [];
+  let result  = text.trim();
+
+  for (const rule of rules) {
+    if (rule.condition && !rule.condition(result)) continue;
+
+    if (rule.position === "append") {
+      const stripped = result.replace(/[.!?…]+$/, "").trimEnd();
+      const ending   = result.slice(stripped.length);
+      result = `${stripped}, ${rule.marker}${ending}`;
+    } else if (rule.position === "prepend") {
+      result = `${_capitalise(rule.marker)} ${_lowerFirst(result)}`;
+    }
+  }
+
+  return result;
+}
+
+function _capitalise(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function _lowerFirst(s) {
+  if (!s) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+// ── CLEANUP ────────────────────────────────────────────────────────
+
+function cleanup(text) {
+  return text
+    .replace(/ {2,}/g, " ")
+    .replace(/ ,/g, ",")
+    .replace(/\s+([.!?…])/g, "$1")
+    .replace(/([.!?…])\s*([.!?…])+/g, "$1")
+    .trim();
+}
+
+// ── PASSTHROUGH GUARD ──────────────────────────────────────────────
+
+function _looksLikePassthrough(original, translated) {
+  if (!translated) return true;
+  const o = original.trim().toLowerCase();
+  const t = translated.trim().toLowerCase();
+  if (o === t) return true;
+  if (Math.abs(o.length - t.length) <= 2 && o.slice(0, 6) === t.slice(0, 6)) return true;
+  return false;
 }
 
 // ── MAIN EXPORT ────────────────────────────────────────────────────
 
 /**
- * Enhance a machine translation with context, slang awareness, and tone.
+ * Enhance a machine translation to sound natural and context-aware.
  *
- * @param {string} original   - Original text in source language
- * @param {string} translated - Raw machine translation (English target assumed)
+ * @param {string} original   - Source text (any language / script)
+ * @param {string} translated - Raw machine-translated English string
  * @param {string} lang       - Source language code (e.g. "te", "hi", "ta")
- * @returns {string}          - Enhanced natural translation
+ * @returns {string}          - Enhanced translation (falls back to `translated`)
  */
 export function enhanceTranslation(original, translated, lang) {
-  // Guard: always return a string, never throw
+  if (!original || typeof original !== "string") return translated || "";
+  if (!translated || typeof translated !== "string") return translated || "";
+  if (!lang) return translated;
+  if (_looksLikePassthrough(original, translated)) return translated;
+
   try {
-    if (!original || typeof original !== "string") return translated || "";
-    if (!translated || typeof translated !== "string") return translated || "";
+    let result = translated.trim();
 
-    const normOrig   = normalise(original);
-    const normTrans  = normalise(translated);
+    // Step 1: Slang injection
+    result = injectSlangMeanings(original, result, lang);
 
-    // Skip enhancement for very short outputs — likely single words
-    // where machine translation is already correct
-    if (normTrans.split(/\s+/).length === 1 && normOrig.split(/\s+/).length === 1) {
-      return translated;
-    }
+    // Step 2: Phrase-level rewrites
+    result = applyRewrites(result, lang);
 
-    // ── Step 1: Detect tone of original ─────────────────────────
+    // Step 3: Tone detection + wrapper
     const tone = detectTone(original, lang);
+    result = applyToneWrapper(result, tone);
 
-    // ── Step 2: Look for phrase-level rewrite ────────────────────
-    const rewrite = findBestRewrite(normOrig, lang);
+    // Step 4: Cleanup
+    result = cleanup(result);
 
-    if (rewrite && rewrite.confidence >= MIN_CONFIDENCE) {
-      // High-confidence phrase rewrite — use it directly
-      // Still apply tone marker so "come on bro!" gets "!" for angry tone
-      const withTone = applyToneMarker(rewrite.rewrite, tone);
-      return capitaliseFirst(withTone);
-    }
-
-    // ── Step 3: Slang word injection ─────────────────────────────
-    // Find slang hits and see if we can meaningfully inject meanings
-    const slangHits = findSlangHits(normOrig, lang);
-    let enhanced    = translated;
-
-    if (slangHits.length > 0) {
-      // For each slang hit, attempt to inject the colloquial meaning
-      // into the translated string if its literal translation is present.
-      for (const hit of slangHits) {
-        // Common literal translations that machines produce for address words
-        const LITERAL_MAP = {
-          "bro":       ["bro", "brother", "man"],
-          "friend":    ["friend", "buddy"],
-          "dude":      ["dude", "man", "guy"],
-          "dear":      ["dear", "darling", "honey"],
-          "money":     ["money", "cash", "funds"],
-          "quickly":   ["quickly", "fast", "hurry"],
-          "nonsense":  ["nonsense", "rubbish"],
-          "awesome":   ["awesome", "great", "wonderful", "excellent"],
-        };
-
-        const naturalMeaning = hit.meaning.split(" / ")[0].trim().toLowerCase();
-
-        // If the translated text already contains a natural equivalent, skip
-        const equivalents = LITERAL_MAP[naturalMeaning] || [naturalMeaning];
-        const alreadyNatural = equivalents.some(eq =>
-          normalise(enhanced).includes(eq)
-        );
-
-        if (!alreadyNatural) {
-          // Inject meaning at end if no equivalent found
-          enhanced = enhanced.trim();
-          const hasPunct = /[!?.,…]$/.test(enhanced);
-          if (hasPunct) {
-            enhanced = enhanced.slice(0, -1) + " " + naturalMeaning + enhanced.slice(-1);
-          } else {
-            enhanced += " " + naturalMeaning;
-          }
-        }
-      }
-    }
-
-    // ── Step 4: Apply tone marker ────────────────────────────────
-    // Only apply meaningful markers (not neutral suffix "")
-    if (tone !== TONES.NEUTRAL) {
-      enhanced = applyToneMarker(enhanced, tone);
-    }
-
-    // ── Step 5: Sanity check ─────────────────────────────────────
-    // If enhanced is substantially longer than translated (>40% extra chars)
-    // or is empty, fall back to original translation.
-    if (!enhanced || enhanced.length > translated.length * 1.4) {
-      return capitaliseFirst(translated.trim());
-    }
-
-    return capitaliseFirst(enhanced.trim());
+    // Step 5: Never return empty
+    return result || translated;
 
   } catch (_) {
-    // Never crash the app — silently return original translation
-    return translated || "";
+    return translated;
   }
 }
 
 /**
- * Enhanced translation with full metadata (useful for UI debug / tooltips).
+ * Debug variant — returns all intermediate steps.
  *
  * @param {string} original
  * @param {string} translated
  * @param {string} lang
  * @returns {{
- *   enhanced   : string,
- *   original   : string,
- *   translated : string,
- *   tone       : string,
- *   slangHits  : Array<{ slang: string, meaning: string, tone: string }>,
- *   rewriteUsed: boolean,
- *   confidence : number
+ *   original: string,
+ *   raw: string,
+ *   afterSlang: string,
+ *   afterRewrites: string,
+ *   tone: string,
+ *   afterToneWrap: string,
+ *   final: string,
+ *   error?: string
  * }}
  */
 export function enhanceTranslationDetailed(original, translated, lang) {
-  try {
-    const normOrig  = normalise(original || "");
-    const tone      = detectTone(original || "", lang);
-    const rewrite   = findBestRewrite(normOrig, lang);
-    const slangHits = findSlangHits(normOrig, lang);
-    const enhanced  = enhanceTranslation(original, translated, lang);
-
+  if (!original || !translated || !lang) {
     return {
-      enhanced,
-      original,
-      translated,
-      tone,
-      slangHits,
-      rewriteUsed: !!(rewrite && rewrite.confidence >= MIN_CONFIDENCE),
-      confidence:  rewrite?.confidence ?? 0,
+      original, raw: translated, afterSlang: translated,
+      afterRewrites: translated, tone: TONES.NEUTRAL,
+      afterToneWrap: translated, final: translated,
     };
-  } catch (_) {
+  }
+
+  try {
+    const afterSlang    = injectSlangMeanings(original, translated.trim(), lang);
+    const afterRewrites = applyRewrites(afterSlang, lang);
+    const tone          = detectTone(original, lang);
+    const afterToneWrap = applyToneWrapper(afterRewrites, tone);
+    const final         = cleanup(afterToneWrap) || translated;
+
+    return { original, raw: translated, afterSlang, afterRewrites, tone, afterToneWrap, final };
+
+  } catch (e) {
     return {
-      enhanced:    translated || "",
-      original,
-      translated,
-      tone:        TONES.NEUTRAL,
-      slangHits:   [],
-      rewriteUsed: false,
-      confidence:  0,
+      original, raw: translated, afterSlang: translated,
+      afterRewrites: translated, tone: TONES.NEUTRAL,
+      afterToneWrap: translated, final: translated,
+      error: e.message,
     };
   }
 }
