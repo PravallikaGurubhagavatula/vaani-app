@@ -574,3 +574,112 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 }
 
 /* old inline-style selectors removed — now using .active class */
+
+
+/* ================================================================
+   Vaani — Theme Color Fixes
+   Add these lines at the very END of your style.css file.
+   They override gold/yellow star and red danger colors to match
+   the app's purple theme.
+================================================================ */
+
+/* ── Save / Star button — Single Mode (base) ────────────────────── */
+.ac-star {
+  border-color: rgba(124, 58, 237, 0.35);
+  color: var(--text-secondary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ac-star:hover {
+  background: rgba(124, 58, 237, 0.12) !important;
+  border-color: rgba(124, 58, 237, 0.6) !important;
+  color: #a78bfa !important;
+}
+
+/* ── Save / Star button — ACTIVE (saved) state ───────────────────── */
+/* Triggered by classList.toggle("active", isSaved) in app.js        */
+.ac-star.active,
+.hist-btn-star.active {
+  background: rgba(124, 58, 237, 0.15) !important;
+  border-color: rgba(124, 58, 237, 0.55) !important;
+  color: #a78bfa !important;
+}
+.ac-star.active svg,
+.hist-btn-star.active svg {
+  fill: #7c3aed;
+  stroke: #7c3aed;
+}
+.ac-star.active:hover,
+.hist-btn-star.active:hover {
+  background: rgba(124, 58, 237, 0.08) !important;
+  border-color: rgba(124, 58, 237, 0.35) !important;
+  color: var(--text-secondary) !important;
+}
+.ac-star.active:hover svg,
+.hist-btn-star.active:hover svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+/* ── Star SVG base — outline by default ─────────────────────────── */
+.ac-star svg,
+.hist-btn-star svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  margin-right: 3px;
+  fill: none;
+  stroke: currentColor;
+  transition: fill 0.15s, stroke 0.15s;
+}
+
+/* ── Settings — warn buttons (Clear History, Clear Favs etc.) ───── */
+.stg-warn {
+  background: rgba(124, 58, 237, 0.08) !important;
+  border: 1px solid rgba(124, 58, 237, 0.3) !important;
+  color: #a78bfa !important;
+}
+.stg-warn:hover {
+  background: rgba(124, 58, 237, 0.18) !important;
+  border-color: rgba(124, 58, 237, 0.55) !important;
+  color: #c4b5fd !important;
+}
+
+/* ── Settings — danger button (Reset All App Data) ───────────────── */
+/* Kept as a distinct red so users know it's destructive,
+   but softened to match the dark theme */
+.stg-danger {
+  background: rgba(220, 38, 38, 0.08) !important;
+  border: 1px solid rgba(220, 38, 38, 0.3) !important;
+  color: #f87171 !important;
+}
+.stg-danger:hover {
+  background: rgba(220, 38, 38, 0.18) !important;
+  border-color: rgba(220, 38, 38, 0.55) !important;
+  color: #fca5a5 !important;
+}
+
+/* old inline-style selectors removed — now using .active class */
+
+/* ── Speech Edit UI ──────────────────────────────────────────────── */
+/* Edit pencil button next to "You said" label */
+#editSpeechBtn {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+#editSpeechBtn:hover {
+  opacity: 1;
+  color: #a78bfa;
+}
+#editSpeechBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Smooth open/close of the edit box */
+#speechEditBox {
+  animation: fadeSlideIn 0.18s ease;
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
