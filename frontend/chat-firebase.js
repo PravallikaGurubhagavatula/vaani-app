@@ -1,37 +1,38 @@
 /* ================================================================
-   Vaani — chat-firebase.js  v5  DEFINITIVE
+   Vaani — chat-firebase.js  v6  FINAL
    ================================================================
 
-   ROOT CAUSE EXPLAINED:
+   THE CORRECT FIX:
    ─────────────────────────────────────────────────────────────────
-   The existing firebase.js uses the MODULAR ESM SDK (v10):
-     import { initializeApp } from "https://...firebase-app.js"
+   firebase.js (ESM) and chat-firebase.js (compat) are separate
+   SDK instances that cannot share auth state automatically.
 
-   Our chat needs the COMPAT SDK (v9-compat):
-     <script src="firebase-app-compat.js">
+   The official Firebase solution is:
+     compatAuth.updateCurrentUser(esmUser)
 
-   These are TWO COMPLETELY SEPARATE SDK INSTANCES.
-   firebase.app() in compat will NEVER see the user signed in
-   by the modular ESM firebase.js. They don't share state.
+   This method is designed exactly for transferring a User object
+   from one Firebase app instance to another within the same project.
+   After calling it, the compat auth instance is fully authenticated
+   and Firestore security rules see request.auth.uid correctly.
 
-   SOLUTION:
+   Docs: firebase.google.com/docs/reference/js/v8/firebase.auth.Auth
+         #updatecurrentuser
+
+   HOW WE HOOK IN:
    ─────────────────────────────────────────────────────────────────
-   Chat-firebase.js manages its OWN Firebase app ("vaani-chat"),
-   its OWN auth instance, and listens for auth state changes
-   independently. It does NOT depend on firebase.js at all.
+   window._vaaniOnAuthChange(user) is called by the existing
+   firebase.js every time auth state changes. We wrap it here to
+   also call updateCurrentUser on the compat auth instance.
 
-   Both apps (ESM default + compat "vaani-chat") talk to the same
-   Firebase project and the same Firestore database — so data is
-   shared. Only the SDK instances are separate.
+   NO server needed. NO re-login. NO second popup.
+   The user signs in once via the existing flow, and we mirror
+   that User object into the compat SDK automatically.
 ================================================================ */
 
 (function () {
   "use strict";
 
-  if (window.chatFirebase) {
-    console.log("[Vaani Chat] Already initialized, skipping.");
-    return;
-  }
+  if (window.chatFirebase) return;
 
   var CONFIG = {
     apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
@@ -42,60 +43,102 @@
     appId:             "1:509015461995:web:2dd658cef15d05d851612e",
   };
 
-  function _init() {
-    if (typeof firebase === "undefined") {
-      console.error("[Vaani Chat] Firebase compat SDK not found. Make sure these 3 scripts are in index.html BEFORE chat-firebase.js:\n  firebase-app-compat.js\n  firebase-auth-compat.js\n  firebase-firestore-compat.js");
-      return;
-    }
-
-    try {
-      // Create a named app so we don't conflict with the ESM default app
-      var app;
-      try {
-        app = firebase.app("vaani-chat");
-        console.log("[Vaani Chat] Reusing existing app.");
-      } catch (e) {
-        app = firebase.initializeApp(CONFIG, "vaani-chat");
-        console.log("[Vaani Chat] New app initialized.");
-      }
-
-      var auth = app.auth();
-      var db   = app.firestore();
-
-      // Enable offline persistence (messages load even with bad connection)
-      db.enablePersistence({ synchronizeTabs: true })
-        .catch(function(err) {
-          if (err.code === "failed-precondition") {
-            console.warn("[Vaani Chat] Persistence failed (multiple tabs open) — continuing without it.");
-          } else if (err.code === "unimplemented") {
-            console.warn("[Vaani Chat] Persistence not supported in this browser.");
-          }
-        });
-
-      window.chatFirebase = {
-        app:  app,
-        auth: auth,
-        db:   db,
-      };
-
-      console.log("[Vaani Chat] ✓ Firebase initialized (named app 'vaani-chat', own auth)");
-
-    } catch (err) {
-      console.error("[Vaani Chat] Init failed:", err.message);
+  // Wait for compat SDK to be available on window.firebase
+  function _waitForCompat(cb, tries) {
+    tries = tries || 0;
+    if (typeof firebase !== "undefined"
+        && typeof firebase.app          === "function"
+        && typeof firebase.firestore    === "function"
+        && typeof firebase.auth         === "function") {
+      cb();
+    } else if (tries < 100) {
+      setTimeout(function () { _waitForCompat(cb, tries + 1); }, 50);
+    } else {
+      console.error("[Vaani Chat] compat SDK not found after 5s — check script tags.");
     }
   }
 
-  // Poll until compat SDK globals are available
-  var _tries = 0;
-  var _poll = setInterval(function () {
-    _tries++;
-    if (typeof firebase !== "undefined") {
-      clearInterval(_poll);
-      _init();
-    } else if (_tries >= 50) {
-      clearInterval(_poll);
-      console.error("[Vaani Chat] Firebase compat SDK never became available after 5s. Check your script tags.");
+  function _init() {
+    // ── 1. Get or create compat app ──────────────────────────────
+    var compatApp;
+    try {
+      compatApp = firebase.app("vaani-chat");
+    } catch (_) {
+      compatApp = firebase.initializeApp(CONFIG, "vaani-chat");
     }
-  }, 100);
+
+    var db         = compatApp.firestore();
+    var compatAuth = compatApp.auth();
+
+    // ── 2. Enable offline persistence ────────────────────────────
+    db.enablePersistence({ synchronizeTabs: true }).catch(function (e) {
+      if (e.code !== "failed-precondition" && e.code !== "unimplemented") {
+        console.warn("[Vaani Chat] Persistence:", e.code);
+      }
+    });
+
+    // ── 3. THE FIX: mirror ESM user → compat auth ─────────────
+    // updateCurrentUser() is the official Firebase API for transferring
+    // a User object between app instances in the same project.
+    function _mirrorUser(esmUser) {
+      if (!esmUser) {
+        compatAuth.signOut().catch(function () {});
+        console.log("[Vaani Chat] Auth: signed out (mirrored)");
+        return;
+      }
+
+      compatAuth.updateCurrentUser(esmUser)
+        .then(function () {
+          console.log("[Vaani Chat] ✓ Auth mirrored to compat:", esmUser.email);
+          // Notify chat.js that user is ready
+          if (typeof window._chatOnUserReady === "function") {
+            window._chatOnUserReady(esmUser);
+          }
+        })
+        .catch(function (e) {
+          console.error("[Vaani Chat] updateCurrentUser failed:", e.code, e.message);
+          // Fallback: pass user directly even without compat auth
+          // (works if Firestore rules allow all authenticated users)
+          if (typeof window._chatOnUserReady === "function") {
+            window._chatOnUserReady(esmUser);
+          }
+        });
+    }
+
+    // ── 4. Hook into existing Vaani auth ─────────────────────────
+    // window._vaaniOnAuthChange is called by firebase.js (ESM) on
+    // every auth state change. We wrap it — original still runs first.
+    var _prev = window._vaaniOnAuthChange;
+    window._vaaniOnAuthChange = function (user) {
+      // Always call original handler first (keeps translation/UI working)
+      if (typeof _prev === "function") _prev(user);
+      // Mirror to compat
+      _mirrorUser(user);
+    };
+
+    // ── 5. Handle case where user is already signed in ───────────
+    // firebase.js may have already fired _vaaniOnAuthChange before
+    // this script loaded. If so, mirror immediately.
+    if (window.VAANI_AUTH_READY && window._vaaniCurrentUser) {
+      console.log("[Vaani Chat] User already signed in — mirroring now.");
+      _mirrorUser(window._vaaniCurrentUser);
+    }
+
+    // ── 6. Also listen on compat auth for completeness ───────────
+    // This catches any future auth changes via the compat SDK itself
+    compatAuth.onAuthStateChanged(function (user) {
+      console.log("[Vaani Chat] Compat auth state:", user ? user.email : "signed out");
+    });
+
+    // ── 7. Expose to window ───────────────────────────────────────
+    window.chatFirebase = {
+      db:   db,
+      auth: compatAuth,
+    };
+
+    console.log("[Vaani Chat] ✓ Ready. Waiting for auth mirror.");
+  }
+
+  _waitForCompat(_init);
 
 })();
