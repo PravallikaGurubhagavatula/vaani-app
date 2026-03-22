@@ -163,9 +163,55 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 
 /* ── TEXT INPUT ── */
 .text-section{padding-bottom:16px}
-.text-area{width:100%;padding:14px 16px;margin-bottom:12px;background:var(--card);color:var(--text);border:1px solid var(--card-border);border-radius:var(--radius);font-size:15px;font-family:'Outfit',sans-serif;resize:vertical;outline:none;line-height:1.6;transition:border-color var(--transition)}
+.text-area{width:100%;padding:14px 16px;margin-bottom:12px;background:var(--card);color:var(--text);border:1px solid var(--card-border);border-radius:var(--radius);font-size:15px;font-family:'Outfit',sans-serif;resize:vertical;outline:none;line-height:1.6;transition:border-color var(--transition),box-shadow var(--transition)}
 .text-area:focus{border-color:var(--accent-border)}
 .text-area::placeholder{color:var(--text3)}
+
+/* ── Live translation hint ─────────────────────────────────────── */
+/* Sits between the textarea and the Translate button.              */
+/* Invisible by default; fades in when typing is detected.          */
+.live-hint{
+  display:block;
+  font-size:11px;
+  font-weight:500;
+  color:var(--text3);
+  letter-spacing:0.4px;
+  text-align:right;
+  min-height:16px;
+  margin-top:-8px;
+  margin-bottom:8px;
+  opacity:0;
+  transform:translateY(-2px);
+  transition:opacity 0.2s ease, transform 0.2s ease;
+  pointer-events:none;
+  user-select:none;
+}
+.live-hint--active{
+  opacity:1;
+  transform:translateY(0);
+  color:var(--accent-light);
+}
+/* Subtle pulsing dot before the text */
+.live-hint--active::before{
+  content:"";
+  display:inline-block;
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:var(--accent-light);
+  margin-right:5px;
+  vertical-align:middle;
+  animation:livePulse 1s ease-in-out infinite;
+}
+@keyframes livePulse{
+  0%,100%{opacity:1;transform:scale(1)}
+  50%{opacity:0.4;transform:scale(0.75)}
+}
+/* Subtle glow on the textarea border while live translation is pending */
+.text-area.live-typing{
+  border-color:var(--accent-border);
+  box-shadow:0 0 0 3px var(--accent-glow);
+}
 
 /* ── EDITABLE EXTRACTED TEXT (Image Translation) ── */
 .img-extracted-edit{
@@ -431,23 +477,6 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .wh-current{background:var(--accent) !important;color:#fff !important;padding:1px 3px;border-radius:4px;box-shadow:0 0 0 2px var(--accent-glow)}
 .wh-active{cursor:default}
 
-
-/* ================================================================
-   Vaani — Theme Color Fixes
-   They override gold/yellow star and red danger colors to match
-   the app's purple theme.
-================================================================ */
-
-/* ── Save / Star button — Single Mode ───────────────────────────── */
-.ac-star {
-  border-color: rgba(124, 58, 237, 0.35) !important;
-  color: var(--text-secondary);
-}
-.ac-star:hover {
-  background: rgba(124, 58, 237, 0.12) !important;
-  border-color: rgba(124, 58, 237, 0.6) !important;
-  color: #a78bfa !important;
-}
 
 /* ── Save / Star button — History cards ─────────────────────────── */
 .hist-btn-star svg {
