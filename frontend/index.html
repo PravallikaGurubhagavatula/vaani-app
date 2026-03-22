@@ -366,9 +366,19 @@
 <script>
   window.VAANI_VERSION    = "20250325a";
   window.VAANI_VISION_KEY = "";
+
+  // ── API Service config ──────────────────────────────────────────
+  // Set USE_API = true to enable Bhashini ASR + NMT.
+  // Add your Bhashini credentials below to activate.
+  // Leave as-is to use the existing system (no change).
+  window.USE_API = false;   // ← change to true when you have Bhashini keys
+
+  // window.BHASHINI_API_KEY       = "paste-your-key-here";
+  // window.BHASHINI_USER_ID       = "paste-your-user-id-here";
+  // window.BHASHINI_INFERENCE_URL = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline";
 </script>
 
-<script src="apiService.js?v=1"></script>
+<script src="apiService.js?v=2"></script>
 <script src="slangDictionary.js?v=2"></script>
 <script src="toneDetector.js?v=2"></script>
 <script src="contextTranslator.js?v=2"></script>
