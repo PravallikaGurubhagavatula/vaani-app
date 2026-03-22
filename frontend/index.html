@@ -16,6 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260322a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
+  <link rel="stylesheet" href="chat.css?v=1">
 </head>
 <body>
 
@@ -32,6 +33,10 @@
     </button>
     <button class="icon-btn" id="installBtn" onclick="installApp()" style="display:none" title="Install app">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+    <button class="icon-btn" id="vcNavBtn" onclick="navigateTo('Chat')" title="Chat">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="vc-nav-badge" id="chatNavBadge" style="display:none"></span>
     </button>
     <button class="icon-btn" onclick="navigateTo('Settings')" title="Settings">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -67,6 +72,14 @@
     <a class="menu-item" id="menuConversation" onclick="navigateTo('Conversation')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
       <span class="mi-label">Conversation Mode</span><span class="mi-dot"></span>
+    </a>
+    <a class="menu-item" id="menuChat" onclick="navigateTo('Chat')">
+      <span class="mi-icon">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      </span>
+      <span class="mi-label">Chat</span>
+      <span class="vc-nav-badge" id="chatMenuBadge" style="display:none"></span>
+      <span class="mi-dot"></span>
     </a>
     <div class="menu-divider"></div>
     <a class="menu-item" id="menuTravel"       onclick="navigateTo('Travel')">
@@ -272,6 +285,39 @@
     <h2 class="page-title">Conversation Mode</h2>
     <p class="page-sub">Two people, two languages — live two-way translation</p>
   </div>
+  <div id="pageChat" class="page">
+  <div class="vc-layout">
+    <aside class="vc-sidebar">
+      <div class="vc-sidebar-header">
+        <div class="vc-sidebar-title">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Messages
+        </div>
+        <div class="vc-sidebar-sub">Click a user to start chatting</div>
+      </div>
+      <div class="vc-user-list" id="vcUserList">
+        <div class="vc-empty-list">
+          <p>Loading users…</p>
+        </div>
+      </div>
+    </aside>
+    <div class="vc-chat-panel" id="vcChatPanel">
+      <div class="vc-empty-panel" id="vcEmpty">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <h3>Select a conversation</h3>
+        <p>Choose a user from the list to start chatting.</p>
+      </div>
+      <div class="vc-chat-header" id="vcChatHeader"></div>
+      <div class="vc-messages" id="vcMessages"></div>
+      <div class="vc-input-row" id="vcInputRow" style="display:none">
+        <textarea id="vcInput" class="vc-input" placeholder="Type a message…" rows="1" maxlength="2000"></textarea>
+        <button class="vc-send-btn" id="vcSendBtn" disabled title="Send">
+          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
   <div class="conv-grid">
     <div class="conv-panel">
       <div class="conv-top">
@@ -382,7 +428,9 @@
 <!-- normalizer.js MUST be first — loaded before all other scripts  -->
 <!-- so normalizeInput() exists when translationIntegration.js runs -->
 <script src="normalizer.js?v=1"></script>
-
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 <script src="apiService.js?v=2"></script>
 <script src="slangDictionary.js?v=2"></script>
 <script src="toneDetector.js?v=2"></script>
@@ -390,6 +438,8 @@
 <script src="llmEnhancer.js?v=2"></script>
 <script src="humanTranslator.js?v=1"></script>
 <script src="app.js?v=20250325b"></script>
+<script src="chat-firebase.js?v=1"></script>
+<script src="chat.js?v=1"></script>
 <script src="translationIntegration.js?v=3"></script>
 <script type="module" src="firebase.js?v=20250325a"></script>
 
