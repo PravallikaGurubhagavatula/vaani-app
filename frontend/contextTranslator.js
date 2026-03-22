@@ -193,7 +193,17 @@ function _ctNorm(text) {
 
 function _ctMatchesTrigger(normOrig, triggers) {
   for (var i = 0; i < triggers.length; i++) {
-    if (normOrig.indexOf(_ctNorm(triggers[i])) !== -1) return true;
+    var t = _ctNorm(triggers[i]);
+    // Multi-word trigger: substring match is fine (it's specific enough)
+    // Single-word trigger: require whole-word match to prevent "ra" → "bro"
+    // inside "nuvvu patalu rasava" etc.
+    if (t.indexOf(" ") !== -1) {
+      if (normOrig.indexOf(t) !== -1) return true;
+    } else {
+      // Whole-word boundary check
+      var re = new RegExp("(?:^|\\s)" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:\\s|$|[!?.,])");
+      if (re.test(normOrig)) return true;
+    }
   }
   return false;
 }
@@ -258,20 +268,35 @@ window.enhanceTranslation = function(original, translated, lang) {
     if (!original || typeof original !== "string") return translated || "";
     if (!translated || typeof translated !== "string") return translated || "";
 
-    var normOrig  = _ctNorm(original);
-    var normTrans = _ctNorm(translated);
+    var normOrig   = _ctNorm(original);
+    var normTrans  = _ctNorm(translated);
+    var wordCount  = normOrig.split(/\s+/).filter(Boolean).length;
 
     // Skip single-word pass-throughs
-    if (normTrans.split(/\s+/).length === 1 && normOrig.split(/\s+/).length === 1) return translated;
+    if (normTrans.split(/\s+/).length === 1 && wordCount === 1) return translated;
 
-    var tone    = (typeof window.detectTone === "function") ? window.detectTone(original, lang) : "neutral";
-    var rewrite = _ctFindBestRewrite(normOrig, lang);
+    var tone = (typeof window.detectTone === "function") ? window.detectTone(original, lang) : "neutral";
+
+    // ── REWRITE GUARD ──────────────────────────────────────────────
+    // Only apply phrase rewrites for short inputs (≤ 4 words).
+    // Long sentences like "nuvvu patalu rasava" must NOT be overridden
+    // by single-word triggers like "ra" → "bro".
+    var rewrite = null;
+    if (wordCount <= 4) {
+      rewrite = _ctFindBestRewrite(normOrig, lang);
+    }
 
     if (rewrite && rewrite.confidence >= _CT_MIN_CONFIDENCE) {
       return _ctCapFirst(_ctApplyToneMarker(rewrite.rewrite, tone));
     }
 
-    var slangHits = _ctFindSlangHits(normOrig, lang);
+    // ── SLANG INJECTION GUARD ──────────────────────────────────────
+    // Do NOT inject slang into long sentences (> 3 words) or angry tone.
+    // Slang injection on long sentences corrupts the meaning.
+    var slangHits = [];
+    if (wordCount <= 3 && tone !== "angry") {
+      slangHits = _ctFindSlangHits(normOrig, lang);
+    }
     var enhanced  = translated;
 
     if (slangHits.length > 0) {
