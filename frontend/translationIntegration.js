@@ -25,6 +25,7 @@
       var label = String(original).slice(0, 40);
       console.groupCollapsed("[Vaani ContextTranslator] \"" + label + "\" (" + sourceLang + ")");
       console.log("🎯 Tone detected  :", detail.tone);
+      console.log("📝 Sentence type  :", detail.sentenceType || "statement");
       console.log("📖 Slang hits     :", detail.slangHits && detail.slangHits.length
         ? detail.slangHits.map(function(h) { return h.slang + " → " + h.meaning + " (" + h.tone + ")"; }).join(", ")
         : "none");
@@ -118,10 +119,14 @@
     }
 
     // Step 3: optional LLM polish
+    // Pass tone + sentenceType from the detail object so LLM prompt
+    // is sentence-type-aware (commands stay commands, questions stay questions).
     var final = enhanced;
     try {
       if (window.USE_LLM === true && typeof window.enhanceWithLLM === "function") {
-        final = await window.enhanceWithLLM(enhanced, fromLang, toLang);
+        var llmTone  = (detail && detail.tone)         ? detail.tone         : "neutral";
+        var llmStype = (detail && detail.sentenceType) ? detail.sentenceType : "statement";
+        final = await window.enhanceWithLLM(enhanced, fromLang, toLang, llmTone, llmStype);
       }
     } catch (e) {
       console.warn("[Vaani] finalTranslate: LLM enhancer failed:", e && e.message);
