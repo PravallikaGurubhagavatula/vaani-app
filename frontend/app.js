@@ -666,16 +666,38 @@ async function startListening() {
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
-  rec.lang = speechCode; rec.continuous = false; rec.interimResults = false; rec.maxAlternatives = 1;
+
+  // ── Speech recognition config ─────────────────────────────────
+  // Use the exact BCP-47 locale for the selected language so the
+  // engine applies the correct acoustic model (critical for Telugu,
+  // Kannada, Tamil, etc.).
+  rec.lang            = speechCode;   // e.g. "te-IN", "hi-IN", "ta-IN"
+  rec.continuous      = false;        // single utterance — cleaner results
+  rec.interimResults  = false;        // only fire final results
+  rec.maxAlternatives = 3;            // request 3 alternatives; pick best
+
   ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
   micBtn?.classList.add("listening"); setMicStatus("Listening… (tap again to stop)");
+
   rec.onresult = (e) => {
+    // Pick the alternative with the highest confidence from the final result
     let finalText = "";
+    let bestConf  = -1;
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) finalText = e.results[i][0].transcript;
+      if (!e.results[i].isFinal) continue;
+      for (let j = 0; j < e.results[i].length; j++) {
+        const alt  = e.results[i][j];
+        const conf = (typeof alt.confidence === "number" && alt.confidence > 0)
+                     ? alt.confidence : (j === 0 ? 1 : 0);
+        if (conf > bestConf) { bestConf = conf; finalText = alt.transcript; }
+      }
     }
-    if (finalText.trim()) { ctx.transcript = finalText.trim(); showOriginalText(ctx.transcript); }
+    if (finalText.trim()) {
+      ctx.transcript = finalText.trim();
+      showOriginalText(ctx.transcript);
+    }
   };
+
   rec.onspeechend = () => { if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch(_) {} } };
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
@@ -684,9 +706,15 @@ async function startListening() {
     if (!transcript) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("No speech detected. Tap to try again."); return; }
     if (transcript === ctx.last) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak again"); return; }
     ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
-    showOriginalText(transcript); setTranslating(); setMicStatus("Translating…");
+
+    // Show result with edit button — user can correct before translating
+    showOriginalText(transcript);
+    _showSpeechEditBtn(transcript);
+    setTranslating(); setMicStatus("Translating…");
+
     const translated = await window.finalTranslate(transcript, fromLang, toLang);
-    showFinalTranslation(transcript, translated); setMicStatus("Tap to speak again");
+    showFinalTranslation(transcript, translated);
+    setMicStatus("Tap edit to correct · tap mic to record again");
     if (translated) {
       saveToHistory(transcript, translated, fromLang, toLang);
       const transEl = document.getElementById("translatedText");
@@ -826,12 +854,11 @@ function clearSingleResults() {
   const a = document.getElementById("actionBtns");
   if (o) o.textContent = "—"; if (t) t.textContent = "—"; if (a) a.style.display = "none";
   resetTimeline("");
-  // Reset star to unfilled when results are cleared
+  // Reset star
   const saveBtn = document.getElementById("saveBtn");
-  if (saveBtn) {
-    saveBtn.classList.remove("active");
-    saveBtn.innerHTML = _starSvg() + "Save";
-  }
+  if (saveBtn) { saveBtn.classList.remove("active"); saveBtn.innerHTML = _starSvg() + "Save"; }
+  // Hide edit UI
+  _hideSpeechEditBtn();
 }
 
 function showOriginalText(text) {
@@ -855,6 +882,68 @@ function showFinalTranslation(original, translated) {
   showTimeline("");
   // Update star to reflect whether this translation is already saved
   _updateSingleStarBtn();
+}
+
+// ── SPEECH EDIT UI ───────────────────────────────────────────────
+
+// Show the pencil edit button after speech is recognised
+function _showSpeechEditBtn(transcript) {
+  const btn  = document.getElementById("editSpeechBtn");
+  const box  = document.getElementById("speechEditBox");
+  const inp  = document.getElementById("speechEditInput");
+  if (btn) btn.style.display = "flex";
+  if (box) box.style.display = "none";   // collapsed by default
+  if (inp) inp.value = transcript || ""; // pre-fill with recognised text
+}
+
+function _hideSpeechEditBtn() {
+  const btn = document.getElementById("editSpeechBtn");
+  const box = document.getElementById("speechEditBox");
+  if (btn) btn.style.display = "none";
+  if (box) box.style.display = "none";
+}
+
+// Toggle the edit textarea open/closed
+function toggleSpeechEdit() {
+  const box = document.getElementById("speechEditBox");
+  const inp = document.getElementById("speechEditInput");
+  if (!box) return;
+  const isOpen = box.style.display !== "none";
+  box.style.display = isOpen ? "none" : "block";
+  if (!isOpen && inp) {
+    // Pre-fill with current "You said" text when opening
+    const orig = document.getElementById("originalText")?.textContent;
+    if (orig && orig !== "—") inp.value = orig;
+    setTimeout(() => inp.focus(), 50);
+  }
+}
+
+// Re-translate using the edited text
+async function retranslateSpeech() {
+  const inp      = document.getElementById("speechEditInput");
+  const edited   = inp?.value?.trim();
+  if (!edited) { showToast("Please enter some text"); return; }
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+
+  // Update "You said" display with corrected text
+  const origEl = document.getElementById("originalText");
+  if (origEl) origEl.textContent = edited;
+
+  // Close edit box
+  const box = document.getElementById("speechEditBox");
+  if (box) box.style.display = "none";
+
+  setTranslating();
+  setMicStatus("Translating edited text…");
+  const translated = await window.finalTranslate(edited, fromLang, toLang);
+  showFinalTranslation(edited, translated);
+  setMicStatus("Tap edit to correct · tap mic to record again");
+  if (translated) {
+    saveToHistory(edited, translated, fromLang, toLang);
+    const transEl = document.getElementById("translatedText");
+    await autoPlay(translated, toLang, "", transEl);
+  }
 }
 
 // ── TEXT MODE ─────────────────────────────────────────────────────
