@@ -2019,7 +2019,7 @@ function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.
 // NAVIGATION
 // ══════════════════════════════════════════════════════════════════
 
-const PAGES     = ["Home","Single","Conversation","Travel","History","Favourites","Settings"];
+const PAGES     = ["Home","Single","Conversation","Chat","Travel","History","Favourites","Settings"];
 const _navStack = [];
 
 function navigateTo(page) {
@@ -2048,6 +2048,7 @@ function _onPageActivate(page) {
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
+  if (page === "Chat" && window.vaaniChat) window.vaaniChat.loadUsers();
 }
 
 window.addEventListener("popstate", (e) => {
