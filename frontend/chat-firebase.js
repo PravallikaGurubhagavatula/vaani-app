@@ -1,74 +1,77 @@
 /* ================================================================
-   Vaani — chat-firebase.js
-   Firebase initialization specifically for the Chat module.
+   Vaani — chat-firebase.js  v3  (FIXED)
 
-   WHY A SEPARATE FILE?
+   ROOT CAUSE OF BUG:
    ─────────────────────────────────────────────────────────────────
-   The existing firebase.js uses ESM (type="module") and handles
-   only Authentication for the translation app. This file adds
-   Firestore support for the chat system WITHOUT touching the
-   existing firebase.js or app.js.
+   The previous version created a NAMED Firebase app ("vaani-chat")
+   with its own separate Auth instance. This meant Firestore
+   security rules saw request.auth == null even though the user was
+   signed in — because sign-in happened on the DEFAULT app's auth,
+   not the named app's auth.
 
-   LOAD ORDER in index.html:
-     <script type="module" src="firebase.js">        ← existing (auth only)
-     <script src="chat-firebase.js">                 ← NEW (compat SDK for chat)
-     <script src="chat.js">                          ← NEW (chat logic)
-
-   We use the Firebase Compat (v8-style) SDK via CDN so chat.js
-   can access window.chatFirebase without ESM complexity.
+   FIX:
+   ─────────────────────────────────────────────────────────────────
+   Use the DEFAULT Firebase app for Firestore. The existing
+   firebase.js (ESM) already signed the user in on the default app,
+   so Firestore rules will correctly see request.auth != null.
 ================================================================ */
 
 (function () {
-  // Guard: only init once
+  "use strict";
+
   if (window.chatFirebase) return;
 
-  // ── Firebase CDN URLs (compat/v8-style API) ───────────────────
-  // These are loaded via <script> tags added to index.html.
-  // We do NOT re-init if the compat app already exists.
+  var FIREBASE_CONFIG = {
+    apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
+    authDomain:        "vaani-app-ee1a8.firebaseapp.com",
+    projectId:         "vaani-app-ee1a8",
+    storageBucket:     "vaani-app-ee1a8.firebasestorage.app",
+    messagingSenderId: "509015461995",
+    appId:             "1:509015461995:web:2dd658cef15d05d851612e",
+  };
 
-  function _initChatFirebase() {
+  function _init() {
     try {
-      // Use the SAME config as the existing firebase.js
-      const firebaseConfig = {
-        apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
-        authDomain:        "vaani-app-ee1a8.firebaseapp.com",
-        projectId:         "vaani-app-ee1a8",
-        storageBucket:     "vaani-app-ee1a8.firebasestorage.app",
-        messagingSenderId: "509015461995",
-        appId:             "1:509015461995:web:2dd658cef15d05d851612e",
-      };
-
-      // Initialize a named app called "vaani-chat" to avoid conflict
-      // with the default app initialized by the existing firebase.js
-      let chatApp;
-      try {
-        chatApp = firebase.app("vaani-chat");
-      } catch (e) {
-        chatApp = firebase.initializeApp(firebaseConfig, "vaani-chat");
+      if (typeof firebase === "undefined") {
+        console.error("[Vaani Chat] Firebase compat SDK not loaded. Check script tags in index.html.");
+        return;
       }
 
-      const db   = chatApp.firestore();
-      const auth = chatApp.auth();
+      // ── Use the DEFAULT app so auth state is shared with firebase.js ──
+      var defaultApp;
+      try {
+        defaultApp = firebase.app(); // reuse existing default app
+      } catch (e) {
+        defaultApp = firebase.initializeApp(FIREBASE_CONFIG); // first init
+      }
 
-      // Expose globally for chat.js
-      window.chatFirebase = { app: chatApp, db, auth };
+      var db   = defaultApp.firestore();
+      var auth = defaultApp.auth();
 
-      console.log("[Vaani Chat] Firebase initialized ✓");
+      window.chatFirebase = { app: defaultApp, db: db, auth: auth };
+
+      console.log("[Vaani Chat] Firebase initialized ✓ (default app, auth shared)");
+
     } catch (err) {
       console.error("[Vaani Chat] Firebase init failed:", err.message);
     }
   }
 
-  // Wait for the Firebase compat SDK scripts to load
+  // Poll until compat SDK is available (loaded via script tag)
   if (typeof firebase !== "undefined") {
-    _initChatFirebase();
+    _init();
   } else {
-    window.addEventListener("load", function () {
+    var _tries = 0;
+    var _poll = setInterval(function () {
+      _tries++;
       if (typeof firebase !== "undefined") {
-        _initChatFirebase();
-      } else {
-        console.error("[Vaani Chat] Firebase compat SDK not found. Check script tags.");
+        clearInterval(_poll);
+        _init();
+      } else if (_tries > 30) {
+        clearInterval(_poll);
+        console.error("[Vaani Chat] Firebase compat SDK never loaded after 6s.");
       }
-    });
+    }, 200);
   }
+
 })();
