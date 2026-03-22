@@ -365,26 +365,23 @@
 
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
 <script>
-  window.VAANI_VERSION    = "20250325a";
+  window.VAANI_VERSION    = "20250325b";
   window.VAANI_VISION_KEY = "";
 
-  // ── API Service config ──────────────────────────────────────────
-  // Set USE_API = true to enable Bhashini ASR + NMT.
-  // Add your Bhashini credentials below to activate.
-  // Leave as-is to use the existing system (no change).
-  window.USE_API = false;   // ← change to true when you have Bhashini keys
+  window.USE_API = false;
 
   // window.BHASHINI_API_KEY       = "paste-your-key-here";
   // window.BHASHINI_USER_ID       = "paste-your-user-id-here";
   // window.BHASHINI_INFERENCE_URL = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline";
 
-  // ── Human Translator (Claude LLM pipeline) ──────────────────────
-  // Enables 3-layer human-like translation: ASR fix → machine → Claude rewrite
   window.USE_HUMAN_TRANSLATOR = true;
 
-  // ── Debug mode — verbose console logging ───────────────────────
-  window.DEBUG_TRANSLATION = false;  // ← set true to see each pipeline step
+  window.DEBUG_TRANSLATION = false;
 </script>
+
+<!-- normalizer.js MUST be first — loaded before all other scripts  -->
+<!-- so normalizeInput() exists when translationIntegration.js runs -->
+<script src="normalizer.js?v=1"></script>
 
 <script src="apiService.js?v=2"></script>
 <script src="slangDictionary.js?v=2"></script>
@@ -392,7 +389,7 @@
 <script src="contextTranslator.js?v=2"></script>
 <script src="llmEnhancer.js?v=2"></script>
 <script src="humanTranslator.js?v=1"></script>
-<script src="app.js?v=20250325a"></script>
+<script src="app.js?v=20250325b"></script>
 <script src="translationIntegration.js?v=3"></script>
 <script type="module" src="firebase.js?v=20250325a"></script>
 
