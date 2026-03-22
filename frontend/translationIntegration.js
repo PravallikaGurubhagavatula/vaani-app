@@ -37,17 +37,35 @@
   }
 
   // ── Safe wrapper around existing translateText ────────────────────
-  // Reads translateText from window at call-time so it always picks up
-  // the real function even if app.js finishes loading after this file.
+  // Respects window.USE_API flag:
+  //   USE_API=true  → try translateWithAPI (Bhashini NMT) first
+  //   USE_API=false → go straight to existing system
+  // Falls back gracefully at every step — never throws.
   async function _machineTranslate(text, fromLang, toLang) {
-    // Try window.translateText (defined in app.js global scope)
+
+    // ── Primary: Bhashini NMT via apiService.js (when USE_API=true) ──
+    if (window.USE_API && typeof window.translateWithAPI === "function") {
+      try {
+        var apiResult = await window.translateWithAPI(text, fromLang, toLang);
+        if (apiResult && apiResult.trim() && apiResult.toLowerCase() !== text.toLowerCase()) {
+          return apiResult.trim();
+        }
+        // Empty or pass-through → fall through to existing system below
+        console.warn("[Vaani] translateWithAPI returned empty/passthrough — using fallback");
+      } catch (e) {
+        console.warn("[Vaani] translateWithAPI threw:", e && e.message, "— using fallback");
+      }
+    }
+
+    // ── Fallback: existing Vaani backend (app.js translateText) ──────
     if (typeof translateText === "function") {
       return await translateText(text, fromLang, toLang);
     }
     if (typeof window.translateText === "function") {
       return await window.translateText(text, fromLang, toLang);
     }
-    // Last-resort direct API call if translateText is not yet available
+
+    // ── Last resort: direct API call ─────────────────────────────────
     try {
       var API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
       var r = await fetch(API + "/translate", {
@@ -60,7 +78,7 @@
       var d = await r.json();
       return (d.translated || "").trim() || text;
     } catch (e) {
-      console.warn("[Vaani] _machineTranslate fallback failed:", e && e.message);
+      console.warn("[Vaani] _machineTranslate direct call failed:", e && e.message);
       return text;
     }
   }
@@ -120,7 +138,8 @@
     "[Vaani] translationIntegration ready.",
     "| ENHANCED:", window.USE_ENHANCED_TRANSLATION,
     "| DEBUG:", window.DEBUG_TRANSLATION,
-    "| LLM:", window.USE_LLM
+    "| LLM:", window.USE_LLM,
+    "| USE_API:", window.USE_API
   );
 
   // Optional: warm up LLM (no-op in stub mode)
