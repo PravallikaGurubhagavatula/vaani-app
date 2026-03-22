@@ -650,6 +650,8 @@ async function startListening() {
   const ctx    = _mic.single;
   const micBtn = document.getElementById("micBtn");
   if (ctx.state === MicState.LISTENING) {
+    // Stop if already listening
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
     if (ctx.rec) { ctx.rec.onend = null; try { ctx.rec.stop(); } catch(_) {} }
     _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak");
     return;
@@ -661,26 +663,35 @@ async function startListening() {
   setMicStatus("Requesting microphone…");
   const permitted = await handlePermission("audio", "micStatus");
   if (!permitted) { setMicStatus("Tap to speak"); return; }
+
   const fromLang   = document.getElementById("fromLang")?.value || "en";
   const toLang     = document.getElementById("toLang")?.value   || "en";
   const speechCode = LANG_CONFIG[fromLang]?.speechCode || "en-US";
+
+  // ── MediaRecorder (for Bhashini ASR when USE_API=true) ──────────
+  // Start audio recording in parallel with Web Speech API.
+  // If Bhashini ASR succeeds → use its transcript (more accurate).
+  // If not configured or fails → use Web Speech transcript as fallback.
+  let recorderController = null;
+  if (window.USE_API && typeof window.startRecording === "function") {
+    recorderController = await window.startRecording().catch(() => null);
+  }
+  ctx._recorder = recorderController;
+
+  // ── Web Speech API (always runs — provides fallback transcript) ──
   const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
 
-  // ── Speech recognition config ─────────────────────────────────
-  // Use the exact BCP-47 locale for the selected language so the
-  // engine applies the correct acoustic model (critical for Telugu,
-  // Kannada, Tamil, etc.).
-  rec.lang            = speechCode;   // e.g. "te-IN", "hi-IN", "ta-IN"
+  rec.lang            = speechCode;   // BCP-47 locale e.g. "te-IN", "hi-IN"
   rec.continuous      = false;        // single utterance — cleaner results
   rec.interimResults  = false;        // only fire final results
-  rec.maxAlternatives = 3;            // request 3 alternatives; pick best
+  rec.maxAlternatives = 3;            // pick best-confidence alternative
 
   ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
   micBtn?.classList.add("listening"); setMicStatus("Listening… (tap again to stop)");
 
   rec.onresult = (e) => {
-    // Pick the alternative with the highest confidence from the final result
+    // Pick the alternative with the highest confidence score
     let finalText = "";
     let bestConf  = -1;
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -694,27 +705,67 @@ async function startListening() {
     }
     if (finalText.trim()) {
       ctx.transcript = finalText.trim();
-      showOriginalText(ctx.transcript);
+      showOriginalText(ctx.transcript);  // show immediately while processing
     }
   };
 
-  rec.onspeechend = () => { if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch(_) {} } };
+  rec.onspeechend = () => {
+    if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch(_) {} }
+  };
+
   rec.onend = async () => {
     micBtn?.classList.remove("listening");
     if (ctx.state === MicState.IDLE) return;
-    const transcript = ctx.transcript.trim();
-    if (!transcript) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("No speech detected. Tap to try again."); return; }
-    if (transcript === ctx.last) { ctx.state = MicState.IDLE; ctx.rec = null; setMicStatus("Tap to speak again"); return; }
+
+    // ── Stop MediaRecorder and get audio blob ──────────────────────
+    let audioBlob = null;
+    if (ctx._recorder) {
+      try { audioBlob = await ctx._recorder.stop(); } catch (_) {}
+      ctx._recorder = null;
+    }
+
+    // ── Determine final transcript ─────────────────────────────────
+    // Try Bhashini ASR first (better accuracy for Indian languages).
+    // Fall back to Web Speech result (ctx.transcript) if ASR fails.
+    let transcript = ctx.transcript.trim();
+
+    if (window.USE_API && typeof window.speechToText === "function" && audioBlob) {
+      setMicStatus("Processing speech…");
+      try {
+        const apiTranscript = await window.speechToText(audioBlob, fromLang);
+        if (apiTranscript && apiTranscript.trim()) {
+          transcript = apiTranscript.trim();
+          console.log("[Vaani] Using Bhashini ASR transcript:", transcript);
+        }
+      } catch (err) {
+        console.warn("[Vaani] speechToText threw:", err.message, "— using Web Speech fallback");
+      }
+    }
+
+    // ── Guard checks ───────────────────────────────────────────────
+    if (!transcript) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("No speech detected. Tap to try again.");
+      return;
+    }
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("Tap to speak again");
+      return;
+    }
+
     ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
 
-    // Show result with edit button — user can correct before translating
+    // Show result — user can edit before translating
     showOriginalText(transcript);
     _showSpeechEditBtn(transcript);
-    setTranslating(); setMicStatus("Translating…");
+    setTranslating();
+    setMicStatus("Translating…");
 
     const translated = await window.finalTranslate(transcript, fromLang, toLang);
     showFinalTranslation(transcript, translated);
-    setMicStatus("Tap edit to correct · tap mic to record again");
+    setMicStatus("Tap ✏️ to correct · tap mic to record again");
+
     if (translated) {
       saveToHistory(transcript, translated, fromLang, toLang);
       const transEl = document.getElementById("translatedText");
@@ -722,18 +773,31 @@ async function startListening() {
     }
     ctx.state = MicState.IDLE;
   };
+
   rec.onerror = (e) => {
-    const prevState = ctx.state; _killMic(ctx); micBtn?.classList.remove("listening");
-    if (e.error === "no-speech") { setMicStatus("No speech detected. Tap to try again."); }
+    const prevState = ctx.state;
+    // Stop recorder on error too
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
+    _killMic(ctx); micBtn?.classList.remove("listening");
+    if (e.error === "no-speech")    { setMicStatus("No speech detected. Tap to try again."); }
     else if (e.error === "not-allowed") {
       _permissionGranted.audio = false; setMicStatus("Microphone blocked.");
-      _showPermissionDeniedGuide("audio", async () => { const ok = await _attemptGetUserMedia("audio"); if (ok) setMicStatus("Permission granted! Tap to speak."); });
+      _showPermissionDeniedGuide("audio", async () => {
+        const ok = await _attemptGetUserMedia("audio");
+        if (ok) setMicStatus("Permission granted! Tap to speak.");
+      });
     }
     else if (e.error === "aborted") { if (prevState === MicState.LISTENING) setMicStatus("Tap to speak"); }
     else { showToast("Mic error: " + e.error); setMicStatus("Tap to speak"); }
   };
+
   try { rec.start(); }
-  catch (e) { _killMic(ctx); micBtn?.classList.remove("listening"); setMicStatus("Tap to speak"); console.warn("[Vaani] rec.start:", e.message); }
+  catch (e) {
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
+    _killMic(ctx); micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak");
+    console.warn("[Vaani] rec.start:", e.message);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -918,7 +982,9 @@ function toggleSpeechEdit() {
   }
 }
 
-// Re-translate using the edited text
+// Re-translate using the edited text.
+// Uses window.finalTranslate which automatically routes through
+// Bhashini NMT (if USE_API=true) or existing backend (fallback).
 async function retranslateSpeech() {
   const inp      = document.getElementById("speechEditInput");
   const edited   = inp?.value?.trim();
