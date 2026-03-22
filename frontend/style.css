@@ -200,8 +200,8 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .ac-btn:hover{background:var(--card-hover);color:var(--text)}
 .ac-primary{background:var(--accent) !important;border-color:var(--accent) !important;color:white !important;box-shadow:0 2px 12px var(--accent-glow)}
 .ac-primary:hover{opacity:0.9;transform:translateY(-1px)}
-.ac-star{background:rgba(234,179,8,0.08) !important;border-color:rgba(234,179,8,0.2) !important;color:#eab308 !important}
-.ac-star:hover{background:rgba(234,179,8,0.15) !important}
+.ac-star{background:rgba(124,58,237,0.08) !important;border-color:rgba(124,58,237,0.35) !important;color:#a78bfa !important}
+.ac-star:hover{background:rgba(124,58,237,0.15) !important;border-color:rgba(124,58,237,0.6) !important;color:#c4b5fd !important}
 
 /* ── AUDIO TIMELINE — always visible after shown ── */
 .audio-timeline{display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--card-border);border-radius:var(--radius-sm);animation:fadeIn 0.25s ease}
@@ -500,39 +500,40 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 
 /* ── Save / Star button — Single Mode (base) ────────────────────── */
 .ac-star {
-  border-color: rgba(124, 58, 237, 0.35);
-  color: var(--text-secondary);
+  background: rgba(124, 58, 237, 0.08) !important;
+  border-color: rgba(124, 58, 237, 0.35) !important;
+  color: #a78bfa !important;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .ac-star:hover {
-  background: rgba(124, 58, 237, 0.12) !important;
+  background: rgba(124, 58, 237, 0.15) !important;
   border-color: rgba(124, 58, 237, 0.6) !important;
-  color: #a78bfa !important;
+  color: #c4b5fd !important;
 }
 
 /* ── Save / Star button — ACTIVE (saved) state ───────────────────── */
 /* Triggered by classList.toggle("active", isSaved) in app.js        */
 .ac-star.active,
 .hist-btn-star.active {
-  background: rgba(124, 58, 237, 0.15) !important;
-  border-color: rgba(124, 58, 237, 0.55) !important;
+  background: rgba(124, 58, 237, 0.2) !important;
+  border-color: rgba(124, 58, 237, 0.7) !important;
   color: #a78bfa !important;
 }
 .ac-star.active svg,
 .hist-btn-star.active svg {
-  fill: #7c3aed;
-  stroke: #7c3aed;
+  fill: #7c3aed !important;
+  stroke: #7c3aed !important;
 }
 .ac-star.active:hover,
 .hist-btn-star.active:hover {
-  background: rgba(124, 58, 237, 0.08) !important;
-  border-color: rgba(124, 58, 237, 0.35) !important;
-  color: var(--text-secondary) !important;
+  background: rgba(124, 58, 237, 0.25) !important;
+  border-color: rgba(124, 58, 237, 0.8) !important;
+  color: #c4b5fd !important;
 }
 .ac-star.active:hover svg,
 .hist-btn-star.active:hover svg {
-  fill: none;
-  stroke: currentColor;
+  fill: #7c3aed !important;
+  stroke: #7c3aed !important;
 }
 
 /* ── Star SVG base — outline by default ─────────────────────────── */
@@ -585,39 +586,40 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 
 /* ── Save / Star button — Single Mode (base) ────────────────────── */
 .ac-star {
-  border-color: rgba(124, 58, 237, 0.35);
-  color: var(--text-secondary);
+  background: rgba(124, 58, 237, 0.08) !important;
+  border-color: rgba(124, 58, 237, 0.35) !important;
+  color: #a78bfa !important;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .ac-star:hover {
-  background: rgba(124, 58, 237, 0.12) !important;
+  background: rgba(124, 58, 237, 0.15) !important;
   border-color: rgba(124, 58, 237, 0.6) !important;
-  color: #a78bfa !important;
+  color: #c4b5fd !important;
 }
 
 /* ── Save / Star button — ACTIVE (saved) state ───────────────────── */
 /* Triggered by classList.toggle("active", isSaved) in app.js        */
 .ac-star.active,
 .hist-btn-star.active {
-  background: rgba(124, 58, 237, 0.15) !important;
-  border-color: rgba(124, 58, 237, 0.55) !important;
+  background: rgba(124, 58, 237, 0.2) !important;
+  border-color: rgba(124, 58, 237, 0.7) !important;
   color: #a78bfa !important;
 }
 .ac-star.active svg,
 .hist-btn-star.active svg {
-  fill: #7c3aed;
-  stroke: #7c3aed;
+  fill: #7c3aed !important;
+  stroke: #7c3aed !important;
 }
 .ac-star.active:hover,
 .hist-btn-star.active:hover {
-  background: rgba(124, 58, 237, 0.08) !important;
-  border-color: rgba(124, 58, 237, 0.35) !important;
-  color: var(--text-secondary) !important;
+  background: rgba(124, 58, 237, 0.25) !important;
+  border-color: rgba(124, 58, 237, 0.8) !important;
+  color: #c4b5fd !important;
 }
 .ac-star.active:hover svg,
 .hist-btn-star.active:hover svg {
-  fill: none;
-  stroke: currentColor;
+  fill: #7c3aed !important;
+  stroke: #7c3aed !important;
 }
 
 /* ── Star SVG base — outline by default ─────────────────────────── */
@@ -628,7 +630,7 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
   vertical-align: middle;
   margin-right: 3px;
   fill: none;
-  stroke: currentColor;
+  stroke: #a78bfa;
   transition: fill 0.15s, stroke 0.15s;
 }
 
