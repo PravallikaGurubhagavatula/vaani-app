@@ -1047,11 +1047,10 @@ async function translateTypedText() {
 // Safety guards prevent any interference with voice / conversation mode.
 // ══════════════════════════════════════════════════════════════════
 
-const _LIVE_DEBOUNCE_MS = 500;   // wait after last keystroke
-let   _liveTimer        = null;  // debounce handle
-let   _liveController   = null;  // AbortController for in-flight request
-let   _liveInFlight     = false; // true while a translation is running
-let   _liveLastText     = "";    // last text we translated (skip duplicates)
+const _LIVE_DEBOUNCE_MS  = 500;  // wait after last keystroke
+let   _liveTimer         = null; // debounce handle
+let   _liveLastText      = "";   // last text we translated (skip duplicates)
+let   _liveRequestId     = 0;    // monotonic counter — guards against stale responses
 
 // ── Pending indicator while debounce counts down ─────────────────
 function _liveSetPending() {
@@ -1069,8 +1068,17 @@ function _liveClearHint() {
 
 // ── Update translation panel — no history save, no autoPlay ──────
 // The user hasn't committed yet; those only fire on the Translate button.
+//
+// ROOT-CAUSE FIX: stopAudio() clears _curAudio so that playAudio()
+// falls through to the else-branch and fetches fresh audio for the
+// new translation text instead of replaying the old cached Audio object.
 function _liveShowResult(raw, translated) {
   if (!translated || !translated.trim()) return;
+
+  // ── KEY FIX: discard stale audio so Play always uses latest text ─
+  stopAudio();   // clears _curAudio → playAudio() will re-fetch for new text
+  resetTimeline("");
+
   showOriginalText(raw);
   const t = document.getElementById("translatedText");
   const a = document.getElementById("actionBtns");
@@ -1082,29 +1090,24 @@ function _liveShowResult(raw, translated) {
 
 // ── Core async runner ─────────────────────────────────────────────
 async function _runLiveTranslation(text, fromLang, toLang) {
-  // Cancel any previous in-flight request
-  if (_liveController) { try { _liveController.abort(); } catch (_) {} }
-  _liveController = new AbortController();
-  _liveInFlight   = true;
+  // Stamp this request. If a newer one arrives before we finish,
+  // the id will no longer match and we discard the stale result.
+  const myId = ++_liveRequestId;
 
   try {
     const translated = await window.finalTranslate(text, fromLang, toLang);
 
-    // Newer keystroke may have superseded this — apply only if still current
-    const current = (document.getElementById("textInputArea")?.value || "").trim();
-    if (current !== text) return;   // stale → discard silently
+    // Another keystroke fired while we were awaiting — discard silently
+    if (myId !== _liveRequestId) return;
 
     if (translated && translated.trim()) {
       _liveShowResult(text, translated);
       _liveLastText = text;
     }
   } catch (err) {
-    if (err && err.name !== "AbortError") {
-      console.warn("[Vaani LiveTranslation]", err.message);
+    if (myId === _liveRequestId) {
+      console.warn("[Vaani LiveTranslation]", err && err.message);
     }
-  } finally {
-    _liveInFlight   = false;
-    _liveController = null;
   }
 }
 
@@ -1130,6 +1133,8 @@ function handleLiveTranslation() {
   // Add glow border while user is actively typing
   const _liveArea = document.getElementById("textInputArea");
   if (_liveArea) _liveArea.classList.add("live-typing");
+  // Invalidate any in-flight request immediately — before the debounce fires
+  _liveRequestId++;
   clearTimeout(_liveTimer);
 
   _liveTimer = setTimeout(async () => {
