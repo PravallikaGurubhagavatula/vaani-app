@@ -829,8 +829,8 @@ function clearSingleResults() {
   // Reset star to unfilled when results are cleared
   const saveBtn = document.getElementById("saveBtn");
   if (saveBtn) {
-    saveBtn.innerHTML = _starSvg(false) + "Save";
-    saveBtn.style.background = ""; saveBtn.style.borderColor = ""; saveBtn.style.color = "";
+    saveBtn.classList.remove("active");
+    saveBtn.innerHTML = _starSvg() + "Save";
   }
 }
 
@@ -1239,11 +1239,12 @@ function _writeFavs(arr) {
 }
 
 // ── STAR SVG HELPERS ─────────────────────────────────────────────
-// Returns SVG markup for the star — filled (purple) or outline (default).
-function _starSvg(filled) {
-  return filled
-    ? `<svg viewBox="0 0 24 24" style="fill:#7c3aed;stroke:#7c3aed"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`
-    : `<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+// Single shared SVG — state is driven by CSS class "active" on the button.
+// In style.css: .ac-star.active svg { fill: #7c3aed; stroke: #7c3aed }
+//               .ac-star.active      { border-color: rgba(124,58,237,0.5); color: #a78bfa }
+// Same pattern used for history cards via .hist-btn-star.active
+function _starSvg() {
+  return `<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
 }
 
 // Check if the current Single-mode result is already saved
@@ -1254,15 +1255,13 @@ function _isSingleResultSaved() {
   return _readFavs().some(f => f.translated === t && f.toLang === tl);
 }
 
-// Update the Save button star in Single mode to match saved state
+// Update the Save button star — pure class toggle, no inline styles
 function _updateSingleStarBtn() {
   const btn = document.getElementById("saveBtn");
   if (!btn) return;
   const saved = _isSingleResultSaved();
-  btn.innerHTML = _starSvg(saved) + (saved ? "Saved" : "Save");
-  btn.style.background    = saved ? "rgba(124,58,237,0.18)" : "";
-  btn.style.borderColor   = saved ? "rgba(124,58,237,0.5)"  : "";
-  btn.style.color         = saved ? "#a78bfa"               : "";
+  btn.classList.toggle("active", saved);
+  btn.innerHTML = _starSvg() + (saved ? "Saved" : "Save");
 }
 
 function saveSingleToFavourites() {
@@ -1361,23 +1360,23 @@ function renderHistory() {
     const saveBtn = document.createElement("button");
     saveBtn.className = "hist-btn hist-btn-star";
     const alreadySaved = _readFavs().some(f => f.translated === h.translated && f.toLang === h.toLang);
-    saveBtn.innerHTML = _starSvg(alreadySaved) + (alreadySaved ? " Saved" : " Save");
-    if (alreadySaved) { saveBtn.style.color = "#a78bfa"; saveBtn.style.borderColor = "rgba(124,58,237,0.4)"; }
+    saveBtn.innerHTML = _starSvg() + (alreadySaved ? " Saved" : " Save");
+    saveBtn.classList.toggle("active", alreadySaved);
     saveBtn.addEventListener("click", () => {
       const favs = _readFavs();
       const idx = favs.findIndex(f => f.translated === h.translated && f.toLang === h.toLang);
-      if (idx !== -1) {
+      const nowSaved = idx === -1;   // will be saved after this click
+      if (!nowSaved) {
         favs.splice(idx, 1); _writeFavs(favs);
-        saveBtn.innerHTML = _starSvg(false) + " Save";
-        saveBtn.style.color = ""; saveBtn.style.borderColor = "";
         showToast("Removed from favourites");
       } else {
         favs.unshift({ original: h.original, translated: h.translated, fromLang: h.fromLang, toLang: h.toLang, ts: Date.now() });
         _writeFavs(favs);
-        saveBtn.innerHTML = _starSvg(true) + " Saved";
-        saveBtn.style.color = "#a78bfa"; saveBtn.style.borderColor = "rgba(124,58,237,0.4)";
         showToast("Saved to favourites");
       }
+      // Toggle class and label instantly — no style manipulation
+      saveBtn.classList.toggle("active", nowSaved);
+      saveBtn.innerHTML = _starSvg() + (nowSaved ? " Saved" : " Save");
       _updateSingleStarBtn();
       const favsPage = document.getElementById("pageFavourites");
       if (favsPage && favsPage.classList.contains("active")) renderFavourites();
