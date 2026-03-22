@@ -1,70 +1,101 @@
 /* ================================================================
-   Vaani — chat.js  v4.0  (COMPLETE REWRITE — ALL BUGS FIXED)
+   Vaani — chat.js  v5  DEFINITIVE
    ================================================================
 
-   BUGS FIXED vs v1:
+   KEY ARCHITECTURAL DECISION:
    ─────────────────────────────────────────────────────────────────
-   1. vcInputRow stayed hidden — now shown immediately when chat opens
-   2. vcEmpty panel not hiding — fixed with proper show/hide logic
-   3. Messages not rendering — onSnapshot query fixed (timestamp order)
-   4. Auto-scroll not working — fixed scroll after render
-   5. Send button never enabled — input event wiring fixed
-   6. Chat panel on mobile not sliding in — CSS class toggle fixed
-   7. User list not refreshing on page revisit — fixed in _onPageActivate
-   8. Auth timing race — now waits for both Firebase AND auth user
-   9. Textarea auto-resize — added so it grows as user types
-   10. Real-time listener cleanup — properly unsubscribed on chat switch
+   This file manages its OWN Firebase Auth listener via the compat
+   SDK (window.chatFirebase.auth). It does NOT rely on the existing
+   app.js auth system (_vaaniOnAuthChange) because that uses the
+   ESM modular SDK which is a separate instance.
+
+   The user signs in via the existing firebase.js (ESM) which is
+   fine for the translation/UI features. For chat, we listen on
+   the compat auth instance which connects to the SAME Firebase
+   project, so the same user account is signed in on both.
 
    FIRESTORE STRUCTURE:
    ─────────────────────────────────────────────────────────────────
    users/{uid}
-     name, email, photoURL, online, updatedAt
+     uid, name, email, photoURL, online, updatedAt
 
-   chats/{chatId}                    chatId = uid1_uid2 (sorted)
-     participants[], lastMessage,
-     lastSender, updatedAt,
-     unread: { uid1: 0, uid2: 2 }
+   chats/{uid1_uid2}   (always smaller uid first)
+     chatId, participants[], lastMessage, lastSender,
+     updatedAt, createdAt, unread:{uid1:0, uid2:0}
 
-   chats/{chatId}/messages/{msgId}
+   chats/{chatId}/messages/{auto-id}
      senderId, text, timestamp, read
+
+   ALL BUGS FIXED:
+   ─────────────────────────────────────────────────────────────────
+   ✓ Auth: own compat auth listener — no ESM/compat mismatch
+   ✓ vcInputRow: shown immediately when chat selected
+   ✓ vcMessages: display controlled by JS, not CSS
+   ✓ onSnapshot: correct .orderBy("timestamp","asc") query
+   ✓ Auto-scroll: requestAnimationFrame after render
+   ✓ Send button: enabled on input, disabled after send
+   ✓ Textarea: auto-resize as user types
+   ✓ Mobile: back button + slide panel
+   ✓ Badges: unread counts update in real-time
+   ✓ Listener cleanup: previous onSnapshot unsubscribed on switch
+   ✓ Race condition: waits for both chatFirebase AND auth
 ================================================================ */
 
 (function () {
   "use strict";
 
-  // ── State ─────────────────────────────────────────────────────
+  /* ── State ─────────────────────────────────────────────────── */
   var _db             = null;
-  var _currentUser    = null;
+  var _auth           = null;
+  var _me             = null;   // current Firebase User object
   var _activeChatId   = null;
   var _activeOtherUid = null;
-  var _msgUnsub       = null;   // unsubscribe fn for message listener
-  var _chatUnsub      = null;   // unsubscribe fn for chat list listener
+  var _msgUnsub       = null;
+  var _chatUnsub      = null;
   var _users          = [];
+  var _authUnsub      = null;
 
-  // ══════════════════════════════════════════════════════════════
-  // UTILITIES
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     UTILITIES
+  ══════════════════════════════════════════════════════════════ */
 
-  function _chatId(a, b) {
-    return a < b ? a + "_" + b : b + "_" + a;
-  }
+  function _cid(a, b) { return a < b ? a + "_" + b : b + "_" + a; }
 
-  function _esc(str) {
+  function _esc(s) {
     var d = document.createElement("div");
-    d.appendChild(document.createTextNode(String(str || "")));
+    d.appendChild(document.createTextNode(String(s || "")));
     return d.innerHTML;
   }
 
-  function _formatTime(ts) {
+  function _get(id) { return document.getElementById(id); }
+
+  function _toast(msg) {
+    if (typeof window.showToast === "function") window.showToast(msg);
+  }
+
+  function _color(uid) {
+    var c = ["#7c3aed","#2563eb","#0891b2","#059669","#d97706",
+             "#dc2626","#db2777","#4f46e5","#0f766e","#b45309"];
+    var h = 0;
+    for (var i = 0; i < (uid||"").length; i++)
+      h = uid.charCodeAt(i) + ((h << 5) - h);
+    return c[Math.abs(h) % c.length];
+  }
+
+  function _initials(name) {
+    return (name||"?").split(" ").map(function(w){return w[0]||"";})
+      .slice(0,2).join("").toUpperCase() || "?";
+  }
+
+  function _fmtTime(ts) {
     if (!ts) return "";
     var d = ts.toDate ? ts.toDate() : new Date(ts);
     var now = new Date();
-    var sameDay = d.toDateString() === now.toDateString();
-    if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    var yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-    return d.toLocaleDateString([], { day: "numeric", month: "short" });
+    if (d.toDateString() === now.toDateString())
+      return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    var y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString([], {day:"numeric", month:"short"});
   }
 
   function _dateLabel(ts) {
@@ -72,137 +103,108 @@
     var d = ts.toDate ? ts.toDate() : new Date(ts);
     var now = new Date();
     if (d.toDateString() === now.toDateString()) return "Today";
-    var yest = new Date(now); yest.setDate(now.getDate() - 1);
-    if (d.toDateString() === yest.toDateString()) return "Yesterday";
-    return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    var y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString([], {weekday:"long", day:"numeric", month:"long"});
   }
 
-  function _colorFor(uid) {
-    var colors = ["#7c3aed","#2563eb","#0891b2","#059669","#d97706","#dc2626","#db2777","#4f46e5","#0f766e","#b45309"];
-    var h = 0;
-    for (var i = 0; i < (uid || "").length; i++) h = uid.charCodeAt(i) + ((h << 5) - h);
-    return colors[Math.abs(h) % colors.length];
-  }
+  /* ══════════════════════════════════════════════════════════════
+     PANEL SHOW / HIDE
+  ══════════════════════════════════════════════════════════════ */
 
-  function _initials(name) {
-    return (name || "?").split(" ").map(function(w) { return w[0]; }).slice(0, 2).join("").toUpperCase();
-  }
-
-  function _toast(msg) {
-    if (typeof window.showToast === "function") window.showToast(msg);
-    else console.log("[Chat]", msg);
-  }
-
-  function _get(id) { return document.getElementById(id); }
-
-  // ══════════════════════════════════════════════════════════════
-  // SHOW / HIDE HELPERS  (FIX 1, 2)
-  // ══════════════════════════════════════════════════════════════
-
-  function _showChatPanel(otherUser) {
-    // Hide empty placeholder
-    var empty = _get("vcEmpty");
-    if (empty) empty.style.display = "none";
-
-    // Show header
-    var header = _get("vcChatHeader");
-    if (header) {
-      header.style.display = "flex";
-      _renderHeader(otherUser);
-    }
-
-    // Show messages area (clear it while loading)
-    var msgs = _get("vcMessages");
-    if (msgs) msgs.style.display = "flex";
-
-    // FIX 1 — Show input row immediately
+  function _showPanel(otherUser) {
+    var empty    = _get("vcEmpty");
+    var header   = _get("vcChatHeader");
+    var messages = _get("vcMessages");
     var inputRow = _get("vcInputRow");
-    if (inputRow) inputRow.style.display = "flex";
+    var panel    = _get("vcChatPanel");
 
-    // Mobile: slide panel in
-    var panel = _get("vcChatPanel");
-    if (panel) panel.classList.add("vc-panel-active");
+    if (empty)    { empty.style.display    = "none";  }
+    if (header)   { header.style.display   = "flex";  _renderHeader(otherUser); }
+    if (messages) { messages.style.display = "flex";
+                    messages.innerHTML     = _loadingHtml(); }
+    if (inputRow) { inputRow.style.display = "flex";  }
+    if (panel)    { panel.classList.add("vc-panel-active"); }
+
+    // Focus input
+    setTimeout(function() {
+      var inp = _get("vcInput");
+      if (inp) inp.focus();
+    }, 200);
   }
 
-  function _hideChatPanel() {
-    var empty = _get("vcEmpty");
-    if (empty) empty.style.display = "flex";
-
-    var header = _get("vcChatHeader");
-    if (header) { header.style.display = "none"; header.innerHTML = ""; }
-
-    var msgs = _get("vcMessages");
-    if (msgs) { msgs.style.display = "none"; msgs.innerHTML = ""; }
-
+  function _hidePanel() {
+    var empty    = _get("vcEmpty");
+    var header   = _get("vcChatHeader");
+    var messages = _get("vcMessages");
     var inputRow = _get("vcInputRow");
-    if (inputRow) inputRow.style.display = "none";
+    var panel    = _get("vcChatPanel");
+    var input    = _get("vcInput");
+    var sendBtn  = _get("vcSendBtn");
 
-    var input = _get("vcInput");
-    if (input) input.value = "";
+    if (empty)    { empty.style.display    = "flex";  }
+    if (header)   { header.style.display   = "none";  header.innerHTML = ""; }
+    if (messages) { messages.style.display = "none";  messages.innerHTML = ""; }
+    if (inputRow) { inputRow.style.display = "none";  }
+    if (panel)    { panel.classList.remove("vc-panel-active"); }
+    if (input)    { input.value = ""; _resizeInput(input); }
+    if (sendBtn)  { sendBtn.disabled = true; }
 
-    var sendBtn = _get("vcSendBtn");
-    if (sendBtn) sendBtn.disabled = true;
-
-    var panel = _get("vcChatPanel");
-    if (panel) panel.classList.remove("vc-panel-active");
-
-    // Deselect user in list
     document.querySelectorAll(".vc-user-item").forEach(function(el) {
       el.classList.remove("vc-active");
     });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — USER PROFILE
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — USER PROFILE
+  ══════════════════════════════════════════════════════════════ */
 
-  function upsertUserProfile(user) {
-    if (!_db || !user) return Promise.resolve();
-    return _db.collection("users").doc(user.uid).set({
+  function _upsertProfile(user) {
+    if (!_db || !user) return;
+    _db.collection("users").doc(user.uid).set({
       uid:       user.uid,
       name:      user.displayName || user.email.split("@")[0],
       email:     user.email || "",
-      photoURL:  user.photoURL  || "",
+      photoURL:  user.photoURL || "",
       online:    true,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge: true })
     .then(function() {
-      console.log("[Chat] User profile upserted:", user.uid);
+      console.log("[Chat] Profile upserted:", user.uid);
     })
     .catch(function(e) {
-      console.warn("[Chat] upsertUserProfile:", e.message);
+      console.warn("[Chat] upsertProfile:", e.message);
     });
   }
 
-  function setOffline(uid) {
+  function _setOffline(uid) {
     if (!_db || !uid) return;
     _db.collection("users").doc(uid)
-      .update({ online: false })
-      .catch(function() {});
+      .update({ online: false }).catch(function(){});
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — LOAD USERS
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — LOAD USERS
+  ══════════════════════════════════════════════════════════════ */
 
   function loadUsers() {
     var list = _get("vcUserList");
     if (!list) return;
 
-    if (!_currentUser) {
-      list.innerHTML = _emptyListHtml(
+    if (!_me) {
+      list.innerHTML = _emptyHtml(
         "Sign in to chat",
-        "Use the Sign In button in the menu to get started."
+        "Use the Sign In button in the menu."
       );
       return;
     }
 
     if (!_db) {
-      list.innerHTML = _emptyListHtml("Loading…", "Please wait.");
+      list.innerHTML = _loadingHtml();
       return;
     }
 
-    list.innerHTML = '<div class="vc-loading"><div class="vc-spinner"></div><span>Loading users…</span></div>';
+    list.innerHTML = _loadingHtml();
 
     _db.collection("users")
       .orderBy("name")
@@ -210,12 +212,12 @@
       .then(function(snap) {
         _users = snap.docs
           .map(function(d) { return d.data(); })
-          .filter(function(u) { return u.uid !== _currentUser.uid; });
+          .filter(function(u) { return u.uid !== _me.uid; });
 
         if (!_users.length) {
-          list.innerHTML = _emptyListHtml(
+          list.innerHTML = _emptyHtml(
             "No other users yet",
-            "Sign in with another account to start chatting."
+            "Sign in with a second account to chat."
           );
           return;
         }
@@ -224,138 +226,140 @@
 
         list.querySelectorAll(".vc-user-item").forEach(function(el) {
           el.addEventListener("click", function() {
-            openChatWith(el.dataset.uid);
+            _openChat(el.dataset.uid);
           });
         });
+
+        console.log("[Chat] Loaded", _users.length, "users");
       })
       .catch(function(e) {
-        console.warn("[Chat] loadUsers:", e.message);
-        list.innerHTML = _emptyListHtml("Could not load users", e.message);
+        console.error("[Chat] loadUsers:", e.message);
+        list.innerHTML = _emptyHtml("Failed to load users", e.message);
       });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — CREATE OR GET CHAT
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — CREATE OR GET CHAT
+  ══════════════════════════════════════════════════════════════ */
 
-  function createOrGetChat(otherUid) {
-    if (!_db || !_currentUser) return Promise.resolve(null);
-    var id  = _chatId(_currentUser.uid, otherUid);
+  function _createOrGetChat(otherUid) {
+    var id  = _cid(_me.uid, otherUid);
     var ref = _db.collection("chats").doc(id);
 
     return ref.get().then(function(snap) {
       if (!snap.exists) {
-        return ref.set({
+        var data = {
           chatId:       id,
-          participants: [_currentUser.uid, otherUid],
+          participants: [_me.uid, otherUid],
           createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt:    firebase.firestore.FieldValue.serverTimestamp(),
           lastMessage:  "",
           lastSender:   "",
-          unread:       { [_currentUser.uid]: 0, [otherUid]: 0 },
-        }).then(function() { return id; });
+          unread:       {},
+        };
+        data.unread[_me.uid]  = 0;
+        data.unread[otherUid] = 0;
+        return ref.set(data).then(function() {
+          console.log("[Chat] New chat created:", id);
+          return id;
+        });
       }
       return id;
     });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — SEND MESSAGE  (FIX 5)
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — SEND MESSAGE
+  ══════════════════════════════════════════════════════════════ */
 
-  function sendMessage(chatId, text) {
+  function _sendMessage(chatId, text) {
     var trimmed = (text || "").trim();
-    if (!trimmed || !chatId || !_currentUser || !_db) return;
+    if (!trimmed || !chatId || !_me || !_db) return;
 
-    // Clear input immediately (optimistic)
-    var input = _get("vcInput");
-    if (input) { input.value = ""; _resizeInput(input); }
-    var sendBtn = _get("vcSendBtn");
-    if (sendBtn) sendBtn.disabled = true;
+    // Optimistic clear
+    var inp = _get("vcInput");
+    var btn = _get("vcSendBtn");
+    if (inp) { inp.value = ""; _resizeInput(inp); }
+    if (btn) btn.disabled = true;
 
-    var msgRef  = _db.collection("chats").doc(chatId).collection("messages").doc();
-    var chatRef = _db.collection("chats").doc(chatId);
-
-    // Write message
-    msgRef.set({
-      chatId:    chatId,
-      senderId:  _currentUser.uid,
-      text:      trimmed,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      read:      false,
-    })
-    .then(function() {
-      // Update chat metadata
-      var otherUid = _activeOtherUid;
-      var update = {
-        lastMessage: trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed,
-        lastSender:  _currentUser.uid,
-        updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-      };
-      if (otherUid) {
-        update["unread." + otherUid] = firebase.firestore.FieldValue.increment(1);
-      }
-      return chatRef.update(update);
-    })
-    .catch(function(e) {
-      console.error("[Chat] sendMessage failed:", e.message);
-      _toast("Failed to send. Check your connection.");
-      if (input) input.value = trimmed; // restore text
-    });
+    // Write message doc
+    _db.collection("chats").doc(chatId)
+      .collection("messages").add({
+        chatId:    chatId,
+        senderId:  _me.uid,
+        text:      trimmed,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        read:      false,
+      })
+      .then(function() {
+        // Update chat metadata
+        var upd = {
+          lastMessage: trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed,
+          lastSender:  _me.uid,
+          updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+        };
+        if (_activeOtherUid) {
+          upd["unread." + _activeOtherUid] =
+            firebase.firestore.FieldValue.increment(1);
+        }
+        return _db.collection("chats").doc(chatId).update(upd);
+      })
+      .catch(function(e) {
+        console.error("[Chat] sendMessage:", e.message);
+        _toast("Send failed. Check connection.");
+        if (inp) inp.value = trimmed; // restore
+      });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — LISTEN MESSAGES  (FIX 3, 4, 8)
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — LISTEN MESSAGES (real-time onSnapshot)
+  ══════════════════════════════════════════════════════════════ */
 
-  function listenMessages(chatId) {
-    // Unsubscribe previous listener
+  function _listenMessages(chatId) {
+    // Unsubscribe from previous chat
     if (_msgUnsub) { _msgUnsub(); _msgUnsub = null; }
     if (!_db || !chatId) return;
 
-    var msgs = _get("vcMessages");
-    if (msgs) {
-      msgs.innerHTML = '<div class="vc-loading"><div class="vc-spinner"></div><span>Loading…</span></div>';
-    }
+    console.log("[Chat] Listening to messages in:", chatId);
 
-    // FIX 3 — correct query with proper ordering
     _msgUnsub = _db
-      .collection("chats")
-      .doc(chatId)
+      .collection("chats").doc(chatId)
       .collection("messages")
       .orderBy("timestamp", "asc")
       .onSnapshot(
         function(snap) {
-          var messages = snap.docs.map(function(d) {
+          var msgs = snap.docs.map(function(d) {
             return Object.assign({ id: d.id }, d.data());
           });
-          _renderMessages(messages);
-          markRead(chatId);
+          console.log("[Chat] onSnapshot fired:", msgs.length, "messages");
+          _renderMessages(msgs);
+          _markRead(chatId);
         },
         function(err) {
-          console.error("[Chat] listenMessages error:", err.message);
-          if (msgs) msgs.innerHTML = '<div class="vc-no-messages"><p>Could not load messages.</p></div>';
+          console.error("[Chat] onSnapshot error:", err.code, err.message);
+          var el = _get("vcMessages");
+          if (el) el.innerHTML = _emptyHtml("Error loading messages", err.message);
         }
       );
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // FIRESTORE — LISTEN CHATS (sidebar badges)
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     FIRESTORE — LISTEN CHATS (sidebar unread badges)
+  ══════════════════════════════════════════════════════════════ */
 
-  function listenChats() {
+  function _listenChats() {
     if (_chatUnsub) { _chatUnsub(); _chatUnsub = null; }
-    if (!_db || !_currentUser) return;
+    if (!_db || !_me) return;
 
     _chatUnsub = _db
       .collection("chats")
-      .where("participants", "array-contains", _currentUser.uid)
+      .where("participants", "array-contains", _me.uid)
       .orderBy("updatedAt", "desc")
       .onSnapshot(
         function(snap) {
           var chats = snap.docs.map(function(d) { return d.data(); });
           var total = chats.reduce(function(sum, c) {
-            return sum + ((c.unread && c.unread[_currentUser.uid]) || 0);
+            return sum + ((c.unread && c.unread[_me.uid]) || 0);
           }, 0);
           _updateNavBadge(total);
           _updateUserBadges(chats);
@@ -366,145 +370,151 @@
       );
   }
 
-  function markRead(chatId) {
-    if (!_db || !_currentUser || !chatId) return;
-    var update = {};
-    update["unread." + _currentUser.uid] = 0;
-    _db.collection("chats").doc(chatId).update(update).catch(function() {});
+  function _markRead(chatId) {
+    if (!_db || !_me || !chatId) return;
+    var upd = {};
+    upd["unread." + _me.uid] = 0;
+    _db.collection("chats").doc(chatId).update(upd).catch(function(){});
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // UI — RENDER MESSAGES  (FIX 4 — auto scroll)
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     UI — RENDER MESSAGES
+  ══════════════════════════════════════════════════════════════ */
 
   function _renderMessages(messages) {
-    var msgs = _get("vcMessages");
-    if (!msgs || !_currentUser) return;
+    var el = _get("vcMessages");
+    if (!el || !_me) return;
 
     if (!messages.length) {
-      msgs.innerHTML = '<div class="vc-no-messages"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><p>No messages yet. Say hi! 👋</p></div>';
+      el.innerHTML = '<div class="vc-no-messages">'
+        + '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
+        + '<p>No messages yet — say hi! 👋</p></div>';
       return;
     }
 
-    var html   = "";
+    var html = "";
     var lastDate = "";
 
     messages.forEach(function(msg) {
-      var isMe = msg.senderId === _currentUser.uid;
+      var isMe = msg.senderId === _me.uid;
       var ts   = msg.timestamp;
-      var dateStr = ts ? (ts.toDate ? ts.toDate().toDateString() : new Date(ts).toDateString()) : "";
+      var dateStr = ts ? (ts.toDate ? ts.toDate().toDateString()
+                                    : new Date(ts).toDateString()) : "";
 
-      // Date separator
       if (dateStr && dateStr !== lastDate) {
         html += '<div class="vc-date-sep"><span>' + _dateLabel(ts) + '</span></div>';
         lastDate = dateStr;
       }
 
       html += '<div class="vc-msg ' + (isMe ? "vc-msg-me" : "vc-msg-them") + '">'
-        + '<div class="vc-bubble">' + _esc(msg.text) + '</div>'
-        + '<div class="vc-msg-time">' + _formatTime(ts) + '</div>'
-        + '</div>';
+            +   '<div class="vc-bubble">' + _esc(msg.text) + '</div>'
+            +   '<div class="vc-msg-time">' + _fmtTime(ts) + '</div>'
+            + '</div>';
     });
 
-    msgs.innerHTML = html;
+    el.innerHTML = html;
 
-    // FIX 4 — scroll to bottom after render
+    // Scroll to bottom
     requestAnimationFrame(function() {
-      msgs.scrollTop = msgs.scrollHeight;
+      el.scrollTop = el.scrollHeight;
     });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // UI — RENDER USER LIST
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     UI — RENDER HEADER
+  ══════════════════════════════════════════════════════════════ */
+
+  function _renderHeader(user) {
+    var el = _get("vcChatHeader");
+    if (!el || !user) return;
+
+    var col = _color(user.uid);
+    var ini = _initials(user.name);
+    var img = user.photoURL
+      ? '<img src="' + _esc(user.photoURL) + '" alt="" onerror="this.style.display=\'none\'">'
+      : "";
+    var dot = user.online ? '<span class="vc-online-dot"></span>' : "";
+
+    el.innerHTML =
+      '<button class="vc-back-btn" id="vcBackBtn">'
+      + '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>'
+      + '</button>'
+      + '<div class="vc-avatar vc-avatar-sm" style="background:' + col + '">'
+      + img + ini + dot
+      + '</div>'
+      + '<div class="vc-header-info">'
+      + '<div class="vc-header-name">' + _esc(user.name) + '</div>'
+      + '<div class="vc-header-status">' + (user.online ? "● Online" : "Offline") + '</div>'
+      + '</div>';
+
+    var back = _get("vcBackBtn");
+    if (back) back.addEventListener("click", function() {
+      if (_msgUnsub) { _msgUnsub(); _msgUnsub = null; }
+      _activeChatId   = null;
+      _activeOtherUid = null;
+      _hidePanel();
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     UI — RENDER USER LIST
+  ══════════════════════════════════════════════════════════════ */
 
   function _userItemHtml(u) {
-    var color    = _colorFor(u.uid);
-    var initials = _initials(u.name);
-    var photoHtml = u.photoURL
+    var col = _color(u.uid);
+    var ini = _initials(u.name);
+    var img = u.photoURL
       ? '<img src="' + _esc(u.photoURL) + '" alt="" onerror="this.style.display=\'none\'">'
       : "";
-    var onlineDot = u.online ? '<span class="vc-online-dot"></span>' : "";
+    var dot = u.online ? '<span class="vc-online-dot"></span>' : "";
 
     return '<div class="vc-user-item" data-uid="' + _esc(u.uid) + '" id="vc-user-' + _esc(u.uid) + '">'
-      + '<div class="vc-avatar" style="background:' + color + '">'
-      + photoHtml + initials + onlineDot
-      + '</div>'
+      + '<div class="vc-avatar" style="background:' + col + '">' + img + ini + dot + '</div>'
       + '<div class="vc-user-info">'
-      + '<div class="vc-user-name">' + _esc(u.name) + '</div>'
-      + '<div class="vc-user-email">' + _esc(u.email) + '</div>'
+      +   '<div class="vc-user-name">'  + _esc(u.name)  + '</div>'
+      +   '<div class="vc-user-email">' + _esc(u.email) + '</div>'
       + '</div>'
       + '<div class="vc-badge" id="vc-badge-' + _esc(u.uid) + '" style="display:none">0</div>'
       + '</div>';
   }
 
-  function _emptyListHtml(title, sub) {
+  function _loadingHtml() {
+    return '<div class="vc-loading"><div class="vc-spinner"></div><span>Loading…</span></div>';
+  }
+
+  function _emptyHtml(title, sub) {
     return '<div class="vc-empty-list">'
-      + '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>'
+      + '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
+      + '<circle cx="9" cy="7" r="4"/></svg>'
       + '<p>' + _esc(title) + '</p>'
       + '<span>' + _esc(sub) + '</span>'
       + '</div>';
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // UI — RENDER CHAT HEADER
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     UI — BADGES
+  ══════════════════════════════════════════════════════════════ */
 
-  function _renderHeader(user) {
-    var header = _get("vcChatHeader");
-    if (!header || !user) return;
-
-    var color    = _colorFor(user.uid);
-    var initials = _initials(user.name);
-    var photoHtml = user.photoURL
-      ? '<img src="' + _esc(user.photoURL) + '" alt="" onerror="this.style.display=\'none\'">'
-      : "";
-    var onlineDot = user.online ? '<span class="vc-online-dot"></span>' : "";
-
-    header.innerHTML =
-      '<button class="vc-back-btn" id="vcBackBtn" title="Back">'
-      + '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>'
-      + '</button>'
-      + '<div class="vc-avatar vc-avatar-sm" style="background:' + color + '">'
-      + photoHtml + initials + onlineDot
-      + '</div>'
-      + '<div class="vc-header-info">'
-      + '<div class="vc-header-name">' + _esc(user.name) + '</div>'
-      + '<div class="vc-header-status">' + (user.online ? "Online" : "Offline") + '</div>'
-      + '</div>';
-
-    var backBtn = _get("vcBackBtn");
-    if (backBtn) backBtn.addEventListener("click", _closeChat);
-  }
-
-  // ══════════════════════════════════════════════════════════════
-  // UI — BADGES
-  // ══════════════════════════════════════════════════════════════
-
-  function _updateNavBadge(count) {
+  function _updateNavBadge(n) {
     ["chatNavBadge", "chatMenuBadge"].forEach(function(id) {
       var el = _get(id);
       if (!el) return;
-      if (count > 0) {
-        el.textContent = count > 99 ? "99+" : count;
-        el.style.display = "flex";
-      } else {
-        el.style.display = "none";
-      }
+      if (n > 0) { el.textContent = n > 99 ? "99+" : n; el.style.display = "flex"; }
+      else        { el.style.display = "none"; }
     });
   }
 
   function _updateUserBadges(chats) {
-    if (!_currentUser) return;
+    if (!_me) return;
     chats.forEach(function(chat) {
-      var unread   = (chat.unread && chat.unread[_currentUser.uid]) || 0;
-      var otherUid = (chat.participants || []).find(function(uid) {
-        return uid !== _currentUser.uid;
-      });
+      var unread   = (chat.unread && chat.unread[_me.uid]) || 0;
+      var otherUid = (chat.participants || []).filter(function(uid) {
+        return uid !== _me.uid;
+      })[0];
       if (!otherUid) return;
-      var badge = _get("vc-badge-" + otherUid);
+      var badge   = _get("vc-badge-" + otherUid);
       if (!badge) return;
-      var isActive = _activeChatId && _activeChatId === _chatId(_currentUser.uid, otherUid);
+      var isActive = _activeChatId && _activeChatId === _cid(_me.uid, otherUid);
       if (unread > 0 && !isActive) {
         badge.textContent = unread > 99 ? "99+" : unread;
         badge.style.display = "flex";
@@ -514,214 +524,184 @@
     });
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // INTERACTION — OPEN / CLOSE CHAT
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     INTERACTION — OPEN CHAT
+  ══════════════════════════════════════════════════════════════ */
 
-  function openChatWith(otherUid) {
-    if (!_currentUser || !otherUid || !_db) return;
+  function _openChat(otherUid) {
+    if (!_me || !otherUid || !_db) {
+      console.warn("[Chat] _openChat blocked:", {me:!!_me, uid:otherUid, db:!!_db});
+      return;
+    }
 
-    var otherUser = _users.find(function(u) { return u.uid === otherUid; });
+    // Find user in cache or fetch from Firestore
+    var otherUser = _users.filter(function(u){ return u.uid === otherUid; })[0];
+
     if (!otherUser) {
-      // User not in cache — fetch from Firestore
       _db.collection("users").doc(otherUid).get()
         .then(function(snap) {
-          if (snap.exists) {
-            otherUser = snap.data();
-            _doOpenChat(otherUser);
-          }
+          if (snap.exists) _doOpenChat(snap.data());
+          else _toast("User not found.");
         });
       return;
     }
+
     _doOpenChat(otherUser);
   }
 
   function _doOpenChat(otherUser) {
     _activeOtherUid = otherUser.uid;
 
-    // Highlight selected user
+    // Highlight in sidebar
     document.querySelectorAll(".vc-user-item").forEach(function(el) {
       el.classList.toggle("vc-active", el.dataset.uid === otherUser.uid);
     });
 
-    // Show panel immediately with loading state
-    _showChatPanel(otherUser);
+    // Show panel with loading state
+    _showPanel(otherUser);
 
-    // Create/get chat then start listener
-    createOrGetChat(otherUser.uid)
+    // Create/get chat, then start real-time listener
+    _createOrGetChat(otherUser.uid)
       .then(function(chatId) {
-        if (!chatId) { _toast("Could not open chat."); return; }
         _activeChatId = chatId;
-        listenMessages(chatId);
-        // Focus input
-        var input = _get("vcInput");
-        if (input) setTimeout(function() { input.focus(); }, 150);
+        _listenMessages(chatId);
       })
       .catch(function(e) {
-        console.error("[Chat] openChatWith:", e.message);
+        console.error("[Chat] _doOpenChat:", e.message);
         _toast("Could not open chat: " + e.message);
       });
   }
 
-  function _closeChat() {
-    if (_msgUnsub) { _msgUnsub(); _msgUnsub = null; }
-    _activeChatId   = null;
-    _activeOtherUid = null;
-    _hideChatPanel();
-  }
-
-  // ══════════════════════════════════════════════════════════════
-  // INTERACTION — SEND
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     INTERACTION — SEND / INPUT
+  ══════════════════════════════════════════════════════════════ */
 
   function _handleSend() {
-    var input = _get("vcInput");
-    var text  = input ? input.value.trim() : "";
-    if (!text || !_activeChatId) return;
-    sendMessage(_activeChatId, text);
+    var inp  = _get("vcInput");
+    var text = inp ? inp.value.trim() : "";
+    if (!text)          { return; }
+    if (!_activeChatId) { _toast("Select a user to chat with first."); return; }
+    if (!_me)           { _toast("Please sign in first."); return; }
+    _sendMessage(_activeChatId, text);
   }
 
-  // FIX 9 — auto-resize textarea as user types
   function _resizeInput(el) {
-    if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // EVENT BINDING
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     AUTH — OWN LISTENER on compat auth instance
+  ══════════════════════════════════════════════════════════════ */
+
+  function _startAuthListener() {
+    if (!_auth) return;
+
+    _authUnsub = _auth.onAuthStateChanged(function(user) {
+      console.log("[Chat] Auth state:", user ? ("signed in: " + user.email) : "signed out");
+
+      if (!user) {
+        // Cleanup
+        _me             = null;
+        _activeChatId   = null;
+        _activeOtherUid = null;
+        if (_msgUnsub)  { _msgUnsub();  _msgUnsub  = null; }
+        if (_chatUnsub) { _chatUnsub(); _chatUnsub = null; }
+        _hidePanel();
+        loadUsers();
+        return;
+      }
+
+      _me = user;
+      _upsertProfile(user);
+      loadUsers();
+      _listenChats();
+
+      // Mark offline on page leave
+      window.addEventListener("beforeunload", function() { _setOffline(user.uid); });
+      document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === "hidden") _setOffline(user.uid);
+        else _upsertProfile(user);
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     EVENT BINDING
+  ══════════════════════════════════════════════════════════════ */
 
   function _bindEvents() {
     var sendBtn = _get("vcSendBtn");
-    var input   = _get("vcInput");
+    var inp     = _get("vcInput");
 
     if (sendBtn) {
       sendBtn.addEventListener("click", _handleSend);
     }
 
-    if (input) {
-      // Send on Enter, new line on Shift+Enter
-      input.addEventListener("keydown", function(e) {
+    if (inp) {
+      inp.addEventListener("keydown", function(e) {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           _handleSend();
         }
       });
-
-      // FIX 5 — Enable send button based on input content
-      input.addEventListener("input", function() {
-        if (sendBtn) sendBtn.disabled = !input.value.trim();
-        _resizeInput(input);
-      });
-    }
-
-    // Nav button
-    var navBtn = _get("vcNavBtn");
-    if (navBtn) {
-      navBtn.addEventListener("click", function() {
-        if (typeof navigateTo === "function") navigateTo("Chat");
+      inp.addEventListener("input", function() {
+        if (sendBtn) sendBtn.disabled = !inp.value.trim();
+        _resizeInput(inp);
       });
     }
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // AUTH HANDLER
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     WAIT FOR chatFirebase TO BE READY
+  ══════════════════════════════════════════════════════════════ */
 
-  function _onAuthReady(user) {
-    _currentUser = user || null;
-
-    if (!user) {
-      // Cleanup on sign-out
-      if (_msgUnsub)  { _msgUnsub();  _msgUnsub  = null; }
-      if (_chatUnsub) { _chatUnsub(); _chatUnsub = null; }
-      _activeChatId   = null;
-      _activeOtherUid = null;
-      _hideChatPanel();
-      loadUsers(); // shows "sign in" message
-      return;
-    }
-
-    // Signed in
-    upsertUserProfile(user).then(function() {
-      loadUsers();
-      listenChats();
-    });
-
-    // Mark offline when tab closes
-    window.addEventListener("beforeunload", function() { setOffline(user.uid); });
-    document.addEventListener("visibilitychange", function() {
-      if (document.visibilityState === "hidden") setOffline(user.uid);
-      else upsertUserProfile(user);
-    });
-  }
-
-  // ══════════════════════════════════════════════════════════════
-  // WAIT FOR FIREBASE  (FIX 8 — race condition)
-  // ══════════════════════════════════════════════════════════════
-
-  function _waitForFirebase(cb, tries) {
+  function _waitAndInit(tries) {
     tries = tries || 0;
-    if (window.chatFirebase && window.chatFirebase.db) {
-      cb();
-    } else if (tries < 50) {
-      setTimeout(function() { _waitForFirebase(cb, tries + 1); }, 100);
+    if (window.chatFirebase && window.chatFirebase.db && window.chatFirebase.auth) {
+      _db   = window.chatFirebase.db;
+      _auth = window.chatFirebase.auth;
+      _bindEvents();
+      _startAuthListener();
+      console.log("[Chat] ✓ Initialized and listening for auth.");
+    } else if (tries < 100) {
+      setTimeout(function() { _waitAndInit(tries + 1); }, 100);
     } else {
-      console.error("[Chat] Timed out waiting for chatFirebase.");
+      console.error("[Chat] Timed out waiting for chatFirebase. Check chat-firebase.js loaded correctly.");
     }
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // INIT
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     INIT
+  ══════════════════════════════════════════════════════════════ */
 
   function _init() {
     var page = _get("pageChat");
     if (!page) {
-      console.warn("[Chat] #pageChat not found. Did you add BLOCK 4 to index.html?");
+      console.error("[Chat] #pageChat div not found in DOM. Did you add BLOCK 4 to index.html?");
       return;
     }
 
-    // Set initial state — hide panel until user selected
-    _hideChatPanel();
+    // Set initial UI state
+    _hidePanel();
 
-    _bindEvents();
-
-    _waitForFirebase(function() {
-      _db = window.chatFirebase.db;
-
-      // Hook into Vaani's auth system (wraps existing _vaaniOnAuthChange)
-      var _prev = window._vaaniOnAuthChange;
-      window._vaaniOnAuthChange = function(user) {
-        if (typeof _prev === "function") _prev(user);
-        _onAuthReady(user);
-      };
-
-      // If auth already fired before we got here
-      if (window.VAANI_AUTH_READY) {
-        _onAuthReady(window._vaaniCurrentUser || null);
-      }
-
-      console.log("[Chat] Initialized ✓");
-    });
+    // Wait for chatFirebase then start
+    _waitAndInit(0);
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // PUBLIC API  (for Phase 2 translation integration)
-  // ══════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════════════════════════════
+     PUBLIC API
+  ══════════════════════════════════════════════════════════════ */
 
   window.vaaniChat = {
-    openChatWith:    openChatWith,
-    sendMessage:     sendMessage,
     loadUsers:       loadUsers,
-    listenMessages:  listenMessages,
-    markRead:        markRead,
-    getCurrentUser:  function() { return _currentUser; },
+    openChatWith:    _openChat,
+    sendMessage:     _sendMessage,
+    getCurrentUser:  function() { return _me; },
     getActiveChatId: function() { return _activeChatId; },
   };
 
-  // Boot
+  // Boot after DOM ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", _init);
   } else {
