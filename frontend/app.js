@@ -1021,6 +1021,12 @@ async function translateTypedText() {
   const fromLang = document.getElementById("fromLang")?.value || "en";
   const toLang   = document.getElementById("toLang")?.value   || "en";
   const btn = document.getElementById("translateTextBtn");
+
+  // Cancel any pending live-translation debounce so we don't double-fire
+  clearTimeout(_liveTimer);
+  _liveLastText = raw;   // mark as committed so live-translate skips it
+  _liveClearHint();
+
   if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
   showOriginalText(raw); setTranslating();
   const translated = await window.finalTranslate(raw, fromLang, toLang);
@@ -1032,6 +1038,111 @@ async function translateTypedText() {
     await autoPlay(translated, toLang, "", transEl);
   }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// LIVE TRANSLATION  (debounced, text mode only)
+// ──────────────────────────────────────────────────────────────────
+// Fires automatically ~500 ms after the user stops typing.
+// Completely independent of the Translate button — both coexist.
+// Safety guards prevent any interference with voice / conversation mode.
+// ══════════════════════════════════════════════════════════════════
+
+const _LIVE_DEBOUNCE_MS = 500;   // wait after last keystroke
+let   _liveTimer        = null;  // debounce handle
+let   _liveController   = null;  // AbortController for in-flight request
+let   _liveInFlight     = false; // true while a translation is running
+let   _liveLastText     = "";    // last text we translated (skip duplicates)
+
+// ── Pending indicator while debounce counts down ─────────────────
+function _liveSetPending() {
+  const hint = document.getElementById("liveHint");
+  if (hint) { hint.textContent = "Translating…"; hint.classList.add("live-hint--active"); }
+}
+
+// ── Clear the hint when idle ──────────────────────────────────────
+function _liveClearHint() {
+  const hint = document.getElementById("liveHint");
+  if (hint) { hint.textContent = ""; hint.classList.remove("live-hint--active"); }
+  const area = document.getElementById("textInputArea");
+  if (area) area.classList.remove("live-typing");
+}
+
+// ── Update translation panel — no history save, no autoPlay ──────
+// The user hasn't committed yet; those only fire on the Translate button.
+function _liveShowResult(raw, translated) {
+  if (!translated || !translated.trim()) return;
+  showOriginalText(raw);
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent = translated;
+  if (a) a.style.display = "flex";
+  _updateSingleStarBtn();
+  _liveClearHint();
+}
+
+// ── Core async runner ─────────────────────────────────────────────
+async function _runLiveTranslation(text, fromLang, toLang) {
+  // Cancel any previous in-flight request
+  if (_liveController) { try { _liveController.abort(); } catch (_) {} }
+  _liveController = new AbortController();
+  _liveInFlight   = true;
+
+  try {
+    const translated = await window.finalTranslate(text, fromLang, toLang);
+
+    // Newer keystroke may have superseded this — apply only if still current
+    const current = (document.getElementById("textInputArea")?.value || "").trim();
+    if (current !== text) return;   // stale → discard silently
+
+    if (translated && translated.trim()) {
+      _liveShowResult(text, translated);
+      _liveLastText = text;
+    }
+  } catch (err) {
+    if (err && err.name !== "AbortError") {
+      console.warn("[Vaani LiveTranslation]", err.message);
+    }
+  } finally {
+    _liveInFlight   = false;
+    _liveController = null;
+  }
+}
+
+// ── The debounced handler — wired to #textInputArea ──────────────
+function handleLiveTranslation() {
+  // Guard 1: ignore while voice is recording
+  if (_mic.single.state === MicState.LISTENING) return;
+  if (_mic.A.state       === MicState.LISTENING) return;
+  if (_mic.B.state       === MicState.LISTENING) return;
+
+  // Guard 2: only run in text mode (textarea visible)
+  const textSec = document.getElementById("textInput");
+  if (!textSec || textSec.style.display === "none") return;
+
+  const area = document.getElementById("textInputArea");
+  const raw  = (area?.value || "").trim();
+
+  // Guard 3: too short or unchanged
+  if (!raw || raw.length < 2) { clearTimeout(_liveTimer); _liveClearHint(); return; }
+  if (raw === _liveLastText)  return;
+
+  _liveSetPending();
+  // Add glow border while user is actively typing
+  const _liveArea = document.getElementById("textInputArea");
+  if (_liveArea) _liveArea.classList.add("live-typing");
+  clearTimeout(_liveTimer);
+
+  _liveTimer = setTimeout(async () => {
+    const text     = (document.getElementById("textInputArea")?.value || "").trim();
+    if (_liveArea) _liveArea.classList.remove("live-typing");
+    if (!text || text.length < 2) { _liveClearHint(); return; }
+    const fromLang = document.getElementById("fromLang")?.value || "en";
+    const toLang   = document.getElementById("toLang")?.value   || "en";
+    await _runLiveTranslation(text, fromLang, toLang);
+  }, _LIVE_DEBOUNCE_MS);
+}
+
+// ══════════════════════════════════════════════════════════════════
 
 async function onLanguageChange() {
   const fromLang = document.getElementById("fromLang")?.value || "en";
@@ -1828,6 +1939,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 5000);
 
   detectUserLocation();
+
+  // ── Live translation: attach debounced listener to text input ──
+  const _liveTextArea = document.getElementById("textInputArea");
+  if (_liveTextArea) {
+    _liveTextArea.addEventListener("input", handleLiveTranslation);
+  }
 
   if (navigator.permissions) {
     navigator.permissions.query({ name: "microphone" }).then(r => {
