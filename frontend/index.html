@@ -20,6 +20,7 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260322a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
+  <link rel="stylesheet" href="chat-ui.css?v=7">
   <link rel="stylesheet" href="chat.css?v=6">
 </head>
 <body>
@@ -289,38 +290,166 @@
     <h2 class="page-title">Conversation Mode</h2>
     <p class="page-sub">Two people, two languages — live two-way translation</p>
   </div>
-  <div id="pageChat" class="page">
-  <div class="vc-layout">
-    <aside class="vc-sidebar">
-      <div class="vc-sidebar-header">
-        <div class="vc-sidebar-title">
-          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          Messages
+  <!-- ================================================================
+     VAANI CHAT PAGE — COMPLETE UI  v7
+     Drop this block into index.html replacing the existing #pageChat div.
+================================================================ -->
+
+<!-- ══ CHAT PAGE ═══════════════════════════════════════════════ -->
+<div id="pageChat" class="page">
+  <div class="cu-shell">
+
+    <!-- ── LEFT PANEL ──────────────────────────────────────────── -->
+    <aside class="cu-left">
+
+      <!-- Header -->
+      <div class="cu-left-head">
+        <div class="cu-left-title">
+          <span class="cu-title-text">Connect</span>
+          <span class="cu-title-dot"></span>
         </div>
-        <div class="vc-sidebar-sub">Click a user to start chatting</div>
-      </div>
-      <div class="vc-user-list" id="vcUserList">
-        <div class="vc-empty-list">
-          <p>Loading users…</p>
-        </div>
-      </div>
-    </aside>
-    <div class="vc-chat-panel" id="vcChatPanel">
-      <div class="vc-empty-panel" id="vcEmpty">
-        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        <h3>Select a conversation</h3>
-        <p>Choose a user from the list to start chatting.</p>
-      </div>
-      <div class="vc-chat-header" id="vcChatHeader"></div>
-      <div class="vc-messages" id="vcMessages"></div>
-      <div class="vc-input-row" id="vcInputRow" style="display:none">
-        <textarea id="vcInput" class="vc-input" placeholder="Type a message…" rows="1" maxlength="2000"></textarea>
-        <button class="vc-send-btn" id="vcSendBtn" disabled title="Send">
-          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        <button class="cu-icon-btn" id="cuMenuBtn" title="Menu" aria-label="Menu">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
         </button>
       </div>
-    </div>
+
+      <!-- Search -->
+      <div class="cu-search-wrap">
+        <div class="cu-search-box">
+          <svg class="cu-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            id="cuSearch"
+            class="cu-search-input"
+            type="text"
+            placeholder="Search by name, ID or email…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="cu-search-clear" id="cuSearchClear" style="display:none" aria-label="Clear">
+            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="cu-tabs" role="tablist">
+        <button class="cu-tab active" id="cuTabPeople" role="tab" aria-selected="true" data-tab="people">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          People
+          <span class="cu-tab-badge" id="cuPeopleBadge">12</span>
+        </button>
+        <button class="cu-tab" id="cuTabChats" role="tab" aria-selected="false" data-tab="chats">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Chats
+          <span class="cu-tab-badge cu-badge-unread" id="cuChatsBadge">3</span>
+        </button>
+        <div class="cu-tab-indicator" id="cuTabIndicator"></div>
+      </div>
+
+      <!-- Content panels -->
+      <div class="cu-panel-wrap">
+
+        <!-- PEOPLE PANEL -->
+        <div class="cu-panel active" id="cuPanelPeople" role="tabpanel">
+          <div class="cu-panel-section-label">Suggested</div>
+          <div class="cu-list" id="cuPeopleList">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- CHATS PANEL -->
+        <div class="cu-panel" id="cuPanelChats" role="tabpanel">
+          <div class="cu-panel-section-label">Recent</div>
+          <div class="cu-list" id="cuChatList">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- ── RIGHT PANEL ─────────────────────────────────────────── -->
+    <main class="cu-right" id="cuRight">
+
+      <!-- Welcome / empty state -->
+      <div class="cu-welcome" id="cuWelcome">
+        <div class="cu-welcome-graphic">
+          <div class="cu-welcome-ring cu-ring-1"></div>
+          <div class="cu-welcome-ring cu-ring-2"></div>
+          <div class="cu-welcome-ring cu-ring-3"></div>
+          <div class="cu-welcome-icon">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+        </div>
+        <h2 class="cu-welcome-title">Start a conversation</h2>
+        <p class="cu-welcome-sub">Select a chat or connect with someone new from the People tab.</p>
+        <div class="cu-welcome-chips">
+          <span class="cu-chip">
+            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Browse People
+          </span>
+          <span class="cu-chip">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Recent Chats
+          </span>
+        </div>
+      </div>
+
+      <!-- Active chat view (hidden until user selected) -->
+      <div class="cu-chat-view" id="cuChatView" style="display:none">
+
+        <!-- Chat header -->
+        <div class="cu-chat-head" id="cuChatHead">
+          <button class="cu-back-btn" id="cuBackBtn" aria-label="Back">
+            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="cu-chat-avatar" id="cuChatAvatar"></div>
+          <div class="cu-chat-head-info">
+            <div class="cu-chat-head-name" id="cuChatName">—</div>
+            <div class="cu-chat-head-status" id="cuChatStatus">
+              <span class="cu-status-dot"></span> Online
+            </div>
+          </div>
+          <div class="cu-chat-head-actions">
+            <button class="cu-icon-btn" title="Voice call">
+              <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.4 2 2 0 0 1 3.61 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9.12a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            </button>
+            <button class="cu-icon-btn" title="More options">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages area -->
+        <div class="cu-messages" id="cuMessages">
+          <!-- Demo messages injected by JS -->
+        </div>
+
+        <!-- Input bar -->
+        <div class="cu-input-bar">
+          <button class="cu-icon-btn cu-attach-btn" title="Attach">
+            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <div class="cu-input-wrap">
+            <textarea
+              id="cuMsgInput"
+              class="cu-msg-input"
+              placeholder="Type a message…"
+              rows="1"
+              maxlength="2000"
+            ></textarea>
+          </div>
+          <button class="cu-send-btn" id="cuSendBtn" aria-label="Send">
+            <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+
+      </div>
+    </main>
+
   </div>
+</div>
+<!-- END #pageChat -->
 </div>
   <div class="conv-grid">
     <div class="conv-panel">
@@ -500,6 +629,7 @@
 <script src="llmEnhancer.js?v=2"></script>
 <script src="humanTranslator.js?v=1"></script>
 <script src="app.js?v=20250325b"></script>
+<script src="chat-ui.js?v=7"></script>
 <script src="chat-firebase.js?v=6"></script>
 <script src="chat.js?v=6"></script>
 <script type="module" src="firebase.js?v=20250325a"></script>
