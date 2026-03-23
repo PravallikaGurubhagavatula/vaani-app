@@ -44,25 +44,24 @@
   }
 
   function _init() {
-    var app;
-    try {
-      app = firebase.app("vaani-profile");
-    } catch (_) {
-      app = firebase.initializeApp(
-        {
-          apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
-          authDomain:        "vaani-app-ee1a8.firebaseapp.com",
-          projectId:         "vaani-app-ee1a8",
-          storageBucket:     "vaani-app-ee1a8.firebasestorage.app",
-          messagingSenderId: "509015461995",
-          appId:             "1:509015461995:web:2dd658cef15d05d851612e",
-        },
-        "vaani-profile"
-      );
-    }
-    _db = app.firestore();
+  try {
+    // ✅ Use default Firebase app (same as auth)
+    _db = firebase.firestore();
+
     console.log("[Vaani Profile] profile.js ready ✓");
+  } catch (err) {
+    console.error("[Vaani Profile] Init error:", err.message);
   }
+}
+
+function _init() {
+  try {
+    _db = firebase.firestore(); // ✅ use default app
+    console.log("[Vaani Profile] profile.js ready ✓");
+  } catch (err) {
+    console.error("[Vaani Profile] Init error:", err.message);
+  }
+}
 
   /* ── Username validation ──────────────────────────────────────── */
   function _validateUsername(username) {
