@@ -414,6 +414,9 @@
 <script src="app.js?v=20250325b"></script>
 <script src="translationIntegration.js?v=3"></script>
 
+<!-- Firebase ESM module — main app auth (must be last) -->
+<script type="module" src="firebase.js?v=20250325a"></script>
+
 <!-- Chat (isolated module) -->
 <!-- Identity system (must load before chat.js) -->
 <script src="auth.js?v=1"></script>
@@ -421,9 +424,6 @@
 
 <!-- Chat (gated — requires auth + profile) -->
 <script src="chat.js?v=2"></script>
-
-<!-- Firebase ESM module — main app auth (must be last) -->
-<script type="module" src="firebase.js?v=20250325a"></script>
 
 <script>
   if ('serviceWorker' in navigator) {
