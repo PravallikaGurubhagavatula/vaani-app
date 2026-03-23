@@ -2038,6 +2038,8 @@ function navigateTo(page) {
     history.replaceState({ page }, "", `#${page.toLowerCase()}`);
     if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
   }
+  // Close chat listener when leaving
+  if (page !== "Chat" && window.vaaniChat) window.vaaniChat.close();
   _onPageActivate(page);
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
@@ -2048,7 +2050,7 @@ function _onPageActivate(page) {
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
-  if (page === "Chat" && window.vaaniChat) window.vaaniChat.loadUsers();
+  if (page === "Chat" && window.vaaniChat) window.vaaniChat.open();
 }
 
 window.addEventListener("popstate", (e) => {
