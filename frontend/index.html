@@ -20,8 +20,7 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260322a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
-  <link rel="stylesheet" href="chat-ui.css?v=8">
-  <link rel="stylesheet" href="chat.css?v=8">
+  <link rel="stylesheet" href="chat-ui.css?v=9">
 </head>
 <body>
 
@@ -41,7 +40,7 @@
     </button>
     <button class="icon-btn" id="vcNavBtn" onclick="navigateTo('Chat')" title="Chat" style="position:relative">
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span class="vc-nav-badge" id="chatNavBadge" style="display:none;position:absolute;top:-4px;right:-4px"></span>
+      <span class="cu-nav-badge" id="chatNavBadge" style="display:none"></span>
     </button>
     <button class="icon-btn" onclick="navigateTo('Settings')" title="Settings">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -66,11 +65,11 @@
     </div>
   </div>
   <nav class="menu-nav">
-    <a class="menu-item" id="menuHome"         onclick="navigateTo('Home')">
+    <a class="menu-item" id="menuHome" onclick="navigateTo('Home')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>
       <span class="mi-label">Home</span><span class="mi-dot"></span>
     </a>
-    <a class="menu-item" id="menuSingle"       onclick="navigateTo('Single')">
+    <a class="menu-item" id="menuSingle" onclick="navigateTo('Single')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></span>
       <span class="mi-label">Single Mode</span><span class="mi-dot"></span>
     </a>
@@ -79,28 +78,26 @@
       <span class="mi-label">Conversation Mode</span><span class="mi-dot"></span>
     </a>
     <a class="menu-item" id="menuChat" onclick="navigateTo('Chat')">
-      <span class="mi-icon">
-        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      </span>
+      <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
       <span class="mi-label">Chat</span>
-      <span class="vc-nav-badge" id="chatMenuBadge" style="display:none"></span>
+      <span class="cu-nav-badge" id="chatMenuBadge" style="display:none;position:static;margin-left:auto"></span>
       <span class="mi-dot"></span>
     </a>
     <div class="menu-divider"></div>
-    <a class="menu-item" id="menuTravel"       onclick="navigateTo('Travel')">
+    <a class="menu-item" id="menuTravel" onclick="navigateTo('Travel')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
       <span class="mi-label">Travel Helper</span><span class="mi-dot"></span>
     </a>
     <div class="menu-divider"></div>
-    <a class="menu-item" id="menuHistory"      onclick="navigateTo('History')">
+    <a class="menu-item" id="menuHistory" onclick="navigateTo('History')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
       <span class="mi-label">History</span><span class="mi-dot"></span>
     </a>
-    <a class="menu-item" id="menuFavourites"   onclick="navigateTo('Favourites')">
+    <a class="menu-item" id="menuFavourites" onclick="navigateTo('Favourites')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
       <span class="mi-label">Favourites</span><span class="mi-dot"></span>
     </a>
-    <a class="menu-item" id="menuSettings"     onclick="navigateTo('Settings')">
+    <a class="menu-item" id="menuSettings" onclick="navigateTo('Settings')">
       <span class="mi-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
       <span class="mi-label">Settings</span><span class="mi-dot"></span>
     </a>
@@ -214,8 +211,6 @@
       </button>
     </div>
   </div>
-
-  <!-- Voice input -->
   <div id="voiceInput" class="voice-section">
     <div class="mic-wrap">
       <button class="mic-btn" id="micBtn" onclick="startListening()">
@@ -226,8 +221,6 @@
       <p class="mic-sub-hint">Tap once to start · tap again to stop · tap once more for new recording</p>
     </div>
   </div>
-
-  <!-- Text input -->
   <div id="textInput" class="text-section" style="display:none">
     <textarea id="textInputArea" class="text-area" placeholder="Type here" rows="4"></textarea>
     <span id="liveHint" class="live-hint" aria-live="polite"></span>
@@ -235,14 +228,11 @@
       Translate <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
     </button>
   </div>
-
-  <!-- Results -->
   <div id="resultsSection" style="display:none">
     <div class="result-card">
       <div class="rc-header">
         <span class="rc-label">You said</span>
-        <button class="sm-btn" id="editSpeechBtn" title="Edit before translating" style="display:none"
-                onclick="toggleSpeechEdit()">
+        <button class="sm-btn" id="editSpeechBtn" title="Edit before translating" style="display:none" onclick="toggleSpeechEdit()">
           <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
       </div>
@@ -284,36 +274,76 @@
   </div>
 </div>
 
-<!-- ══ CONVERSATION MODE ════════════════════════════════════════════ -->
+<!-- ══ CONVERSATION MODE ════════════════════════════════════════════
+     CRITICAL: This div is CLOSED before pageChat opens.
+     pageChat is a SIBLING, NOT a child of pageConversation.
+══════════════════════════════════════════════════════════════════ -->
 <div id="pageConversation" class="page">
   <div class="page-header">
     <h2 class="page-title">Conversation Mode</h2>
     <p class="page-sub">Two people, two languages — live two-way translation</p>
   </div>
-  <!-- ================================================================
-     VAANI CHAT PAGE — COMPLETE UI  v7
-     Drop this block into index.html replacing the existing #pageChat div.
-================================================================ -->
+  <div class="conv-grid">
+    <div class="conv-panel">
+      <div class="conv-top">
+        <span class="conv-label conv-label-a">Person A</span>
+        <select id="convLangA" class="lang-select lang-select-sm"></select>
+      </div>
+      <div class="mic-wrap mic-wrap-sm">
+        <button class="mic-btn mic-btn-sm mic-a" id="micBtnA" onclick="startConvListening('A')">
+          <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <p class="mic-hint" id="micStatusA">Tap to speak</p>
+      </div>
+      <div class="result-card"><p class="rc-label">Said</p><p class="rc-text rc-sm" id="originalTextA">—</p></div>
+      <div class="result-card result-translated">
+        <div class="rc-header"><span class="rc-label">Translation</span>
+          <button class="sm-btn" onclick="copyText('translatedTextA')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        <p class="rc-text rc-accent rc-sm" id="translatedTextA">—</p>
+        <button class="ac-btn ac-primary" id="playBtnA" data-playpause="labeled" onclick="playAudioA()" style="display:none">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
+        </button>
+      </div>
+    </div>
+    <div class="conv-sep"></div>
+    <div class="conv-panel">
+      <div class="conv-top">
+        <span class="conv-label conv-label-b">Person B</span>
+        <select id="convLangB" class="lang-select lang-select-sm"></select>
+      </div>
+      <div class="mic-wrap mic-wrap-sm">
+        <button class="mic-btn mic-btn-sm mic-b" id="micBtnB" onclick="startConvListening('B')">
+          <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <p class="mic-hint" id="micStatusB">Tap to speak</p>
+      </div>
+      <div class="result-card"><p class="rc-label">Said</p><p class="rc-text rc-sm" id="originalTextB">—</p></div>
+      <div class="result-card result-translated">
+        <div class="rc-header"><span class="rc-label">Translation</span>
+          <button class="sm-btn" onclick="copyText('translatedTextB')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        <p class="rc-text rc-accent rc-sm" id="translatedTextB">—</p>
+        <button class="ac-btn ac-primary" id="playBtnB" data-playpause="labeled" onclick="playAudioB()" style="display:none">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>Play
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- END pageConversation ↑ — pageChat is a SIBLING below, NOT a child -->
 
-<!-- ================================================================
-     VAANI — #pageChat HTML BLOCK  v8
-     
-     INSTRUCTIONS:
-     1. Find your existing <div id="pageChat" class="page"> in index.html
-     2. Delete it (and everything inside it) completely
-     3. Paste this entire block in its place
-     4. Nothing else in index.html changes
-================================================================ -->
-
+<!-- ══ CHAT ══════════════════════════════════════════════════════════
+     pageChat is a TOP-LEVEL SIBLING of all other .page divs.
+     The entire chat UI lives inside this single div.
+     chat-ui.js queries ONLY inside #pageChat.
+     chat-ui.css scopes EVERY rule under #pageChat.
+══════════════════════════════════════════════════════════════════ -->
 <div id="pageChat" class="page">
   <div class="cu-shell">
 
-    <!-- ════════════════════════════════════════════════
-         LEFT PANEL — sidebar with search, tabs, lists
-    ════════════════════════════════════════════════ -->
+    <!-- LEFT: sidebar -->
     <aside class="cu-left">
-
-      <!-- Header -->
       <div class="cu-left-head">
         <div class="cu-left-title">
           <span class="cu-title-text">Connect</span>
@@ -321,46 +351,28 @@
         </div>
         <button class="cu-icon-btn" id="cuMenuBtn" title="Menu" aria-label="Menu">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="5"  r="1.5"/>
-            <circle cx="12" cy="12" r="1.5"/>
-            <circle cx="12" cy="19" r="1.5"/>
+            <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
           </svg>
         </button>
       </div>
 
-      <!-- Search bar -->
       <div class="cu-search-wrap">
         <div class="cu-search-box">
           <svg class="cu-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input
-            id="cuSearch"
-            class="cu-search-input"
-            type="text"
-            placeholder="Search by name, ID or email…"
-            autocomplete="off"
-            spellcheck="false"
-          />
+          <input id="cuSearch" class="cu-search-input" type="text"
+            placeholder="Search by name, ID or email…" autocomplete="off" spellcheck="false"/>
           <button class="cu-search-clear" id="cuSearchClear" style="display:none" aria-label="Clear search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <line x1="18" y1="6"  x2="6"  y2="18"/>
-              <line x1="6"  y1="6"  x2="18" y2="18"/>
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
       </div>
 
-      <!-- Tabs -->
       <div class="cu-tabs" role="tablist">
-        <button
-          class="cu-tab active"
-          id="cuTabPeople"
-          role="tab"
-          aria-selected="true"
-          aria-controls="cuPanelPeople"
-        >
+        <button class="cu-tab active" id="cuTabPeople" role="tab" aria-selected="true" aria-controls="cuPanelPeople">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
@@ -370,53 +382,32 @@
           People
           <span class="cu-tab-badge" id="cuPeopleBadge">12</span>
         </button>
-
-        <button
-          class="cu-tab"
-          id="cuTabChats"
-          role="tab"
-          aria-selected="false"
-          aria-controls="cuPanelChats"
-        >
+        <button class="cu-tab" id="cuTabChats" role="tab" aria-selected="false" aria-controls="cuPanelChats">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
           Chats
           <span class="cu-tab-badge cu-badge-unread" id="cuChatsBadge">3</span>
         </button>
-
-        <!-- Animated underline indicator — moved by JS -->
         <div class="cu-tab-indicator" id="cuTabIndicator"></div>
       </div>
 
-      <!-- Panel container -->
       <div class="cu-panel-wrap">
-
-        <!-- PEOPLE panel -->
         <div class="cu-panel active" id="cuPanelPeople" role="tabpanel" aria-labelledby="cuTabPeople">
           <div class="cu-panel-section-label">Suggested</div>
-          <div class="cu-list" id="cuPeopleList">
-            <!-- Populated by chat-ui.js -->
-          </div>
+          <div class="cu-list" id="cuPeopleList"></div>
         </div>
-
-        <!-- CHATS panel -->
         <div class="cu-panel" id="cuPanelChats" role="tabpanel" aria-labelledby="cuTabChats">
           <div class="cu-panel-section-label">Recent</div>
-          <div class="cu-list" id="cuChatList">
-            <!-- Populated by chat-ui.js -->
-          </div>
+          <div class="cu-list" id="cuChatList"></div>
         </div>
-
       </div>
     </aside>
 
-    <!-- ════════════════════════════════════════════════
-         RIGHT PANEL — welcome screen + active chat
-    ════════════════════════════════════════════════ -->
+    <!-- RIGHT: welcome + active chat -->
     <main class="cu-right" id="cuRight">
 
-      <!-- Welcome / no-chat-selected state -->
+      <!-- Welcome (shown when no chat selected) -->
       <div class="cu-welcome" id="cuWelcome">
         <div class="cu-welcome-graphic">
           <div class="cu-welcome-ring cu-ring-1"></div>
@@ -433,8 +424,7 @@
         <div class="cu-welcome-chips">
           <span class="cu-chip">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
             </svg>
             Browse People
           </span>
@@ -447,27 +437,21 @@
         </div>
       </div>
 
-      <!-- Active chat view — hidden until a chat is opened -->
+      <!-- Active chat view (hidden until a chat is opened) -->
       <div class="cu-chat-view" id="cuChatView" style="display:none">
-
-        <!-- Chat header -->
         <div class="cu-chat-head" id="cuChatHead">
           <button class="cu-back-btn" id="cuBackBtn" aria-label="Back to list">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
           </button>
-
-          <!-- Avatar filled by JS -->
           <div class="cu-chat-avatar" id="cuChatAvatar"></div>
-
           <div class="cu-chat-head-info">
-            <div class="cu-chat-head-name"   id="cuChatName">—</div>
+            <div class="cu-chat-head-name" id="cuChatName">—</div>
             <div class="cu-chat-head-status" id="cuChatStatus">
               <span class="cu-status-dot"></span> Online
             </div>
           </div>
-
           <div class="cu-chat-head-actions">
             <button class="cu-icon-btn" title="Voice call" aria-label="Voice call">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -476,36 +460,25 @@
             </button>
             <button class="cu-icon-btn" title="More options" aria-label="More options">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="5"  r="1.5"/>
-                <circle cx="12" cy="12" r="1.5"/>
-                <circle cx="12" cy="19" r="1.5"/>
+                <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
               </svg>
             </button>
           </div>
         </div>
 
-        <!-- Messages — filled by JS -->
         <div class="cu-messages" id="cuMessages"></div>
 
-        <!-- Input bar -->
         <div class="cu-input-bar">
           <button class="cu-icon-btn cu-attach-btn" title="Attach file" aria-label="Attach">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
             </svg>
           </button>
-
           <div class="cu-input-wrap">
-            <textarea
-              id="cuMsgInput"
-              class="cu-msg-input"
-              placeholder="Type a message…"
-              rows="1"
-              maxlength="2000"
-              aria-label="Message input"
-            ></textarea>
+            <textarea id="cuMsgInput" class="cu-msg-input"
+              placeholder="Type a message…" rows="1" maxlength="2000"
+              aria-label="Message input"></textarea>
           </div>
-
           <button class="cu-send-btn" id="cuSendBtn" disabled aria-label="Send message">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"/>
@@ -513,18 +486,13 @@
             </svg>
           </button>
         </div>
-
       </div>
-      <!-- end cu-chat-view -->
 
     </main>
-    <!-- end cu-right -->
-
   </div>
-  <!-- end cu-shell -->
 </div>
-<!-- end #pageChat -->
-  
+<!-- END pageChat ↑ -->
+
 <!-- ══ TRAVEL HELPER ════════════════════════════════════════════════ -->
 <div id="pageTravel" class="page">
   <div class="page-header">
@@ -555,7 +523,7 @@
   <div id="favouritesList" class="list-wrap"></div>
 </div>
 
-<!-- ══ SETTINGS PAGE ═══════════════════════════════════════════════ -->
+<!-- ══ SETTINGS ═════════════════════════════════════════════════════ -->
 <div id="pageSettings" class="page">
   <div class="page-header">
     <h2 class="page-title">Settings</h2>
@@ -567,31 +535,31 @@
 <!-- ══ TOAST ════════════════════════════════════════════════════════ -->
 <div id="toast" class="toast"></div>
 
-<!-- ══ SCRIPTS ══════════════════════════════════════════════════════ -->
+<!-- ══ SCRIPTS ══════════════════════════════════════════════════════
+     LOAD ORDER (critical):
+     1. Config globals
+     2. Firebase compat SDK (ONE TIME — three scripts, no duplicates)
+     3. Vaani core scripts
+     4. Chat UI script (pure UI, no Firebase)
+     5. Chat Firebase bridge
+     6. Chat logic
+     7. Firebase ESM module (main app auth)
+══════════════════════════════════════════════════════════════════ -->
 <script>
-  window.VAANI_VERSION    = "20250325b";
-  window.VAANI_VISION_KEY = "";
-
-  window.USE_API = false;
-
-  // window.BHASHINI_API_KEY       = "paste-your-key-here";
-  // window.BHASHINI_USER_ID       = "paste-your-user-id-here";
-  // window.BHASHINI_INFERENCE_URL = "https://dhruva-api.bhashini.gov.in/services/inference/pipeline";
-
+  window.VAANI_VERSION        = "20250325b";
+  window.VAANI_VISION_KEY     = "";
+  window.USE_API              = false;
   window.USE_HUMAN_TRANSLATOR = true;
-
-  window.DEBUG_TRANSLATION = false;
+  window.DEBUG_TRANSLATION    = false;
 </script>
 
-<!-- normalizer.js MUST be first — loaded before all other scripts  -->
-<!-- so normalizeInput() exists when translationIntegration.js runs -->
+<!-- Firebase compat SDK — loaded ONCE, no duplicates -->
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+<!-- Vaani core -->
 <script src="normalizer.js?v=1"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 <script src="apiService.js?v=2"></script>
 <script src="slangDictionary.js?v=2"></script>
 <script src="toneDetector.js?v=2"></script>
@@ -599,9 +567,16 @@
 <script src="llmEnhancer.js?v=2"></script>
 <script src="humanTranslator.js?v=1"></script>
 <script src="app.js?v=20250325b"></script>
-<script src="chat-ui.js?v=8"></script>
+<script src="translationIntegration.js?v=3"></script>
+
+<!-- Chat UI (dummy data, pure interactions — no Firebase) -->
+<script src="chat-ui.js?v=9"></script>
+
+<!-- Chat Firebase bridge + chat logic (Firebase-powered real chat) -->
 <script src="chat-firebase.js?v=6"></script>
 <script src="chat.js?v=6"></script>
+
+<!-- Firebase ESM module — main app auth (must be last) -->
 <script type="module" src="firebase.js?v=20250325a"></script>
 
 <script>
@@ -645,7 +620,7 @@
     document.getElementById('installBtn').style.display = 'none';
     deferredPrompt = null;
   });
-  window.installApp = function() {
+  window.installApp = function () {
     if (deferredPrompt) {
       deferredPrompt.prompt();
       deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
