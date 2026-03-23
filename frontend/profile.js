@@ -54,15 +54,6 @@
   }
 }
 
-function _init() {
-  try {
-    _db = firebase.firestore(); // ✅ use default app
-    console.log("[Vaani Profile] profile.js ready ✓");
-  } catch (err) {
-    console.error("[Vaani Profile] Init error:", err.message);
-  }
-}
-
   /* ── Username validation ──────────────────────────────────────── */
   function _validateUsername(username) {
     if (!username || !username.trim()) {
