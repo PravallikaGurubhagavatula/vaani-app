@@ -415,7 +415,12 @@
 <script src="translationIntegration.js?v=3"></script>
 
 <!-- Chat (isolated module) -->
-<script src="chat.js?v=1"></script>
+<!-- Identity system (must load before chat.js) -->
+<script src="auth.js?v=1"></script>
+<script src="profile.js?v=1"></script>
+
+<!-- Chat (gated — requires auth + profile) -->
+<script src="chat.js?v=2"></script>
 
 <!-- Firebase ESM module — main app auth (must be last) -->
 <script type="module" src="firebase.js?v=20250325a"></script>
