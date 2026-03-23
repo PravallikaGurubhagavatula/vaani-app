@@ -105,7 +105,16 @@ function _init() {
      * Safe to call multiple times — uses set() with merge:false guard.
      */
     create: async function (user, username) {
-      if (!_db)     throw new Error("Database not ready. Please try again.");
+      if (!_db) {
+         await new Promise((resolve) => {
+            var check = setInterval(() => {
+               if (_db) {
+                  clearInterval(check);
+                  resolve();
+               }
+            }, 50);
+         });
+      }
       if (!user)    throw new Error("User is required.");
 
       /* Validate */
