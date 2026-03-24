@@ -1,13 +1,16 @@
 /* ================================================================
-   Vaani — chat-isolated.css  v2.0
-   EVERY rule is scoped inside #vaaniChat.
-   Zero impact on any other page or element in the app.
+   Vaani — chat-isolated.css  v3.0
+   ALL rules scoped to #vaaniChat or .vm- prefix (menu in <body>).
+   Zero impact on any other page.
 
-   NEW in v2.0: Login, Create Profile, and loading screen styles.
-   All existing bubble / message styles preserved.
+   NEW in v3.0:
+   • Clean minimal top bar (vc-topbar) replaces old vc-header
+   • Profile side menu (vm-panel / vm-overlay) — injected into body
+   • Improved empty state
+   • Sender row with dot indicator
 ================================================================ */
 
-/* ── Reset inside chat only ─────────────────────────────────────── */
+/* ── Reset ───────────────────────────────────────────────────────── */
 #vaaniChat *, #vaaniChat *::before, #vaaniChat *::after {
   box-sizing: border-box;
 }
@@ -23,11 +26,11 @@
   font-family: 'Outfit', sans-serif;
   background: var(--bg, #09090f);
   overflow: hidden;
+  position: relative;
 }
 
 /* ════════════════════════════════════════════════════════════════
    GATED SCREENS — Login, Create Profile, Loading
-   All share .vg-screen as a full-height flex container.
 ════════════════════════════════════════════════════════════════ */
 
 #vaaniChat .vg-screen {
@@ -41,7 +44,7 @@
   overflow-y: auto;
 }
 
-/* ── Loading screen ──────────────────────────────────────────────── */
+/* Loading */
 #vaaniChat .vg-loading-screen {
   gap: 16px;
   color: var(--text3, #44445a);
@@ -54,11 +57,10 @@
   border: 3px solid var(--card-border, rgba(255,255,255,0.07));
   border-top-color: var(--accent, #7c3aed);
   animation: vgSpin 0.7s linear infinite;
-  flex-shrink: 0;
 }
 @keyframes vgSpin { to { transform: rotate(360deg); } }
 
-/* ── Shared card ─────────────────────────────────────────────────── */
+/* Card */
 #vaaniChat .vg-card {
   width: 100%;
   max-width: 400px;
@@ -75,87 +77,55 @@
 }
 @keyframes vgCardIn {
   from { opacity: 0; transform: translateY(24px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0)    scale(1); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ── Card icon (login screen) ────────────────────────────────────── */
 #vaaniChat .vg-card-icon {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
+  width: 64px; height: 64px; border-radius: 50%;
   background: var(--accent-subtle, rgba(167,139,250,0.08));
   border: 1px solid var(--accent-border, rgba(167,139,250,0.18));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: center;
 }
 #vaaniChat .vg-card-icon svg {
-  width: 28px;
-  height: 28px;
+  width: 28px; height: 28px;
   stroke: var(--accent-light, #a78bfa);
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* ── Avatar (profile screen) ─────────────────────────────────────── */
-#vaaniChat .vg-avatar-wrap {
-  margin-bottom: 4px;
-}
+#vaaniChat .vg-avatar-wrap { margin-bottom: 4px; }
 #vaaniChat .vg-profile-avatar {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
+  width: 72px; height: 72px; border-radius: 50%;
   object-fit: cover;
   border: 2px solid var(--accent-border, rgba(167,139,250,0.18));
   display: block;
 }
 #vaaniChat .vg-avatar-fallback {
   background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
-  color: #fff;
-  font-size: 26px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  color: #fff; font-size: 26px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
 }
 
-/* ── Card text ───────────────────────────────────────────────────── */
 #vaaniChat .vg-card-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text, #e2e2f0);
-  margin: 0;
-  letter-spacing: -0.3px;
+  font-size: 20px; font-weight: 700;
+  color: var(--text, #e2e2f0); margin: 0; letter-spacing: -0.3px;
 }
 #vaaniChat .vg-card-sub {
-  font-size: 13px;
-  color: var(--text2, #888899);
-  line-height: 1.65;
-  margin: 0;
-  max-width: 300px;
+  font-size: 13px; color: var(--text2, #888899);
+  line-height: 1.65; margin: 0; max-width: 300px;
 }
 
-/* ── Google sign-in button ───────────────────────────────────────── */
+/* Google button */
 #vaaniChat .vg-google-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 13px 20px;
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 13px 20px;
   background: var(--card, rgba(255,255,255,0.03));
   border: 1px solid var(--card-border, rgba(255,255,255,0.12));
   border-radius: 12px;
   color: var(--text, #e2e2f0);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14px; font-weight: 600;
   font-family: 'Outfit', sans-serif;
-  cursor: pointer;
-  justify-content: center;
-  transition: all 0.18s;
-  margin-top: 4px;
+  cursor: pointer; justify-content: center;
+  transition: all 0.18s; margin-top: 4px;
 }
 #vaaniChat .vg-google-btn:hover {
   background: rgba(255,255,255,0.06);
@@ -163,48 +133,25 @@
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(0,0,0,0.25);
 }
-#vaaniChat .vg-google-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-#vaaniChat .vg-g-logo {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-}
+#vaaniChat .vg-google-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+#vaaniChat .vg-g-logo { width: 18px; height: 18px; flex-shrink: 0; }
+#vaaniChat .vg-hint { font-size: 12px; color: var(--text3, #44445a); margin: 0; }
 
-/* ── Small hint text ─────────────────────────────────────────────── */
-#vaaniChat .vg-hint {
-  font-size: 12px;
-  color: var(--text3, #44445a);
-  margin: 0;
-}
-
-/* ── Username field ──────────────────────────────────────────────── */
+/* Username field */
 #vaaniChat .vg-field {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  text-align: left;
-  margin-top: 4px;
+  width: 100%; display: flex; flex-direction: column;
+  gap: 6px; text-align: left; margin-top: 4px;
 }
 #vaaniChat .vg-label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12px; font-weight: 600;
   color: var(--text2, #888899);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
+  text-transform: uppercase; letter-spacing: 0.6px;
 }
 #vaaniChat .vg-input-wrap {
-  display: flex;
-  align-items: center;
+  display: flex; align-items: center;
   background: var(--bg3, #13131f);
   border: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  border-radius: 12px;
-  padding: 0 14px;
+  border-radius: 12px; padding: 0 14px;
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 #vaaniChat .vg-input-wrap:focus-within {
@@ -212,358 +159,424 @@
   box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
 }
 #vaaniChat .vg-input-prefix {
-  font-size: 15px;
-  color: var(--accent-light, #a78bfa);
-  font-weight: 600;
-  margin-right: 4px;
-  flex-shrink: 0;
+  font-size: 15px; color: var(--accent-light, #a78bfa);
+  font-weight: 600; margin-right: 4px; flex-shrink: 0;
 }
 #vaaniChat .vg-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 15px;
-  color: var(--text, #e2e2f0);
-  font-family: 'Outfit', sans-serif;
-  padding: 12px 0;
-  letter-spacing: 0.2px;
+  flex: 1; background: transparent; border: none; outline: none;
+  font-size: 15px; color: var(--text, #e2e2f0);
+  font-family: 'Outfit', sans-serif; padding: 12px 0; letter-spacing: 0.2px;
 }
 #vaaniChat .vg-input::placeholder { color: var(--text3, #44445a); }
-#vaaniChat .vg-field-hint {
-  font-size: 12px;
-  color: var(--text3, #44445a);
-  line-height: 1.5;
-}
-#vaaniChat .vg-hint-error { color: #f87171 !important; }
+#vaaniChat .vg-field-hint  { font-size: 12px; color: var(--text3, #44445a); line-height: 1.5; }
+#vaaniChat .vg-hint-error  { color: #f87171 !important; }
+#vaaniChat .vg-hint-success{ color: #22c55e !important; }
 
-/* ── Primary / ghost buttons ─────────────────────────────────────── */
+/* Buttons */
 #vaaniChat .vg-primary-btn {
-  width: 100%;
-  padding: 13px;
+  width: 100%; padding: 13px;
   background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
-  border: none;
-  border-radius: 12px;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  font-family: 'Outfit', sans-serif;
-  cursor: pointer;
-  transition: all 0.18s;
-  box-shadow: 0 4px 16px rgba(124,58,237,0.35);
-  margin-top: 4px;
+  border: none; border-radius: 12px; color: #fff;
+  font-size: 14px; font-weight: 700; font-family: 'Outfit', sans-serif;
+  cursor: pointer; transition: all 0.18s;
+  box-shadow: 0 4px 16px rgba(124,58,237,0.35); margin-top: 4px;
 }
 #vaaniChat .vg-primary-btn:hover    { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(124,58,237,0.45); }
 #vaaniChat .vg-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
 #vaaniChat .vg-ghost-btn {
-  background: transparent;
-  border: none;
-  color: var(--text3, #44445a);
-  font-size: 13px;
-  font-family: 'Outfit', sans-serif;
-  cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 8px;
-  transition: color 0.15s, background 0.15s;
+  background: transparent; border: none;
+  color: var(--text3, #44445a); font-size: 13px;
+  font-family: 'Outfit', sans-serif; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; transition: color 0.15s, background 0.15s;
 }
 #vaaniChat .vg-ghost-btn:hover { color: var(--text2, #888899); background: var(--card, rgba(255,255,255,0.03)); }
 
 /* ════════════════════════════════════════════════════════════════
-   CHAT UI EXTRAS (header user chip, search bar, sign-out)
+   CLEAN CHAT LAYOUT
 ════════════════════════════════════════════════════════════════ */
 
-#vaaniChat .vg-chat-user {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-#vaaniChat .vg-mini-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  overflow: hidden;
-  font-family: 'Outfit', sans-serif;
-}
-#vaaniChat .vg-mini-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-}
-
-#vaaniChat .vg-signout-chip {
-  padding: 6px 14px;
-  background: transparent;
-  border: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  border-radius: 20px;
-  color: var(--text3, #44445a);
-  font-size: 12px;
-  font-family: 'Outfit', sans-serif;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: all 0.15s;
-}
-#vaaniChat .vg-signout-chip:hover {
-  border-color: rgba(248,113,113,0.4);
-  color: #f87171;
-  background: rgba(248,113,113,0.06);
-}
-
-/* Search bar */
-#vaaniChat .vg-search-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 18px;
-  border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  background: var(--bg2, #0e0e1a);
-  flex-shrink: 0;
-}
-#vaaniChat .vg-search-bar svg {
-  width: 14px;
-  height: 14px;
-  stroke: var(--text3, #44445a);
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  flex-shrink: 0;
-}
-#vaaniChat .vg-search-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 13px;
-  color: var(--text3, #44445a);
-  font-family: 'Outfit', sans-serif;
-  cursor: not-allowed;
-}
-#vaaniChat .vg-search-input::placeholder { color: var(--text3, #44445a); font-style: italic; }
-
-/* ════════════════════════════════════════════════════════════════
-   EXISTING CHAT STYLES (preserved from v1.0)
-════════════════════════════════════════════════════════════════ */
-
-#vaaniChat .vc-header {
+/* ── Minimal top bar ─────────────────────────────────────────────── */
+#vaaniChat .vc-topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  background: var(--bg2, #0e0e1a);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.06));
+  background: var(--bg, #09090f);
   flex-shrink: 0;
-}
-#vaaniChat .vc-header h3 {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text, #e2e2f0);
-  margin: 0;
-}
-#vaaniChat .vc-header-sub {
-  font-size: 12px;
-  color: var(--text3, #44445a);
-  margin: 0;
+  height: 58px;
 }
 
+/* Avatar button (opens side menu) */
+#vaaniChat .vc-avatar-btn {
+  position: relative;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: transparent;
+  transition: transform 0.18s;
+}
+#vaaniChat .vc-avatar-btn:hover { transform: scale(1.06); }
+
+#vaaniChat .vc-avatar-img {
+  width: 38px; height: 38px;
+  border-radius: 50%; object-fit: cover;
+  display: block;
+}
+#vaaniChat .vc-avatar-initials {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
+  color: #fff; font-size: 14px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Outfit', sans-serif; user-select: none;
+}
+#vaaniChat .vc-online-ring {
+  position: absolute; bottom: 1px; right: 1px;
+  width: 10px; height: 10px;
+  border-radius: 50%; background: #22c55e;
+  border: 2px solid var(--bg, #09090f);
+  pointer-events: none;
+}
+
+/* Center title */
+#vaaniChat .vc-topbar-center {
+  flex: 1;
+  display: flex; align-items: center;
+}
+#vaaniChat .vc-room-name {
+  font-size: 15px; font-weight: 600;
+  color: var(--text, #e2e2f0);
+  letter-spacing: -0.2px;
+}
+
+#vaaniChat .vc-topbar-right {
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* ── Messages ────────────────────────────────────────────────────── */
 #vaaniChat .vc-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 18px;
+  padding: 20px 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
-#vaaniChat .vc-messages::-webkit-scrollbar { width: 4px; }
+#vaaniChat .vc-messages::-webkit-scrollbar { width: 3px; }
 #vaaniChat .vc-messages::-webkit-scrollbar-thumb {
   background: var(--card-border, rgba(255,255,255,0.07));
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
+/* Empty state */
 #vaaniChat .vc-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  gap: 10px;
-  padding: 48px 20px;
-  text-align: center;
-  color: var(--text3, #44445a);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  flex: 1; gap: 12px; padding: 48px 20px; text-align: center;
 }
-#vaaniChat .vc-empty svg {
-  width: 36px; height: 36px;
-  opacity: 0.35;
-  stroke: var(--text3, #44445a);
-  fill: none; stroke-width: 2;
-  stroke-linecap: round; stroke-linejoin: round;
+#vaaniChat .vc-empty-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--card, rgba(255,255,255,0.03));
+  border: 1px solid var(--card-border, rgba(255,255,255,0.07));
+  display: flex; align-items: center; justify-content: center;
 }
-#vaaniChat .vc-empty p { font-size: 13px; margin: 0; }
+#vaaniChat .vc-empty-icon svg {
+  width: 22px; height: 22px;
+  stroke: var(--text3, #44445a); fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+#vaaniChat .vc-empty-title {
+  font-size: 15px; font-weight: 600;
+  color: var(--text2, #888899); margin: 0;
+}
+#vaaniChat .vc-empty-sub {
+  font-size: 13px; color: var(--text3, #44445a); margin: 0;
+}
 
+/* Date divider */
+#vaaniChat .vc-date-div {
+  display: flex; align-items: center; justify-content: center;
+  margin: 14px 0 8px;
+}
+#vaaniChat .vc-date-div span {
+  font-size: 11px; color: var(--text3, #44445a);
+  background: var(--bg2, #0e0e1a);
+  border: 1px solid var(--card-border, rgba(255,255,255,0.07));
+  border-radius: 20px; padding: 3px 12px;
+}
+
+/* Bubbles */
 #vaaniChat .vc-bubble-wrap {
-  display: flex;
-  flex-direction: column;
-  max-width: 72%;
-  animation: vcFadeUp 0.2s ease both;
+  display: flex; flex-direction: column;
+  max-width: 70%; margin-bottom: 4px;
+  animation: vcFadeUp 0.18s ease both;
 }
 @keyframes vcFadeUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 #vaaniChat .vc-bubble-wrap.vc-me   { align-self: flex-end;   align-items: flex-end; }
 #vaaniChat .vc-bubble-wrap.vc-them { align-self: flex-start; align-items: flex-start; }
 
-#vaaniChat .vc-sender {
-  font-size: 10px;
-  color: var(--accent-light, #a78bfa);
-  margin-bottom: 3px;
-  font-weight: 600;
-  text-transform: lowercase;
-  letter-spacing: 0.3px;
+/* Sender row (other users) */
+#vaaniChat .vc-sender-row {
+  display: flex; align-items: center; gap: 5px;
+  margin-bottom: 4px;
 }
+#vaaniChat .vc-sender-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-light, #a78bfa); flex-shrink: 0;
+}
+#vaaniChat .vc-sender {
+  font-size: 11px; font-weight: 600;
+  color: var(--accent-light, #a78bfa);
+  letter-spacing: 0.2px;
+}
+
 #vaaniChat .vc-bubble {
-  padding: 10px 14px;
-  border-radius: 18px;
-  font-size: 14px;
-  line-height: 1.55;
-  word-break: break-word;
-  white-space: pre-wrap;
+  padding: 10px 14px; border-radius: 18px;
+  font-size: 14px; line-height: 1.55;
+  word-break: break-word; white-space: pre-wrap;
 }
 #vaaniChat .vc-bubble-wrap.vc-me .vc-bubble {
   background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
-  color: #fff;
-  border-bottom-right-radius: 4px;
+  color: #fff; border-bottom-right-radius: 4px;
 }
 #vaaniChat .vc-bubble-wrap.vc-them .vc-bubble {
-  background: var(--card, rgba(255,255,255,0.03));
-  border: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  color: var(--text, #e2e2f0);
-  border-bottom-left-radius: 4px;
+  background: var(--bg2, #0e0e1a);
+  border: 1px solid var(--card-border, rgba(255,255,255,0.08));
+  color: var(--text, #e2e2f0); border-bottom-left-radius: 4px;
 }
 #vaaniChat .vc-time {
-  font-size: 10px;
-  color: var(--text3, #44445a);
-  margin-top: 4px;
-  padding: 0 4px;
+  font-size: 10px; color: var(--text3, #44445a);
+  margin-top: 3px; padding: 0 2px;
 }
 
+/* ── Input bar ───────────────────────────────────────────────────── */
 #vaaniChat .vc-input-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  background: var(--bg2, #0e0e1a);
-  flex-shrink: 0;
+  display: flex; align-items: flex-end; gap: 10px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--card-border, rgba(255,255,255,0.06));
+  background: var(--bg, #09090f); flex-shrink: 0;
 }
 #vaaniChat .vc-input-wrap {
   flex: 1;
-  background: var(--card, rgba(255,255,255,0.03));
+  background: var(--bg2, #0e0e1a);
   border: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  border-radius: 20px;
-  padding: 0 14px;
-  transition: border-color 0.2s;
+  border-radius: 22px; padding: 0 16px;
+  transition: border-color 0.18s, box-shadow 0.18s;
 }
 #vaaniChat .vc-input-wrap:focus-within {
-  border-color: var(--accent-border, rgba(167,139,250,0.18));
+  border-color: var(--accent-border, rgba(167,139,250,0.25));
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.08);
 }
 #vaaniChat .vc-msg-input {
-  width: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 14px;
-  color: var(--text, #e2e2f0);
+  width: 100%; background: transparent;
+  border: none; outline: none;
+  font-size: 14px; color: var(--text, #e2e2f0);
   font-family: 'Outfit', sans-serif;
-  resize: none;
-  line-height: 1.5;
-  padding: 10px 0;
-  max-height: 120px;
-  overflow-y: auto;
+  resize: none; line-height: 1.5;
+  padding: 10px 0; max-height: 120px; overflow-y: auto;
 }
 #vaaniChat .vc-msg-input::placeholder { color: var(--text3, #44445a); }
 
 #vaaniChat .vc-send-btn {
-  width: 42px; height: 42px;
-  border-radius: 50%;
+  width: 42px; height: 42px; border-radius: 50%;
   background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
-  border: none;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(124,58,237,0.4);
+  border: none; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+  box-shadow: 0 4px 14px rgba(124,58,237,0.35);
   transition: all 0.18s;
 }
 #vaaniChat .vc-send-btn svg {
-  width: 16px; height: 16px;
-  stroke: #fff; fill: none;
+  width: 16px; height: 16px; stroke: #fff; fill: none;
   stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
 }
-#vaaniChat .vc-send-btn:hover      { transform: scale(1.08); }
-#vaaniChat .vc-send-btn:disabled   { opacity: 0.4; cursor: not-allowed; transform: none; }
+#vaaniChat .vc-send-btn:hover      { transform: scale(1.08); box-shadow: 0 6px 18px rgba(124,58,237,0.5); }
+#vaaniChat .vc-send-btn:disabled   { opacity: 0.35; cursor: not-allowed; transform: none; box-shadow: none; }
 
+/* Status bar */
 #vaaniChat .vc-status {
-  font-size: 11px;
-  text-align: center;
-  padding: 6px;
-  color: var(--text3, #44445a);
-  flex-shrink: 0;
+  font-size: 11px; text-align: center; padding: 5px 12px;
+  color: var(--text3, #44445a); flex-shrink: 0;
 }
 #vaaniChat .vc-status.vc-error {
-  color: #f87171;
-  background: rgba(220,38,38,0.08);
+  color: #f87171; background: rgba(220,38,38,0.07);
 }
 
-#vaaniChat .vc-date-div {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 8px 0;
+/* ════════════════════════════════════════════════════════════════
+   PROFILE SIDE MENU  (injected into <body>, not #vaaniChat)
+   All rules prefixed with .vm-
+════════════════════════════════════════════════════════════════ */
+
+/* Overlay */
+.vm-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0);
+  pointer-events: none;
+  transition: background 0.28s ease;
 }
-#vaaniChat .vc-date-div span {
-  font-size: 11px;
-  color: var(--text3, #44445a);
-  background: var(--bg3, #13131f);
+.vm-overlay.vm-open {
+  background: rgba(0, 0, 0, 0.52);
+  pointer-events: auto;
+}
+
+/* Panel */
+.vm-panel {
+  position: fixed;
+  top: 0; left: 0;
+  width: 280px; height: 100%;
+  z-index: 1001;
+  background: var(--bg2, #0e0e1a);
+  border-right: 1px solid var(--card-border, rgba(255,255,255,0.07));
+  display: flex; flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+}
+.vm-panel.vm-open {
+  transform: translateX(0);
+}
+
+/* Header */
+.vm-header {
+  position: relative;
+  padding: 28px 20px 22px;
+  background: linear-gradient(160deg,
+    rgba(124,58,237,0.18) 0%,
+    rgba(124,58,237,0.04) 100%);
+  border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.07));
+  display: flex; align-items: center; gap: 14px;
+}
+
+.vm-header-avatar {
+  width: 52px; height: 52px; border-radius: 50%;
+  overflow: hidden; flex-shrink: 0;
+  border: 2px solid var(--accent-border, rgba(167,139,250,0.3));
+  background: linear-gradient(135deg, var(--accent, #7c3aed), #6d28d9);
+  display: flex; align-items: center; justify-content: center;
+}
+.vm-header-avatar img {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+}
+.vm-header-avatar span {
+  color: #fff; font-size: 18px; font-weight: 700;
+}
+
+.vm-header-info { flex: 1; min-width: 0; }
+.vm-username {
+  font-size: 15px; font-weight: 700;
+  color: var(--text, #e2e2f0);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vm-email {
+  font-size: 12px; color: var(--text3, #44445a);
+  margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.vm-close {
+  position: absolute; top: 14px; right: 14px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--card, rgba(255,255,255,0.04));
   border: 1px solid var(--card-border, rgba(255,255,255,0.07));
-  border-radius: 20px;
-  padding: 2px 10px;
+  color: var(--text3, #44445a);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s;
+}
+.vm-close:hover { background: rgba(248,113,113,0.1); color: #f87171; border-color: rgba(248,113,113,0.2); }
+.vm-close svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.5; stroke-linecap: round; }
+
+/* Nav */
+.vm-nav {
+  flex: 1;
+  padding: 12px 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-/* ── Light theme overrides ───────────────────────────────────────── */
+.vm-item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 14px;
+  background: transparent;
+  border: none; border-radius: 12px;
+  color: var(--text2, #888899);
+  font-size: 14px; font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer; text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+.vm-item:hover {
+  background: var(--accent-subtle, rgba(167,139,250,0.08));
+  color: var(--text, #e2e2f0);
+}
+.vm-item svg {
+  width: 18px; height: 18px; flex-shrink: 0;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.vm-item span { flex: 1; }
+.vm-chevron {
+  width: 14px !important; height: 14px !important;
+  opacity: 0.4;
+}
+
+/* Footer */
+.vm-footer {
+  padding: 12px 10px;
+  border-top: 1px solid var(--card-border, rgba(255,255,255,0.07));
+}
+
+.vm-signout {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 11px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--text3, #44445a);
+  font-size: 13px; font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer; transition: all 0.15s;
+}
+.vm-signout:hover {
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.15);
+  color: #f87171;
+}
+.vm-signout svg {
+  width: 16px; height: 16px;
+  stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────── */
 [data-theme="light"] #vaaniChat .vc-bubble-wrap.vc-them .vc-bubble {
-  background: #f3f3fb;
-  border-color: #e4e4f0;
+  background: #f3f4f8; border-color: #e8e9f0;
 }
-[data-theme="light"] #vaaniChat .vg-card {
-  background: #ffffff;
-  border-color: #e4e4f0;
-}
+[data-theme="light"] #vaaniChat .vc-topbar { background: #fff; border-color: #eee; }
+[data-theme="light"] #vaaniChat .vc-input-bar { background: #fff; border-color: #eee; }
+[data-theme="light"] #vaaniChat .vc-input-wrap { background: #f3f4f8; border-color: #e0e1ea; }
+[data-theme="light"] #vaaniChat .vg-card { background: #fff; border-color: #e4e4f0; }
 [data-theme="light"] #vaaniChat .vg-input-wrap { background: #f3f3fb; }
-[data-theme="light"] #vaaniChat .vg-google-btn {
-  background: #f8f8ff;
-  border-color: #e0e0f0;
-  color: #0e0e1a;
-}
+[data-theme="light"] #vaaniChat .vg-google-btn { background: #f8f8ff; border-color: #e0e0f0; color: #0e0e1a; }
 [data-theme="light"] #vaaniChat .vg-google-btn:hover { background: #ededfc; }
+[data-theme="light"] .vm-panel { background: #ffffff; border-color: #eee; box-shadow: 4px 0 24px rgba(0,0,0,0.12); }
+[data-theme="light"] .vm-item:hover { background: rgba(124,58,237,0.06); color: #0e0e1a; }
 
 /* ── Mobile ──────────────────────────────────────────────────────── */
 @media (max-width: 480px) {
-  #vaaniChat .vc-bubble-wrap { max-width: 88%; }
-  #vaaniChat .vc-messages    { padding: 12px; }
-  #vaaniChat .vc-input-bar   { padding: 10px 12px; gap: 8px; }
-  #vaaniChat .vg-card        { padding: 28px 20px 22px; }
+  #vaaniChat .vc-bubble-wrap { max-width: 85%; }
+  #vaaniChat .vc-messages    { padding: 14px 12px 10px; }
+  #vaaniChat .vc-input-bar   { padding: 8px 10px 10px; gap: 8px; }
+  .vm-panel { width: 260px; }
+  #vaaniChat .vg-card { padding: 28px 20px 22px; }
 }
