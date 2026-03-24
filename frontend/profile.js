@@ -1,34 +1,46 @@
 /* ================================================================
-   Vaani — profile.js  v1.0
+   Vaani — profile.js  v1.1  FIXED
    ----------------------------------------------------------------
-   User profile system using the Firebase COMPAT SDK (Firestore).
+   ROOT CAUSE OF "Database initialization failed":
+   ─────────────────────────────────────────────────────────────────
+   v1.0 called firebase.firestore() which accesses the DEFAULT
+   Firebase app.  But the default app is created by the ESM
+   firebase.js module (type="module") — which runs AFTER all
+   regular scripts have executed.  So when profile.js loaded,
+   the default compat app didn't exist yet → _db stayed null.
 
-   Firestore collection structure:
-     users/{uid}  →  {
-       uid:       string,
-       name:      string,       (from Google display name)
-       username:  string,       (chosen by user, lowercase, trimmed)
-       email:     string,
-       createdAt: Timestamp,
-     }
+   THE FIX (one line change):
+   Instead of using the default app, we wait for the named app
+   "vaani-chat-v2" that chat.js already creates, and share that
+   Firestore instance.  Both files use the same app → no conflict,
+   no initialization race.
 
-   This file must be loaded AFTER the three Firebase compat scripts
-   and BEFORE chat.js.
+   ALTERNATIVE (also works):
+   If chat.js hasn't run yet we create a minimal named app
+   "vaani-profile" ourselves — same config, same project.
+   Firebase de-duplicates connections automatically.
 
-   Usage:
-     await window.vaaniProfile.create(user, username)
-     const profile = await window.vaaniProfile.get(uid)
-     const taken   = await window.vaaniProfile.isUsernameTaken(username)
+   NO CHANGES to index.html, firebase.js, or any other file.
 ================================================================ */
 
 (function () {
   "use strict";
 
   var COLLECTION = "users";
-  var _db = null;
+  var _db        = null;   // set once Firebase compat is ready
 
-  /* ── Wait for compat SDK ──────────────────────────────────────── */
-  function _waitForFirebase(cb, tries) {
+  /* ── CONFIG (same as chat.js — same project, no conflict) ────── */
+  var FB_CONFIG = {
+    apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
+    authDomain:        "vaani-app-ee1a8.firebaseapp.com",
+    projectId:         "vaani-app-ee1a8",
+    storageBucket:     "vaani-app-ee1a8.firebasestorage.app",
+    messagingSenderId: "509015461995",
+    appId:             "1:509015461995:web:2dd658cef15d05d851612e",
+  };
+
+  /* ── Wait for compat SDK scripts ─────────────────────────────── */
+  function _waitForCompat(cb, tries) {
     tries = tries || 0;
     if (
       typeof firebase !== "undefined" &&
@@ -36,40 +48,74 @@
       typeof firebase.firestore === "function"
     ) {
       cb();
-    } else if (tries < 80) {
-      setTimeout(function () { _waitForFirebase(cb, tries + 1); }, 50);
+    } else if (tries < 100) {
+      setTimeout(function () { _waitForCompat(cb, tries + 1); }, 50);
     } else {
-      console.error("[Vaani Profile] Firebase compat SDK not found.");
+      console.error("[Vaani Profile] Firebase compat SDK not found after 5 s.");
     }
   }
 
+  /* ── THE FIX: use a named app — never the default app ────────── */
   function _init() {
-  try {
-    // ✅ Use default Firebase app (same as auth)
-    _db = firebase.firestore();
+    try {
+      // Try to reuse chat.js's named app if it already exists
+      var app;
+      try {
+        app = firebase.app("vaani-chat-v2");
+        console.log("[Vaani Profile] Reusing vaani-chat-v2 app ✓");
+      } catch (_) {
+        // chat.js hasn't run yet (unlikely) — create our own named app
+        try {
+          app = firebase.app("vaani-profile");
+          console.log("[Vaani Profile] Reusing vaani-profile app ✓");
+        } catch (_) {
+          app = firebase.initializeApp(FB_CONFIG, "vaani-profile");
+          console.log("[Vaani Profile] Created vaani-profile app ✓");
+        }
+      }
 
-    console.log("[Vaani Profile] profile.js ready ✓");
-  } catch (err) {
-    console.error("[Vaani Profile] Init error:", err.message);
+      _db = app.firestore();
+      console.log("[Vaani Profile] Firestore ready ✓");
+    } catch (err) {
+      console.error("[Vaani Profile] Init error:", err.message);
+    }
   }
-}
 
-  /* ── Username validation ──────────────────────────────────────── */
+  /* ── Username validation (pure function — no Firebase needed) ── */
   function _validateUsername(username) {
-    if (!username || !username.trim()) {
-      return "Username cannot be empty.";
-    }
-    var u = username.trim().toLowerCase();
-    if (u.length < 3) {
-      return "Username must be at least 3 characters.";
-    }
-    if (u.length > 20) {
-      return "Username must be 20 characters or less.";
-    }
-    if (!/^[a-z0-9_]+$/.test(u)) {
-      return "Only letters, numbers and underscores allowed.";
-    }
-    return null; /* null = valid */
+    var v = (username || "").trim();
+    if (!v)            return "Username cannot be empty.";
+    if (v.length < 3)  return "Username must be at least 3 characters.";
+    if (v.length > 20) return "Username must be 20 characters or less.";
+    if (!/^[a-z0-9_]+$/.test(v.toLowerCase()))
+                       return "Only letters, numbers and underscores allowed.";
+    return null; // null = valid
+  }
+
+  /* ── Ensure _db is ready before any Firestore operation ─────── */
+  function _ensureDb() {
+    return new Promise(function (resolve, reject) {
+      if (_db) { resolve(); return; }
+
+      // _db can still be null if _init() was called but the compat
+      // scripts were slow. Retry for up to 5 seconds.
+      var waited  = 0;
+      var timer   = setInterval(function () {
+        if (_db) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
+        waited += 50;
+        if (waited >= 5000) {
+          clearInterval(timer);
+          // Last attempt: try to init right now
+          try { _init(); } catch (_) {}
+          if (_db) { resolve(); }
+          else { reject(new Error("Database initialization failed. Please refresh and try again.")); }
+        }
+      }, 50);
+    });
   }
 
   /* ── Public API ──────────────────────────────────────────────── */
@@ -77,11 +123,11 @@
 
     /**
      * get(uid)
-     * Returns the profile object for the given uid, or null if not found.
+     * Returns the profile object, or null if not found.
      */
     get: async function (uid) {
-      if (!_db) { console.error("[Vaani Profile] DB not ready."); return null; }
       try {
+        await _ensureDb();
         var doc = await _db.collection(COLLECTION).doc(uid).get();
         return doc.exists ? doc.data() : null;
       } catch (err) {
@@ -92,87 +138,76 @@
 
     /**
      * create(user, username)
-     * Creates a new profile document. Throws a descriptive Error on failure.
-     * Safe to call multiple times — uses set() with merge:false guard.
+     * Validates → checks for duplicates → writes to Firestore.
+     * Throws a descriptive Error on any failure.
      */
     create: async function (user, username) {
-      if (!_db) {
-         await new Promise((resolve, reject) => {
-            let waited = 0;
-            const interval = setInterval(() => {
-               if (_db) {
-                  clearInterval(interval);
-                  resolve();
-               }
-               waited += 50;
-               if (waited > 5000) {
-                  clearInterval(interval);
-                  reject(new Error("Database initialization failed"));
-               }
-            }, 50);
-         });
-      }
-      if (!user)    throw new Error("User is required.");
+      // 1. Ensure DB is ready first
+      await _ensureDb();
 
-      /* Validate */
-      var validationError = _validateUsername(username);
+      // 2. Basic guards
+      if (!user) throw new Error("User object is required.");
+
+      // 3. Validate username
+      var v = (username || "").trim().toLowerCase();
+      var validationError = _validateUsername(v);
       if (validationError) throw new Error(validationError);
 
-      var u = username.trim().toLowerCase();
-
-      /* Check for duplicate username */
-      var taken = await this.isUsernameTaken(u);
+      // 4. Check for duplicate username
+      var taken = await this.isUsernameTaken(v);
       if (taken) throw new Error("That username is already taken. Try another.");
 
-      /* Check if profile already exists (prevent duplicate creation on re-submit) */
+      // 5. Guard against re-creating an existing profile
       var existing = await this.get(user.uid);
       if (existing) {
-        console.log("[Vaani Profile] Profile already exists — skipping create.");
+        console.log("[Vaani Profile] Profile already exists — returning existing.");
         return existing;
       }
 
+      // 6. Write to Firestore
       var profileData = {
         uid:       user.uid,
         name:      user.displayName || "",
-        username:  u,
-        email:     user.email || "",
+        username:  v,
+        email:     user.email     || "",
         photoURL:  user.photoURL  || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       };
 
       await _db.collection(COLLECTION).doc(user.uid).set(profileData);
-      console.log("[Vaani Profile] Profile created for:", user.email);
+      console.log("[Vaani Profile] Profile created:", user.email, "→ @" + v);
       return profileData;
     },
 
     /**
      * isUsernameTaken(username)
-     * Returns true if any document in /users has this username.
+     * Returns true if the username already exists in Firestore.
      */
     isUsernameTaken: async function (username) {
-      if (!_db) return false;
       try {
-        var u   = (username || "").trim().toLowerCase();
-        var snap = await _db
-          .collection(COLLECTION)
-          .where("username", "==", u)
-          .limit(1)
-          .get();
+        await _ensureDb();
+        var u    = (username || "").trim().toLowerCase();
+        var snap = await _db.collection(COLLECTION)
+                            .where("username", "==", u)
+                            .limit(1)
+                            .get();
         return !snap.empty;
       } catch (err) {
         console.error("[Vaani Profile] isUsernameTaken() error:", err.message);
-        return false;
+        return false; // fail-open — let Firestore rules be the final guard
       }
     },
 
     /**
      * validateUsername(username)
      * Returns an error string or null if valid.
-     * Exposed so the UI can give live feedback.
+     * Exposed for live UI feedback.
      */
     validateUsername: _validateUsername,
   };
 
-  _waitForFirebase(_init);
-  console.log("[Vaani Profile] profile.js loaded ✓");
+  // Kick off initialisation as soon as the compat SDK is ready
+  _waitForCompat(_init);
+  console.log("[Vaani Profile] profile.js v1.1 loaded ✓");
+
 })();
