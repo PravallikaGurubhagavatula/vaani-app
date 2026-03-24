@@ -97,11 +97,17 @@
      */
     create: async function (user, username) {
       if (!_db) {
-         await new Promise((resolve) => {
-            var check = setInterval(() => {
+         await new Promise((resolve, reject) => {
+            let waited = 0;
+            const interval = setInterval(() => {
                if (_db) {
-                  clearInterval(check);
+                  clearInterval(interval);
                   resolve();
+               }
+               waited += 50;
+               if (waited > 5000) {
+                  clearInterval(interval);
+                  reject(new Error("Database initialization failed"));
                }
             }, 50);
          });
