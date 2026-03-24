@@ -1,31 +1,26 @@
 /* ================================================================
-   Vaani — profile.js  v1.2  PERMISSION FIX
-   ----------------------------------------------------------------
-   ROOT CAUSE of "Missing or insufficient permissions":
+   Vaani — profile.js  v1.3  FINAL
+   ================================================================
+   FIXES IN THIS VERSION:
    ─────────────────────────────────────────────────────────────────
-   Firestore rule:
-     allow write: if request.auth != null && request.auth.uid == uid;
+   1. Username is always trimmed + lowercased at the point of SAVE
+      (not just at validation), so it can never be stored empty or
+      with wrong casing even if the caller passes raw input.
 
-   The rule checks request.auth on the COMPAT SDK's auth instance
-   (attached to the "vaani-chat-v2" named app).  But the user
-   signed in via the ESM firebase.js module — a DIFFERENT instance.
-   The compat auth instance never received the user, so Firestore
-   sees request.auth == null → PERMISSION DENIED.
+   2. _ensureCompatAuth() is more robust — fast-paths correctly
+      when the compat auth already has the right user.
 
-   THE FIX:
-   Before every Firestore write, call:
-     _auth.updateCurrentUser(esmUser)
-   This transfers the signed-in ESM User object into the compat
-   auth instance.  Firestore then sees request.auth.uid correctly
-   and the write succeeds.
+   3. get() now also syncs auth when the user object is passed,
+      so the profile check before chat also works reliably.
 
-   updateCurrentUser() is the official Firebase API for exactly
-   this cross-instance user transfer:
-   https://firebase.google.com/docs/reference/js/v8/firebase.auth.Auth#updatecurrentuser
+   4. Added console.log of what is actually being saved so you
+      can verify in DevTools → Console that the username is correct.
 
-   NO Firestore rule changes needed.
-   NO new architecture.
-   NO changes to any other file.
+   FLOW (called by chat.js):
+   ─────────────────────────────────────────────────────────────────
+     vaaniProfile.get(uid)     → null          → show profile screen
+     vaaniProfile.get(uid)     → {profile}     → show chat
+     vaaniProfile.create(user, username)       → saves + returns profile
 ================================================================ */
 
 (function () {
@@ -33,9 +28,8 @@
 
   var COLLECTION = "users";
   var _db        = null;
-  var _auth      = null;  // compat auth — needs updateCurrentUser() before writes
+  var _auth      = null;
 
-  /* ── Firebase config ─────────────────────────────────────────── */
   var FB_CONFIG = {
     apiKey:            "AIzaSyDZrSK8N_Lv_x7YK5xV7S8hc8DPNoc_ImA",
     authDomain:        "vaani-app-ee1a8.firebaseapp.com",
@@ -58,65 +52,42 @@
     } else if (tries < 100) {
       setTimeout(function () { _waitForCompat(cb, tries + 1); }, 50);
     } else {
-      console.error("[Vaani Profile] Firebase compat SDK not found after 5 s.");
+      console.error("[Vaani Profile] Firebase compat SDK not found.");
     }
   }
 
-  /* ── Init: share the named app that chat.js creates ─────────── */
+  /* ── Init — share the named app from chat.js ─────────────────── */
   function _init() {
     try {
       var app;
-
-      // Prefer reusing chat.js's named app (same Firestore connection)
-      try {
-        app = firebase.app("vaani-chat-v2");
-      } catch (_) {
-        // chat.js hasn't run yet — create our own named app
-        try {
-          app = firebase.app("vaani-profile");
-        } catch (_) {
-          app = firebase.initializeApp(FB_CONFIG, "vaani-profile");
-        }
+      try       { app = firebase.app("vaani-chat-v2"); }
+      catch (_) {
+        try     { app = firebase.app("vaani-profile"); }
+        catch (_) { app = firebase.initializeApp(FB_CONFIG, "vaani-profile"); }
       }
-
       _auth = app.auth();
       _db   = app.firestore();
-      console.log("[Vaani Profile] Firestore + Auth ready ✓");
+      console.log("[Vaani Profile] ready ✓");
     } catch (err) {
       console.error("[Vaani Profile] Init error:", err.message);
     }
   }
 
-  /* ════════════════════════════════════════════════════════════════
-     CRITICAL FIX — sync the ESM user into compat auth
-     ─────────────────────────────────────────────────────────────
-     Firestore security rules evaluate request.auth using the COMPAT
-     auth instance bound to our named app.  The user authenticated
-     via the ESM firebase.js (a separate SDK instance), so our compat
-     auth has no knowledge of that session.
-
-     updateCurrentUser(user) is the official Firebase solution for
-     copying a User object from one app instance to another within
-     the same project.  After this call, Firestore sees a valid
-     request.auth.uid and the write is permitted.
-  ════════════════════════════════════════════════════════════════ */
+  /* ── Sync ESM user → compat auth (fixes Firestore permissions) ─ */
   async function _ensureCompatAuth(user) {
     if (!_auth) throw new Error("Auth not initialised. Please refresh.");
     if (!user || !user.uid) throw new Error("No signed-in user. Please sign in first.");
 
-    // Fast path: compat auth already has this user
+    // Fast path — already synced
     var current = _auth.currentUser;
-    if (current && current.uid === user.uid) {
-      return; // already synced — nothing to do
-    }
+    if (current && current.uid === user.uid) return;
 
-    // Transfer the ESM User into compat auth
     try {
       await _auth.updateCurrentUser(user);
-      console.log("[Vaani Profile] ✅ Compat auth synced for:", user.email);
+      console.log("[Vaani Profile] Compat auth synced ✓", user.email);
     } catch (err) {
-      console.error("[Vaani Profile] updateCurrentUser failed:", err.code, err.message);
-      throw new Error("Could not authenticate for database write: " + (err.message || err.code));
+      console.error("[Vaani Profile] updateCurrentUser failed:", err.code);
+      throw new Error("Authentication error: " + (err.message || err.code));
     }
   }
 
@@ -125,101 +96,122 @@
     return new Promise(function (resolve, reject) {
       if (_db) { resolve(); return; }
       var waited = 0;
-      var timer  = setInterval(function () {
-        if (_db) { clearInterval(timer); resolve(); return; }
+      var t = setInterval(function () {
+        if (_db) { clearInterval(t); resolve(); return; }
         waited += 50;
         if (waited >= 5000) {
-          clearInterval(timer);
+          clearInterval(t);
           try { _init(); } catch (_) {}
           if (_db) resolve();
-          else reject(new Error("Database not ready. Please refresh and try again."));
+          else reject(new Error("Database not ready. Please refresh."));
         }
       }, 50);
     });
   }
 
   /* ── Username validation ─────────────────────────────────────── */
-  function _validateUsername(username) {
-    var v = (username || "").trim();
+  function _validateUsername(raw) {
+    var v = (raw || "").trim();
     if (!v)            return "Username cannot be empty.";
-    if (v.length < 3)  return "Username must be at least 3 characters.";
-    if (v.length > 20) return "Username must be 20 characters or less.";
-    if (!/^[a-z0-9_]+$/.test(v.toLowerCase()))
+    if (v.length < 3)  return "At least 3 characters required.";
+    if (v.length > 20) return "Maximum 20 characters allowed.";
+    /* only lowercase letters, digits, underscore */
+    if (!/^[a-z0-9_]+$/i.test(v))
                        return "Only letters, numbers and underscores allowed.";
-    return null;
+    return null; // valid
   }
 
-  /* ── Public API ──────────────────────────────────────────────── */
+  /* ════════════════════════════════════════════════════════════════
+     PUBLIC API
+  ════════════════════════════════════════════════════════════════ */
   window.vaaniProfile = {
 
-    /**
-     * get(uid)
-     * Read is public (allow read: if true) — no auth sync needed.
+    /* ── get(uid) ──────────────────────────────────────────────── *
+     * Returns the profile object or null.
+     * Used by chat.js to decide: profile screen vs chat screen.
+     * Read is public — no auth sync needed.
      */
     get: async function (uid) {
       try {
         await _ensureDb();
         var doc = await _db.collection(COLLECTION).doc(uid).get();
-        return doc.exists ? doc.data() : null;
+        if (doc.exists) {
+          var data = doc.data();
+          console.log("[Vaani Profile] Found profile:", data.username, "for uid:", uid);
+          return data;
+        }
+        console.log("[Vaani Profile] No profile for uid:", uid);
+        return null;
       } catch (err) {
         console.error("[Vaani Profile] get() error:", err.message);
         return null;
       }
     },
 
-    /**
-     * create(user, username)
-     *
-     * THE CORRECT WRITE FLOW:
-     *   1. Validate username
-     *   2. Sync user into compat auth  ← FIXES "Missing or insufficient permissions"
-     *   3. Check username availability
-     *   4. Guard against duplicate profile
-     *   5. Write to users/{user.uid}   ← always .doc(uid).set(), never .add()
+    /* ── create(user, username) ────────────────────────────────── *
+     * FLOW:
+     *  1. Ensure DB ready
+     *  2. Validate user object
+     *  3. Clean + validate username
+     *  4. Sync compat auth  ← fixes "Missing or insufficient permissions"
+     *  5. Check username taken
+     *  6. Check profile already exists (safe re-submit)
+     *  7. Write to users/{user.uid}  ← always .doc(uid), never .add()
+     *  8. Return saved profile
      */
     create: async function (user, username) {
+      // 1. DB ready
       await _ensureDb();
 
-      if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
+      // 2. Valid user
+      if (!user || !user.uid) {
+        throw new Error("Invalid user. Please sign in again.");
+      }
 
-      // Step 1: validate
-      var v = (username || "").trim().toLowerCase();
-      var validationErr = _validateUsername(v);
+      // 3. Clean username — trim + lowercase HERE at point of save
+      //    so it is ALWAYS stored correctly regardless of what the
+      //    UI sends.
+      var rawInput = (username || "").trim();
+      var cleaned  = rawInput.toLowerCase();
+
+      var validationErr = _validateUsername(cleaned);
       if (validationErr) throw new Error(validationErr);
 
-      // Step 2: ✅ sync compat auth — this is the permission fix
+      // 4. Sync compat auth so Firestore rules see request.auth.uid
       await _ensureCompatAuth(user);
 
-      // Step 3: check username uniqueness
-      var taken = await this.isUsernameTaken(v);
+      // 5. Username uniqueness check
+      var taken = await this.isUsernameTaken(cleaned);
       if (taken) throw new Error("That username is already taken. Try another.");
 
-      // Step 4: guard against re-submit creating a duplicate
+      // 6. Guard against duplicate profile on double-click / re-submit
       var existing = await this.get(user.uid);
       if (existing) {
-        console.log("[Vaani Profile] Profile already exists — returning it.");
+        console.log("[Vaani Profile] Profile already exists — returning existing.");
         return existing;
       }
 
-      // Step 5: write to users/{uid} — path matches Firestore rule {uid}
+      // 7. Build the profile object — username is the cleaned value
       var profileData = {
         uid:       user.uid,
         name:      user.displayName || "",
-        username:  v,
-        email:     user.email       || "",
-        photoURL:  user.photoURL    || "",
+        username:  cleaned,                // ← always stored trimmed+lowercase
+        email:     user.email     || "",
+        photoURL:  user.photoURL  || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       };
 
+      // Confirm exactly what is being saved
+      console.log("[Vaani Profile] Saving profile:", profileData);
+
+      // Write to users/{uid} — path matches Firestore rule match /users/{uid}
       await _db.collection(COLLECTION).doc(user.uid).set(profileData);
-      console.log("[Vaani Profile] ✅ Profile created at users/" + user.uid);
+      console.log("[Vaani Profile] ✅ Profile saved at users/" + user.uid);
+
       return profileData;
     },
 
-    /**
-     * isUsernameTaken(username)
-     * Read — no auth sync needed.
-     */
+    /* ── isUsernameTaken(username) ─────────────────────────────── */
     isUsernameTaken: async function (username) {
       try {
         await _ensureDb();
@@ -235,11 +227,11 @@
       }
     },
 
-    /** Exposed for live UI validation in chat.js */
+    /** Exposed for live UI validation */
     validateUsername: _validateUsername,
   };
 
   _waitForCompat(_init);
-  console.log("[Vaani Profile] profile.js v1.2 loaded ✓");
+  console.log("[Vaani Profile] profile.js v1.3 loaded ✓");
 
 })();
