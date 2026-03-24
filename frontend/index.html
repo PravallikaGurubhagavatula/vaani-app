@@ -383,12 +383,12 @@
 <!-- ══ SCRIPTS ══════════════════════════════════════════════════════
      LOAD ORDER (critical):
      1. Config globals
-     2. Firebase compat SDK (ONE TIME — three scripts, no duplicates)
-     3. Vaani core scripts
-     4. Chat UI script (pure UI, no Firebase)
-     5. Chat Firebase bridge
-     6. Chat logic
-     7. Firebase ESM module (main app auth)
+     2. Firebase compat SDK  (three scripts, loaded once)
+     3. Vaani core scripts   (translation — unchanged)
+     4. Identity system      (auth.js, profile.js)
+     5. Chat                 (chat.js)
+     6. Firebase ESM module  (type="module" — always defers,
+                              runs after all regular scripts)
 ══════════════════════════════════════════════════════════════════ -->
 <script>
   window.VAANI_VERSION        = "20250325b";
@@ -397,13 +397,13 @@
   window.USE_HUMAN_TRANSLATOR = true;
   window.DEBUG_TRANSLATION    = false;
 </script>
-
+ 
 <!-- Firebase compat SDK — loaded ONCE, no duplicates -->
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
-
-<!-- Vaani core -->
+ 
+<!-- Vaani core (translation — do NOT touch) -->
 <script src="normalizer.js?v=1"></script>
 <script src="apiService.js?v=2"></script>
 <script src="slangDictionary.js?v=2"></script>
@@ -413,18 +413,23 @@
 <script src="humanTranslator.js?v=1"></script>
 <script src="app.js?v=20250325b"></script>
 <script src="translationIntegration.js?v=3"></script>
-
-<!-- Firebase ESM module — main app auth (must be last) -->
-<script type="module" src="firebase.js?v=20250325a"></script>
-
-<!-- Chat (isolated module) -->
+ 
 <!-- Identity system (must load before chat.js) -->
 <script src="auth.js?v=1"></script>
-<script src="profile.js?v=1"></script>
-
+<script src="profile.js?v=2"></script>
+ 
 <!-- Chat (gated — requires auth + profile) -->
-<script src="chat.js?v=2"></script>
-
+<script src="chat.js?v=3"></script>
+ 
+<!-- Firebase ESM module — main app auth
+     type="module" makes this automatically deferred.
+     It runs AFTER all the regular scripts above have executed.
+     This sets window._vaaniCurrentUser and window.VAANI_AUTH_READY. -->
+<script type="module" src="firebase.js?v=20250325a"></script>
+ 
+<!-- ✅ chat-firebase.js is NOT needed — chat.js v2.1 handles
+     user mirroring internally via _mirrorEsmUser(). -->
+ 
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -444,18 +449,18 @@
           });
         })
         .catch(e => console.warn('[Vaani] SW registration failed:', e));
-
+ 
       navigator.serviceWorker.addEventListener('message', e => {
         if (e.data?.type === 'SW_UPDATED') window.location.reload(true);
       });
-
+ 
       let _reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (!_reloading) { _reloading = true; window.location.reload(true); }
       });
     });
   }
-
+ 
   let deferredPrompt;
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault();
