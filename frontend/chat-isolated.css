@@ -775,21 +775,27 @@ body.vm-menu-open {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 10px 16px;
   border-top: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 #vaaniChat .vc-chat-input {
   flex: 1;
+  min-width: 0;
+  height: 40px;
+  margin: 0;
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,0.12);
   background: #12121d;
   color: #ffffff;
   font-family: 'Outfit', sans-serif;
   font-size: 14px;
-  padding: 10px 14px;
+  padding: 0 14px;
   outline: none;
+  box-sizing: border-box;
 }
 
 #vaaniChat .vc-chat-input:disabled {
@@ -799,6 +805,7 @@ body.vm-menu-open {
 #vaaniChat .vc-chat-send {
   width: 40px;
   height: 40px;
+  margin: 0;
   border-radius: 12px;
   border: 0;
   background: linear-gradient(135deg, #7c3aed, #6d28d9);
