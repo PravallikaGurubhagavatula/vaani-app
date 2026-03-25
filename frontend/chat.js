@@ -587,7 +587,7 @@
         users.push({
           uid: doc.id,
           username: data.username || "",
-          name: data.name || data.username || "",
+          name: data.name,
           photoURL: data.photoURL || ""
         });
       });
