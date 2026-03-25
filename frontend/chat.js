@@ -14,6 +14,7 @@
   var _unsubscribeIncomingRequests = null;
   var _unsubscribeConnections = null;   // realtime connections listener handle
   var _unsubscribeMessages = null;      // realtime messages listener handle
+  var _unsubscribeChatList = null;      // realtime chat list listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _activeChatId = null;          // chatId currently open
   var _activeChatUid = null;         // other user's uid in open chat
@@ -340,6 +341,7 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
+    _createChatListListener.call(window.vaaniChat);
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -383,6 +385,53 @@
       );
   }
 
+  function _createChatListListener() {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? window._vaaniCurrentUser.uid
+      : null;
+
+    if (!db || !currentUid) return;
+
+    if (_unsubscribeChatList) {
+      _unsubscribeChatList();
+      _unsubscribeChatList = null;
+    }
+
+    this._chatList = [];
+    var ctx = this;
+
+    _unsubscribeChatList = db
+      .collection(CHATS_COLLECTION)
+      .where("participants", "array-contains", currentUid)
+      .orderBy("updatedAt", "desc")
+      .onSnapshot(
+        function (snapshot) {
+          var nextList = [];
+          snapshot.forEach(function (doc) {
+            var data = doc.data() || {};
+            var participants = Array.isArray(data.participants) ? data.participants : [];
+            var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
+
+            nextList.push({
+              chatId: doc.id,
+              otherUid: otherUid,
+              lastMessage: data.lastMessage || "",
+              updatedAt: data.updatedAt || null
+            });
+          });
+
+          ctx._chatList = nextList;
+        },
+        function (err) {
+          console.error("[Vaani] chat list listener error:", err);
+          ctx._chatList = [];
+        }
+      );
+  }
+
   function _stopListening() {
     if (_unsubscribeDB) {
       _unsubscribeDB();
@@ -400,6 +449,10 @@
     if (_unsubscribeMessages) {
       _unsubscribeMessages();
       _unsubscribeMessages = null;
+    }
+    if (_unsubscribeChatList) {
+      _unsubscribeChatList();
+      _unsubscribeChatList = null;
     }
   }
 
@@ -1313,6 +1366,7 @@ function _openChatUI(chatId, otherProfile) {
    
   // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
+    _chatList: [],
     open: function () {
       var root = _root();
       if (root && !root.children.length) {
@@ -1357,6 +1411,7 @@ function _openChatUI(chatId, otherProfile) {
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
     _renderChat:   _renderChat,
+    _createChatListListener: _createChatListListener,
 
     loadUsers: function () {
       this.open();
