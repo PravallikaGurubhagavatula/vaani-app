@@ -473,6 +473,25 @@
     });
   }
 
+  async function _acceptConnectionRequest(db, requestId, currentUid, fromUid) {
+    if (!db || !requestId || !currentUid || !fromUid) return;
+
+    await _createConnection(db, currentUid, fromUid);
+
+    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({
+      status: "accepted"
+    });
+
+    incomingRequests = incomingRequests.filter(function (request) {
+      return request.id !== requestId;
+    });
+    _renderIncomingRequests(incomingRequests);
+
+    if (typeof window.showToast === "function") {
+      window.showToast("Connection accepted");
+    }
+  }
+
   function _renderIncomingRequests(requests) {
     var listEl = document.getElementById("vcRequestsList");
     var badgeEl = document.getElementById("vcRequestsBadge");
@@ -548,8 +567,27 @@
       panel.classList.toggle("vc-open");
     });
 
-    listEl.addEventListener("click", function () {
-      // Accept/Reject actions are intentionally not implemented yet.
+    listEl.addEventListener("click", async function (event) {
+      var acceptBtn = event.target.closest(".vc-accept-btn");
+      if (!acceptBtn) return;
+
+      var requestId = acceptBtn.getAttribute("data-request-id") || "";
+      var fromUid = acceptBtn.getAttribute("data-from-uid") || "";
+      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+        ? window._vaaniCurrentUser.uid
+        : "";
+
+      var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+        ? window.vaaniRouter.getDb()
+        : null;
+      if (!db || !requestId || !fromUid || !currentUid) return;
+
+      acceptBtn.disabled = true;
+      try {
+        await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
+      } catch (_) {
+        acceptBtn.disabled = false;
+      }
     });
   }
 
