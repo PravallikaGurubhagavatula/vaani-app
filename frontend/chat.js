@@ -361,7 +361,8 @@
 
   function _isSearchItemDisabled(state, isSelf) {
     if (isSelf) return true;
-    return state === "connected" || state === "requested";
+    // "requested" and "self" are disabled; connected/incoming/none are actionable
+    return state === "requested" || state === "self";
   }
 
   // ── Render search results into the dropdown ──────────────────────────────
@@ -391,12 +392,16 @@
       var state   = stateByUid && uid ? stateByUid[uid] || "none" : "none";
       var isSelf  = uid === currentUid;
 
-      var label = "Connect";
-      if (isSelf)                label = "(You)";
-      else if (state === "requested") label = "Requested";
-      else if (state === "connected") label = "Connected";
-
-      var disabled = _isSearchItemDisabled(state, isSelf);
+      // Map state → button label + disabled flag
+      var label;
+      var disabled;
+      switch (state) {
+        case "self":      label = "(You)";      disabled = true;  break;
+        case "connected": label = "Message";    disabled = false; break;
+        case "requested": label = "Requested";  disabled = true;  break;
+        case "incoming":  label = "Accept";     disabled = false; break;
+        default:          label = "Connect";    disabled = false; break;
+      }
 
       var itemEl = document.createElement("button");
       itemEl.className = "vc-search-item";
@@ -436,10 +441,14 @@
     var actionEl = dropdown.querySelector('.vc-search-action[data-uid="' + uid + '"]');
     if (!actionEl || !itemEl) return;
 
-    var label = "Connect";
-    if (state === "requested") label = "Requested";
-    if (state === "connected") label = "Connected";
-    if (state === "incoming")  label = "Respond";
+    var labelMap = {
+      "self":      "(You)",
+      "connected": "Message",
+      "requested": "Requested",
+      "incoming":  "Accept",
+      "none":      "Connect"
+    };
+    var label = labelMap[state] || "Connect";
 
     actionEl.textContent = label;
     actionEl.setAttribute("data-state", state || "none");
@@ -467,45 +476,94 @@
     return found;
   }
 
+  // ── Build button state for every user in search results ─────────────────
+  // Runs 3 parallel Firestore reads (connections, outgoing requests, incoming
+  // requests) then assigns one of five states to each uid:
+  //   "self"      → current user's own result     → "(You)"      disabled
+  //   "connected" → already in connections         → "Message"    enabled
+  //   "requested" → current user sent a request    → "Requested"  disabled
+  //   "incoming"  → other user sent a request      → "Accept"     enabled
+  //   "none"      → no relationship                → "Connect"    enabled
   async function _buildSearchItemStates(db, currentUid, users) {
     var stateByUid = {};
     if (!db || !currentUid || !users || !users.length) return stateByUid;
 
-    var targetUids = users.map(function (item) { return item.uid || ""; }).filter(Boolean);
+    var targetUids = users
+      .map(function (item) { return item.uid || ""; })
+      .filter(Boolean);
     if (!targetUids.length) return stateByUid;
 
-    targetUids.forEach(function (uid) { stateByUid[uid] = "none"; });
-
-    var connectionsSnap = await db
-      .collection(CONNECTIONS_COLLECTION)
-      .where("users", "array-contains", currentUid)
-      .limit(200)
-      .get();
-
-    var connectedSet = new Set();
-    connectionsSnap.forEach(function (doc) {
-      var data = doc.data() || {};
-      (data.users || []).forEach(function (uid) {
-        if (uid && uid !== currentUid) connectedSet.add(uid);
-      });
-    });
-
-    var outgoingSnap = await db
-      .collection(REQUESTS_COLLECTION)
-      .where("fromUid", "==", currentUid)
-      .where("status",  "==", "pending")
-      .limit(200)
-      .get();
-
-    var requestedSet = new Set();
-    outgoingSnap.forEach(function (doc) {
-      var data = doc.data() || {};
-      if (data.toUid) requestedSet.add(data.toUid);
-    });
-
+    // Default every uid to "none" so the map is always fully populated
     targetUids.forEach(function (uid) {
-      if (connectedSet.has(uid))  { stateByUid[uid] = "connected"; return; }
-      if (requestedSet.has(uid))  { stateByUid[uid] = "requested"; }
+      stateByUid[uid] = uid === currentUid ? "self" : "none";
+    });
+
+    // ── Run all three reads in parallel ───────────────────────────────────
+    var results = await Promise.all([
+
+      // 1. Connections where current user is a member
+      db.collection(CONNECTIONS_COLLECTION)
+        .where("users", "array-contains", currentUid)
+        .limit(200)
+        .get(),
+
+      // 2. Outgoing pending requests sent by current user
+      db.collection(REQUESTS_COLLECTION)
+        .where("fromUid", "==", currentUid)
+        .where("status",  "==", "pending")
+        .limit(200)
+        .get(),
+
+      // 3. Incoming pending requests sent TO current user
+      db.collection(REQUESTS_COLLECTION)
+        .where("toUid",  "==", currentUid)
+        .where("status", "==", "pending")
+        .limit(200)
+        .get()
+
+    ]).catch(function (err) {
+      console.error("[Vaani] _buildSearchItemStates fetch error:", err);
+      return [null, null, null];
+    });
+
+    var connectionsSnap = results[0];
+    var outgoingSnap    = results[1];
+    var incomingSnap    = results[2];
+
+    // Build lookup sets from Firestore results
+    var connectedSet = new Set();
+    if (connectionsSnap) {
+      connectionsSnap.forEach(function (doc) {
+        var data = doc.data() || {};
+        (data.users || []).forEach(function (uid) {
+          if (uid && uid !== currentUid) connectedSet.add(uid);
+        });
+      });
+    }
+
+    var requestedSet = new Set();   // current user sent request to these uids
+    if (outgoingSnap) {
+      outgoingSnap.forEach(function (doc) {
+        var data = doc.data() || {};
+        if (data.toUid) requestedSet.add(data.toUid);
+      });
+    }
+
+    var incomingSet = new Set();    // these uids sent a request to current user
+    if (incomingSnap) {
+      incomingSnap.forEach(function (doc) {
+        var data = doc.data() || {};
+        if (data.fromUid) incomingSet.add(data.fromUid);
+      });
+    }
+
+    // ── Assign final state — priority: self > connected > requested > incoming > none
+    targetUids.forEach(function (uid) {
+      if (uid === currentUid)       { stateByUid[uid] = "self";      return; }
+      if (connectedSet.has(uid))    { stateByUid[uid] = "connected"; return; }
+      if (requestedSet.has(uid))    { stateByUid[uid] = "requested"; return; }
+      if (incomingSet.has(uid))     { stateByUid[uid] = "incoming";  return; }
+      stateByUid[uid] = "none";
     });
 
     return stateByUid;
@@ -832,8 +890,39 @@
       if (!db) return;
 
       var currentState = btn.getAttribute("data-state") || "none";
-      if (currentState === "connected" || currentState === "requested") return;
 
+      // ── Route click by current state ────────────────────────────────────
+      if (currentState === "self" || currentState === "requested") {
+        // Non-actionable states — do nothing
+        return;
+      }
+
+      if (currentState === "connected") {
+        // "Message" button — navigate to chat with this user (stub for now)
+        if (typeof window.showToast === "function") {
+          window.showToast("Messaging coming soon");
+        }
+        return;
+      }
+
+      if (currentState === "incoming") {
+        // "Accept" button — find and accept the incoming request
+        var incomingReq = incomingRequests.find(function (r) {
+          return r.fromUid === targetUid;
+        });
+        if (incomingReq) {
+          btn.disabled = true;
+          try {
+            await _acceptConnectionRequest(db, incomingReq.id, currentUid, targetUid);
+            _setSearchItemState(searchDropdown, targetUid, "connected");
+          } catch (_) {
+            btn.disabled = false;
+          }
+        }
+        return;
+      }
+
+      // ── "none" state: send a new connection request ───────────────────
       var alreadyRequested = await _hasPendingConnectionRequest(db, currentUid, targetUid);
       if (alreadyRequested) {
         _setSearchItemState(searchDropdown, targetUid, "requested");
