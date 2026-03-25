@@ -1453,6 +1453,7 @@ function _openChatUI(chatId, otherProfile) {
     '</svg>';
 
   // ── Inject EXACT structure expected by chat-isolated.css ─────────────
+  var messagesContainerMarkup = '<div class="vc-chat-messages" id="messagesContainer"></div>';
   var chatMarkup =
     '<div class="vc-chat-view">' +
       '<div class="vc-chat-header">' +
@@ -1463,7 +1464,7 @@ function _openChatUI(chatId, otherProfile) {
           '<div class="vc-chat-hsub">Connected</div>' +
         '</div>' +
       '</div>' +
-      '<div class="vc-chat-messages" id="messagesContainer"></div>' +
+      messagesContainerMarkup +
       '<div class="vc-chat-input-bar">' +
         '<input' +
           ' id="messageInput"' +
