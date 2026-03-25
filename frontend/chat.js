@@ -362,30 +362,43 @@
     return state === "connected" || state === "requested";
   }
 
-  function _renderSearchResults(dropdown, users, stateByUid, currentUid) {
+  function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
     if (!dropdown) return;
 
-    if (!users || !users.length) {
+    console.log("RENDER INPUT LIST:", list);
+
+    if (!list || list.length === 0) {
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
       dropdown.classList.add("vc-open");
       return;
     }
 
-    var markup = users.map(function (item) {
-      var username = item.username || "user";
-      var name = item.name || username;
-      var photo = item.photoURL || "";
+    dropdown.innerHTML = "";
+
+    var visibleCount = 0;
+    list.forEach(function (data) {
+      var uid = data && data.uid ? data.uid : "";
+      if (uid && currentUid && uid === currentUid) return;
+
+      var username = (data && data.username) || "user";
+      var name = (data && data.name) || username;
+      var photo = (data && data.photoURL) || "";
       var initial = (username.charAt(0) || "U").toUpperCase();
-      var uid = item.uid || "";
       var state = stateByUid && uid ? stateByUid[uid] || "none" : "none";
-      var isSelf = uid && currentUid && uid === currentUid;
+      var isSelf = false;
       var label = "Connect";
       if (state === "requested") label = "Requested";
       if (state === "connected") label = "Connected";
       var disabled = _isSearchItemDisabled(state, isSelf);
 
-      return (
-        '<button class="vc-search-item" type="button" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '"' + (disabled ? " disabled" : "") + ">" +
+      var itemEl = document.createElement("button");
+      itemEl.className = "vc-search-item";
+      itemEl.type = "button";
+      itemEl.setAttribute("data-uid", uid);
+      itemEl.setAttribute("data-state", state);
+      if (disabled) itemEl.disabled = true;
+
+      itemEl.innerHTML =
         '<span class="vc-search-avatar">' +
         (photo
           ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
@@ -395,12 +408,15 @@
         '<span class="vc-search-username">@' + _esc(username) + "</span>" +
         '<span class="vc-search-name">' + _esc(name) + "</span>" +
         "</span>" +
-        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>" +
-        "</button>"
-      );
-    }).join("");
+        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>";
 
-    dropdown.innerHTML = markup;
+      dropdown.appendChild(itemEl);
+      visibleCount += 1;
+    });
+
+    if (visibleCount === 0) {
+      dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
+    }
     dropdown.classList.add("vc-open");
   }
 
