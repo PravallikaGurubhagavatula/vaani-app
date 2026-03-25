@@ -308,6 +308,8 @@
     var photo = user.photoURL || "";
     var initials = ((profile.username || "U").charAt(0) || "U").toUpperCase();
 
+    window.vaaniChat._currentView = "home";
+
     root.innerHTML =
       '<section class="vc-shell" aria-label="Chat screen">' +
       '<button class="vc-avatar-btn" id="vcProfileBtn" aria-label="Open profile menu" title="Profile menu">' +
@@ -325,7 +327,10 @@
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div>' +
       "</div>" +
       "</div>" +
+      '<div class="vc-home-view" id="vcHomeView">' +
       '<div class="vc-chat-list" id="vcChatList"></div>' +
+      '</div>' +
+      '<div class="vc-chat-view-wrap" id="vcChatViewContainer" style="display:none;"></div>' +
       "</section>";
 
     var profileBtn = document.getElementById("vcProfileBtn");
@@ -343,6 +348,22 @@
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _createChatListListener.call(window.vaaniChat);
     _renderChatList();
+    _setCurrentView("home");
+  }
+
+  function _setCurrentView(viewName) {
+    var homeView = document.getElementById("vcHomeView");
+    var chatView = document.getElementById("vcChatViewContainer");
+
+    if (!homeView || !chatView) return;
+
+    var isChat = viewName === "chat";
+    homeView.style.display = isChat ? "none" : "";
+    chatView.style.display = isChat ? "" : "none";
+
+    if (window.vaaniChat) {
+      window.vaaniChat._currentView = isChat ? "chat" : "home";
+    }
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -491,7 +512,10 @@
         var otherUid = chat.otherUid || "";
         if (!chatId || !otherUid) return;
 
-        _openChatUI(chatId, otherUid);
+        _openChatUI(chatId, {
+          uid: otherUid,
+          username: chat.username || "user"
+        });
       });
 
       listEl.appendChild(item);
@@ -1326,17 +1350,18 @@ async function _getOrCreateChat(otherUid) {
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
-  var root = _root();
-  if (!root) return;
+  var chatContainer = document.getElementById("vcChatViewContainer");
+  if (!chatContainer) return;
 
   _activeChatId  = chatId;
+  otherProfile = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
 
   var username = otherProfile.username || "user";
   var photo    = otherProfile.photoURL || "";
   var initial  = (username.charAt(0) || "U").toUpperCase();
 
-  root.innerHTML =
+  chatContainer.innerHTML =
     '<section class="vc-chat-view" aria-label="Chat">' +
 
     // ── Header ───────────────────────────────────────────────────────────
@@ -1372,7 +1397,9 @@ function _openChatUI(chatId, otherProfile) {
 
     '</section>';
 
-  // ── Back button → return to main chat shell ──────────────────────────
+  _setCurrentView("chat");
+
+  // ── Back button → return to home chat list ───────────────────────────
   var backBtn = document.getElementById("vcBackBtn");
   if (backBtn) {
     backBtn.addEventListener("click", function () {
@@ -1382,23 +1409,8 @@ function _openChatUI(chatId, otherProfile) {
       }
       _activeChatId  = null;
       _activeChatUid = null;
-
-      // Re-render the chat shell for the current user
-      var user    = window._vaaniCurrentUser;
-      var db      = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-        ? window.vaaniRouter.getDb()
-        : null;
-      if (!user || !db) { _renderLogin(); return; }
-
-      db.collection("users").doc(user.uid).get()
-        .then(function (doc) {
-          if (doc.exists && doc.data().username) {
-            _renderChat(user, doc.data());
-          } else {
-            _renderLogin();
-          }
-        })
-        .catch(function () { _renderLogin(); });
+      _setCurrentView("home");
+      _renderChatList();
     });
   }
 
@@ -1432,6 +1444,7 @@ function _openChatUI(chatId, otherProfile) {
    
   // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
+    _currentView: "home",
     _chatList: [],
     open: function () {
       var root = _root();
