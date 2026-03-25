@@ -377,7 +377,8 @@
     var visibleCount = 0;
     list.forEach(function (data) {
       var uid = data && data.uid ? data.uid : "";
-      if (!uid || (currentUid && uid === currentUid)) return;
+      if (!uid) return;
+//      if (!uid || (currentUid && uid === currentUid)) return;
 
       var username = (data && data.username) || "";
       if (!username) return;
@@ -385,7 +386,8 @@
       var photo = (data && data.photoURL) || "";
       var initial = (username.charAt(0) || "U").toUpperCase();
       var state = stateByUid && uid ? stateByUid[uid] || "none" : "none";
-      var isSelf = false;
+      var isSelf = uid === currentUid;
+//      var isSelf = false;
       var label = "Connect";
       if (state === "requested") label = "Requested";
       if (state === "connected") label = "Connected";
