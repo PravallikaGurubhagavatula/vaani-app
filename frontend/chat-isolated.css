@@ -740,6 +740,37 @@ body.vm-menu-open {
   text-align: center;
 }
 
+#vaaniChat .vc-msg-row {
+  display: flex;
+  width: 100%;
+}
+
+#vaaniChat .vc-msg-own {
+  justify-content: flex-end;
+}
+
+#vaaniChat .vc-msg-other {
+  justify-content: flex-start;
+}
+
+#vaaniChat .vc-msg-bubble {
+  max-width: 78%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  line-height: 1.35;
+  font-size: 14px;
+  word-break: break-word;
+  background: #1b1b2b;
+  color: #ececff;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+#vaaniChat .vc-msg-own .vc-msg-bubble {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  border-color: transparent;
+  color: #fff;
+}
+
 #vaaniChat .vc-chat-input-bar {
   display: flex;
   align-items: center;
