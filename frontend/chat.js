@@ -12,6 +12,7 @@
   var _searchRequestSeq = 0;
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
+  var incomingRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
   var CONNECTIONS_COLLECTION = "connections";
@@ -330,7 +331,7 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
-    _subscribeIncomingRequests(user.uid);
+    _fetchIncomingRequests(user.uid);
   }
 
   function _stopListening() {
@@ -472,25 +473,6 @@
     });
   }
 
-  async function _acceptRequest(requestId, fromUid, toUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb()
-      : null;
-    if (!db) return;
-    await _createConnection(db, fromUid, toUid);
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "accepted" });
-    if (typeof window.showToast === "function") window.showToast("Connection accepted");
-  }
-
-  async function _rejectRequest(requestId) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb()
-      : null;
-    if (!db) return;
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "rejected" });
-    if (typeof window.showToast === "function") window.showToast("Request rejected");
-  }
-
   function _renderIncomingRequests(requests) {
     var listEl = document.getElementById("vcRequestsList");
     var badgeEl = document.getElementById("vcRequestsBadge");
@@ -508,7 +490,8 @@
     listEl.innerHTML = requests.map(function (request) {
       return (
         '<div class="vc-request-item">' +
-        '<div class="vc-request-copy">@' + _esc(request.fromUsername || "user") + ' wants to connect</div>' +
+        '<div class="vc-request-copy">@' + _esc(request.fromUsername || "user") + "</div>" +
+        '<div class="vc-request-copy">' + _esc(request.fromName || "") + "</div>" +
         '<div class="vc-request-actions">' +
         '<button type="button" class="vc-mini-btn vc-accept-btn" data-request-id="' + _esc(request.id) + '" data-from-uid="' + _esc(request.fromUid) + '" data-to-uid="' + _esc(request.toUid) + '">Accept</button>' +
         '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(request.id) + '">Reject</button>' +
@@ -518,33 +501,41 @@
     }).join("");
   }
 
-  function _subscribeIncomingRequests(currentUid) {
+  async function _fetchIncomingRequests(currentUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
       : null;
     if (!db || !currentUid) return;
 
-    _unsubscribeIncomingRequests = db
+    try {
+      var snapshot = await db
       .collection(REQUESTS_COLLECTION)
       .where("toUid", "==", currentUid)
       .where("status", "==", "pending")
       .orderBy("createdAt", "desc")
-      .onSnapshot(async function (snapshot) {
-        var pending = [];
-        for (var i = 0; i < snapshot.docs.length; i += 1) {
-          var doc = snapshot.docs[i];
-          var data = doc.data() || {};
-          var fromProfile = await db.collection("users").doc(data.fromUid).get();
-          var fromData = fromProfile.exists ? fromProfile.data() : {};
-          pending.push({
-            id: doc.id,
-            fromUid: data.fromUid || "",
-            toUid: data.toUid || "",
-            fromUsername: fromData.username || "user"
-          });
-        }
-        _renderIncomingRequests(pending);
-      });
+      .get();
+
+      var pending = [];
+      for (var i = 0; i < snapshot.docs.length; i += 1) {
+        var doc = snapshot.docs[i];
+        var data = doc.data() || {};
+        var fromProfile = await db.collection("users").doc(data.fromUid).get();
+        var fromData = fromProfile.exists ? fromProfile.data() : {};
+        pending.push({
+          id: doc.id,
+          fromUid: data.fromUid || "",
+          toUid: data.toUid || "",
+          fromUsername: fromData.username || "user",
+          fromName: fromData.name || ""
+        });
+      }
+
+      incomingRequests = pending;
+      _renderIncomingRequests(incomingRequests);
+    } catch (_) {
+      incomingRequests = [];
+      _renderIncomingRequests(incomingRequests);
+    }
   }
 
   function _bindIncomingRequestActions() {
@@ -557,21 +548,8 @@
       panel.classList.toggle("vc-open");
     });
 
-    listEl.addEventListener("click", async function (event) {
-      var acceptBtn = event.target.closest(".vc-accept-btn");
-      if (acceptBtn) {
-        await _acceptRequest(
-          acceptBtn.getAttribute("data-request-id"),
-          acceptBtn.getAttribute("data-from-uid"),
-          acceptBtn.getAttribute("data-to-uid")
-        );
-        return;
-      }
-
-      var rejectBtn = event.target.closest(".vc-reject-btn");
-      if (rejectBtn) {
-        await _rejectRequest(rejectBtn.getAttribute("data-request-id"));
-      }
+    listEl.addEventListener("click", function () {
+      // Accept/Reject actions are intentionally not implemented yet.
     });
   }
 
