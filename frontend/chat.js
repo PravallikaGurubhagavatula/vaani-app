@@ -1,5 +1,5 @@
 /* ================================================================
-   Vaani — chat.js  v4.0
+   Vaani — chat.js  v4.1
    Minimal chat shell with profile sidebar + auth/profile gating.
    ================================================================ */
 
@@ -9,7 +9,7 @@
   var CHAT_ROOT_ID = "vaaniChat";
   var _unsubscribeDB = null;
   var _searchDebounceTimer = null;
-  var _searchRequestSeq = 0;
+  var _latestSearchQuery = "";          // replaces _searchRequestSeq — stale-check by query string
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
   var incomingRequests = [];
@@ -345,12 +345,14 @@
     }
   }
 
+  // Clears debounce timer, resets the latest query string, and removes the
+  // outside-click listener. Safe to call from any screen transition.
   function _clearSearchState() {
     if (_searchDebounceTimer) {
       clearTimeout(_searchDebounceTimer);
       _searchDebounceTimer = null;
     }
-    _searchRequestSeq += 1;
+    _latestSearchQuery = "";
     if (_outsideClickHandler) {
       document.removeEventListener("mousedown", _outsideClickHandler);
       _outsideClickHandler = null;
@@ -362,9 +364,11 @@
     return state === "connected" || state === "requested";
   }
 
+  // ── Render search results into the dropdown ──────────────────────────────
   function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
     if (!dropdown) return;
 
+    dropdown.innerHTML = "";
 
     if (!list || list.length === 0) {
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
@@ -372,31 +376,32 @@
       return;
     }
 
-    dropdown.innerHTML = "";
-
     var visibleCount = 0;
+
     list.forEach(function (data) {
       var uid = data && data.uid ? data.uid : "";
       if (!uid) return;
-//      if (!uid || (currentUid && uid === currentUid)) return;
 
       var username = (data && data.username) || "";
       if (!username) return;
-      var name = (data && data.name) || username;
-      var photo = (data && data.photoURL) || "";
+
+      var name    = (data && data.name)     || username;
+      var photo   = (data && data.photoURL) || "";
       var initial = (username.charAt(0) || "U").toUpperCase();
-      var state = stateByUid && uid ? stateByUid[uid] || "none" : "none";
-      var isSelf = uid === currentUid;
-//      var isSelf = false;
+      var state   = stateByUid && uid ? stateByUid[uid] || "none" : "none";
+      var isSelf  = uid === currentUid;
+
       var label = "Connect";
-      if (state === "requested") label = "Requested";
-      if (state === "connected") label = "Connected";
+      if (isSelf)                label = "(You)";
+      else if (state === "requested") label = "Requested";
+      else if (state === "connected") label = "Connected";
+
       var disabled = _isSearchItemDisabled(state, isSelf);
 
       var itemEl = document.createElement("button");
       itemEl.className = "vc-search-item";
-      itemEl.type = "button";
-      itemEl.setAttribute("data-uid", uid);
+      itemEl.type      = "button";
+      itemEl.setAttribute("data-uid",   uid);
       itemEl.setAttribute("data-state", state);
       if (disabled) itemEl.disabled = true;
 
@@ -408,9 +413,11 @@
         "</span>" +
         '<span class="vc-search-meta">' +
         '<span class="vc-search-username">@' + _esc(username) + "</span>" +
-        '<span class="vc-search-name">' + _esc(name) + "</span>" +
+        '<span class="vc-search-name">'     + _esc(name)     + "</span>" +
         "</span>" +
-        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>";
+        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' +
+        _esc(label) +
+        "</span>";
 
       dropdown.appendChild(itemEl);
       visibleCount += 1;
@@ -419,21 +426,25 @@
     if (visibleCount === 0) {
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
     }
+
     dropdown.classList.add("vc-open");
   }
 
   function _setSearchItemState(dropdown, uid, state) {
     if (!dropdown || !uid) return;
-    var itemEl = dropdown.querySelector('.vc-search-item[data-uid="' + uid + '"]');
+    var itemEl   = dropdown.querySelector('.vc-search-item[data-uid="'   + uid + '"]');
     var actionEl = dropdown.querySelector('.vc-search-action[data-uid="' + uid + '"]');
     if (!actionEl || !itemEl) return;
+
     var label = "Connect";
     if (state === "requested") label = "Requested";
     if (state === "connected") label = "Connected";
-    if (state === "incoming") label = "Respond";
+    if (state === "incoming")  label = "Respond";
+
     actionEl.textContent = label;
     actionEl.setAttribute("data-state", state || "none");
-    itemEl.setAttribute("data-state", state || "none");
+    itemEl.setAttribute("data-state",   state || "none");
+
     var isSelf = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
       ? window._vaaniCurrentUser.uid === uid
       : false;
@@ -449,51 +460,21 @@
 
     var found = false;
     snap.forEach(function (doc) {
-      var data = doc.data() || {};
+      var data  = doc.data() || {};
       var users = data.users || [];
       if (users.indexOf(targetUid) !== -1) found = true;
     });
     return found;
   }
 
-  async function _getRequestState(db, currentUid, targetUid) {
-    if (await _isConnected(db, currentUid, targetUid)) return "connected";
-
-    var outgoing = await db
-      .collection(REQUESTS_COLLECTION)
-      .where("fromUid", "==", currentUid)
-      .where("toUid", "==", targetUid)
-      .where("status", "==", "pending")
-      .limit(1)
-      .get();
-    if (!outgoing.empty) return "requested";
-
-    var incoming = await db
-      .collection(REQUESTS_COLLECTION)
-      .where("fromUid", "==", targetUid)
-      .where("toUid", "==", currentUid)
-      .where("status", "==", "pending")
-      .limit(1)
-      .get();
-    if (!incoming.empty) return "incoming";
-
-    return "none";
-  }
-
   async function _buildSearchItemStates(db, currentUid, users) {
     var stateByUid = {};
     if (!db || !currentUid || !users || !users.length) return stateByUid;
 
-    var targetUids = users
-      .map(function (item) {
-        return item.uid || "";
-      })
-      .filter(Boolean);
+    var targetUids = users.map(function (item) { return item.uid || ""; }).filter(Boolean);
     if (!targetUids.length) return stateByUid;
 
-    targetUids.forEach(function (uid) {
-      stateByUid[uid] = "none";
-    });
+    targetUids.forEach(function (uid) { stateByUid[uid] = "none"; });
 
     var connectionsSnap = await db
       .collection(CONNECTIONS_COLLECTION)
@@ -504,8 +485,7 @@
     var connectedSet = new Set();
     connectionsSnap.forEach(function (doc) {
       var data = doc.data() || {};
-      var usersInConnection = data.users || [];
-      usersInConnection.forEach(function (uid) {
+      (data.users || []).forEach(function (uid) {
         if (uid && uid !== currentUid) connectedSet.add(uid);
       });
     });
@@ -513,7 +493,7 @@
     var outgoingSnap = await db
       .collection(REQUESTS_COLLECTION)
       .where("fromUid", "==", currentUid)
-      .where("status", "==", "pending")
+      .where("status",  "==", "pending")
       .limit(200)
       .get();
 
@@ -524,13 +504,8 @@
     });
 
     targetUids.forEach(function (uid) {
-      if (connectedSet.has(uid)) {
-        stateByUid[uid] = "connected";
-        return;
-      }
-      if (requestedSet.has(uid)) {
-        stateByUid[uid] = "requested";
-      }
+      if (connectedSet.has(uid))  { stateByUid[uid] = "connected"; return; }
+      if (requestedSet.has(uid))  { stateByUid[uid] = "requested"; }
     });
 
     return stateByUid;
@@ -538,9 +513,9 @@
 
   async function _sendConnectionRequest(db, fromUid, toUid) {
     await db.collection(REQUESTS_COLLECTION).add({
-      fromUid: fromUid,
-      toUid: toUid,
-      status: "pending",
+      fromUid:   fromUid,
+      toUid:     toUid,
+      status:    "pending",
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -549,8 +524,8 @@
     var existing = await db
       .collection(REQUESTS_COLLECTION)
       .where("fromUid", "==", fromUid)
-      .where("toUid", "==", toUid)
-      .where("status", "==", "pending")
+      .where("toUid",   "==", toUid)
+      .where("status",  "==", "pending")
       .limit(1)
       .get();
     return !existing.empty;
@@ -560,7 +535,7 @@
     var alreadyConnected = await _isConnected(db, uidA, uidB);
     if (alreadyConnected) return;
     await db.collection(CONNECTIONS_COLLECTION).add({
-      users: [uidA, uidB],
+      users:     [uidA, uidB],
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
@@ -569,40 +544,27 @@
     if (!db || !requestId || !currentUid || !fromUid) return;
 
     await _createConnection(db, currentUid, fromUid);
+    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "accepted" });
 
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({
-      status: "accepted"
-    });
-
-    incomingRequests = incomingRequests.filter(function (request) {
-      return request.id !== requestId;
-    });
+    incomingRequests = incomingRequests.filter(function (r) { return r.id !== requestId; });
     _renderIncomingRequests(incomingRequests);
 
-    if (typeof window.showToast === "function") {
-      window.showToast("Connection accepted");
-    }
+    if (typeof window.showToast === "function") window.showToast("Connection accepted");
   }
 
   async function _rejectConnectionRequest(db, requestId) {
     if (!db || !requestId) return;
 
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({
-      status: "rejected"
-    });
+    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "rejected" });
 
-    incomingRequests = incomingRequests.filter(function (request) {
-      return request.id !== requestId;
-    });
+    incomingRequests = incomingRequests.filter(function (r) { return r.id !== requestId; });
     _renderIncomingRequests(incomingRequests);
 
-    if (typeof window.showToast === "function") {
-      window.showToast("Request rejected");
-    }
+    if (typeof window.showToast === "function") window.showToast("Request rejected");
   }
 
   function _renderIncomingRequests(requests) {
-    var listEl = document.getElementById("vcRequestsList");
+    var listEl  = document.getElementById("vcRequestsList");
     var badgeEl = document.getElementById("vcRequestsBadge");
     if (!listEl || !badgeEl) return;
 
@@ -619,10 +581,10 @@
       return (
         '<div class="vc-request-item">' +
         '<div class="vc-request-copy">@' + _esc(request.fromUsername || "user") + "</div>" +
-        '<div class="vc-request-copy">' + _esc(request.fromName || "") + "</div>" +
+        '<div class="vc-request-copy">'  + _esc(request.fromName     || "")     + "</div>" +
         '<div class="vc-request-actions">' +
-        '<button type="button" class="vc-mini-btn vc-accept-btn" data-request-id="' + _esc(request.id) + '" data-from-uid="' + _esc(request.fromUid) + '" data-to-uid="' + _esc(request.toUid) + '">Accept</button>' +
-        '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(request.id) + '">Reject</button>' +
+        '<button type="button" class="vc-mini-btn vc-accept-btn" data-request-id="' + _esc(request.id)      + '" data-from-uid="' + _esc(request.fromUid) + '" data-to-uid="' + _esc(request.toUid) + '">Accept</button>' +
+        '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(request.id)      + '">Reject</button>' +
         "</div>" +
         "</div>"
       );
@@ -637,24 +599,24 @@
 
     try {
       var snapshot = await db
-      .collection(REQUESTS_COLLECTION)
-      .where("toUid", "==", currentUid)
-      .where("status", "==", "pending")
-      .orderBy("createdAt", "desc")
-      .get();
+        .collection(REQUESTS_COLLECTION)
+        .where("toUid",  "==", currentUid)
+        .where("status", "==", "pending")
+        .orderBy("createdAt", "desc")
+        .get();
 
       var pending = [];
       for (var i = 0; i < snapshot.docs.length; i += 1) {
-        var doc = snapshot.docs[i];
-        var data = doc.data() || {};
+        var doc         = snapshot.docs[i];
+        var data        = doc.data() || {};
         var fromProfile = await db.collection("users").doc(data.fromUid).get();
-        var fromData = fromProfile.exists ? fromProfile.data() : {};
+        var fromData    = fromProfile.exists ? fromProfile.data() : {};
         pending.push({
-          id: doc.id,
-          fromUid: data.fromUid || "",
-          toUid: data.toUid || "",
+          id:           doc.id,
+          fromUid:      data.fromUid     || "",
+          toUid:        data.toUid       || "",
           fromUsername: fromData.username || "user",
-          fromName: fromData.name || ""
+          fromName:     fromData.name     || ""
         });
       }
 
@@ -667,9 +629,9 @@
   }
 
   function _bindIncomingRequestActions() {
-    var listEl = document.getElementById("vcRequestsList");
+    var listEl    = document.getElementById("vcRequestsList");
     var toggleBtn = document.getElementById("vcRequestsToggle");
-    var panel = document.getElementById("vcRequestsPanel");
+    var panel     = document.getElementById("vcRequestsPanel");
     if (!listEl || !toggleBtn || !panel) return;
 
     toggleBtn.addEventListener("click", function () {
@@ -681,9 +643,9 @@
       var rejectBtn = event.target.closest(".vc-reject-btn");
       if (!acceptBtn && !rejectBtn) return;
 
-      var actionBtn = acceptBtn || rejectBtn;
-      var requestId = actionBtn.getAttribute("data-request-id") || "";
-      var fromUid = actionBtn.getAttribute("data-from-uid") || "";
+      var actionBtn  = acceptBtn || rejectBtn;
+      var requestId  = actionBtn.getAttribute("data-request-id") || "";
+      var fromUid    = actionBtn.getAttribute("data-from-uid")   || "";
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
         ? window._vaaniCurrentUser.uid
         : "";
@@ -707,97 +669,100 @@
     });
   }
 
-  async function _fetchUsersByPrefix(value, requestId, dropdown) {
+  // ── Core search fetch ────────────────────────────────────────────────────
+  // Stores the query string it was called with, then after the await checks
+  // whether a newer keystroke has already replaced it.  No integer counter
+  // needed — the query string itself is the identity token.
+  async function _fetchUsersByPrefix(query, dropdown) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
       : null;
-
     if (!db || !dropdown) return;
 
     try {
-      var normalizedQuery = (value || "").trim().toLowerCase();
-
       var snapshot = await db
         .collection("users")
         .orderBy("username")
-        .startAt(normalizedQuery)
-        .endAt(normalizedQuery + "\uf8ff")
+        .startAt(query)
+        .endAt(query + "\uf8ff")
         .limit(10)
         .get();
 
-      if (requestId !== _searchRequestSeq) return;
+      // Discard if the user has already typed something different
+      if (query !== _latestSearchQuery) return;
 
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
         ? window._vaaniCurrentUser.uid
         : "";
+
       var list = [];
       snapshot.forEach(function (doc) {
         var data = doc.data();
-        if (!data) return;
-
-        var uid = doc.id;
-//        if (!uid || uid === currentUid) return;
-        if (!uid) return;
-        if (!data.username) return;
-
+        if (!data || !data.username) return;
         list.push({
-          uid: uid,
+          uid:      doc.id,
           username: data.username,
-          name: data.name,
+          name:     data.name     || "",
           photoURL: data.photoURL || ""
         });
       });
 
-      console.log("Search results:", list);
+      // Second stale-check: _buildSearchItemStates is also async
+      if (query !== _latestSearchQuery) return;
 
       var stateByUid = await _buildSearchItemStates(db, currentUid, list);
+
+      // Final stale-check before touching the DOM
+      if (query !== _latestSearchQuery) return;
+
       _renderSearchResults(dropdown, list, stateByUid, currentUid);
-    } catch (_) {
-      if (requestId !== _searchRequestSeq) return;
-      dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
+
+    } catch (err) {
+      console.error("[Vaani] search error:", err);
+      if (query !== _latestSearchQuery) return;
+      dropdown.innerHTML = '<div class="vc-search-empty">Search failed. Try again.</div>';
       dropdown.classList.add("vc-open");
     }
   }
 
+  // ── Bind search input + dropdown ─────────────────────────────────────────
   function _bindUserSearch() {
-    var searchWrap = document.getElementById("vcSearchWrap");
-    var searchInput = document.getElementById("vcUserSearchInput");
+    var searchWrap     = document.getElementById("vcSearchWrap");
+    var searchInput    = document.getElementById("vcUserSearchInput");
     var searchDropdown = document.getElementById("vcSearchDropdown");
-
     if (!searchWrap || !searchInput || !searchDropdown) return;
 
     function closeDropdown() {
       searchDropdown.classList.remove("vc-open");
     }
 
-    function handleInput() {
+    searchInput.addEventListener("input", function () {
       var query = (searchInput.value || "").trim().toLowerCase();
 
-      if (_searchDebounceTimer) {
-        clearTimeout(_searchDebounceTimer);
-      }
+      clearTimeout(_searchDebounceTimer);
 
       if (!query) {
-        _searchRequestSeq += 1;
+        _latestSearchQuery = "";
         searchDropdown.innerHTML = "";
         closeDropdown();
         return;
       }
 
-      _searchDebounceTimer = setTimeout(function () {
-        _searchRequestSeq += 1;
-        var requestId = _searchRequestSeq;
-        _fetchUsersByPrefix(query, requestId, searchDropdown);
-      }, 300);
-    }
+      // Update the "current" query immediately so any in-flight fetch knows
+      // it is now stale.
+      _latestSearchQuery = query;
 
-    searchInput.addEventListener("input", handleInput);
+      _searchDebounceTimer = setTimeout(function () {
+        _fetchUsersByPrefix(query, searchDropdown);
+      }, 300);
+    });
 
     searchDropdown.addEventListener("click", async function (event) {
       var btn = event.target.closest(".vc-search-item");
       if (!btn) return;
 
       closeDropdown();
+
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
         ? window._vaaniCurrentUser.uid
         : "";
@@ -808,6 +773,7 @@
         ? window.vaaniRouter.getDb()
         : null;
       if (!db) return;
+
       var currentState = btn.getAttribute("data-state") || "none";
       if (currentState === "connected" || currentState === "requested") return;
 
@@ -837,6 +803,7 @@
     document.addEventListener("mousedown", _outsideClickHandler);
   }
 
+  // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
     open: function () {
       var root = _root();
@@ -879,14 +846,14 @@
       _removeMenu();
     },
 
-    _renderLogin: _renderLogin,
+    _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
-    _renderChat: _renderChat,
+    _renderChat:   _renderChat,
 
     loadUsers: function () {
       this.open();
     }
   };
 
-  console.log("[Vaani] chat.js v4.0 loaded ✓");
+  console.log("[Vaani] chat.js v4.1 loaded ✓");
 })();
