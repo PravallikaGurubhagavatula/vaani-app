@@ -736,7 +736,8 @@
         if (!data) return;
 
         var uid = doc.id;
-        if (!uid || uid === currentUid) return;
+//        if (!uid || uid === currentUid) return;
+        if (!uid) return;
         if (!data.username) return;
 
         list.push({
