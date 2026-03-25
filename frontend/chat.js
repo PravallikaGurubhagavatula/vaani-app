@@ -697,10 +697,11 @@
     if (!db || !dropdown) return;
 
     try {
+      var normalizedQuery = (value || "").toLowerCase();
       var snapshot = await db
         .collection("users")
-        .where("username", ">=", value)
-        .where("username", "<=", value + "\uf8ff")
+        .where("username", ">=", normalizedQuery)
+        .where("username", "<=", normalizedQuery + "\uf8ff")
         .limit(10)
         .get();
 
