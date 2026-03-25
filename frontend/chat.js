@@ -12,6 +12,8 @@
   var _latestSearchQuery = "";          // replaces _searchRequestSeq — stale-check by query string
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
+  var _unsubscribeConnections = null;   // realtime connections listener handle
+  var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var incomingRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
@@ -331,7 +333,49 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
-    _fetchIncomingRequests(user.uid);
+    _fetchConnections(user.uid);       // start realtime connections Set
+    _fetchIncomingRequests(user.uid);  // start realtime requests listener
+  }
+
+  // ── Realtime connections listener ─────────────────────────────────────────
+  // Attaches once from _renderChat. Keeps _connectedUidSet in sync with
+  // the "connections" collection so search results never need an extra
+  // Firestore read to determine connected state.
+  function _fetchConnections(currentUid) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+    if (!db || !currentUid) return;
+
+    // Tear down any stale listener first
+    if (_unsubscribeConnections) {
+      _unsubscribeConnections();
+      _unsubscribeConnections = null;
+    }
+    _connectedUidSet.clear();
+
+    _unsubscribeConnections = db
+      .collection(CONNECTIONS_COLLECTION)
+      .where("users", "array-contains", currentUid)
+      .onSnapshot(
+        function (snapshot) {
+          // Rebuild the Set from scratch on every snapshot — avoids stale entries
+          _connectedUidSet.clear();
+          snapshot.forEach(function (doc) {
+            var data = doc.data() || {};
+            (data.users || []).forEach(function (uid) {
+              if (uid && uid !== currentUid) {
+                _connectedUidSet.add(uid);
+              }
+            });
+          });
+          console.log("[Vaani] connections updated — " + _connectedUidSet.size + " connected");
+        },
+        function (err) {
+          console.error("[Vaani] connections listener error:", err);
+          _connectedUidSet.clear();
+        }
+      );
   }
 
   function _stopListening() {
@@ -342,6 +386,11 @@
     if (_unsubscribeIncomingRequests) {
       _unsubscribeIncomingRequests();
       _unsubscribeIncomingRequests = null;
+    }
+    if (_unsubscribeConnections) {
+      _unsubscribeConnections();
+      _unsubscribeConnections = null;
+      _connectedUidSet.clear();
     }
   }
 
@@ -461,6 +510,11 @@
   }
 
   async function _isConnected(db, currentUid, targetUid) {
+    // Fast path: check in-memory Set maintained by _fetchConnections listener
+    if (_connectedUidSet.has(targetUid)) return true;
+
+    // Slow path: fall back to Firestore if listener hasn't fired yet
+    // (e.g. called very early on page load before onSnapshot completes)
     var snap = await db
       .collection(CONNECTIONS_COLLECTION)
       .where("users", "array-contains", currentUid)
@@ -498,23 +552,21 @@
       stateByUid[uid] = uid === currentUid ? "self" : "none";
     });
 
-    // ── Run all three reads in parallel ───────────────────────────────────
+    // ── connections: use in-memory Set (no Firestore read needed) ───────────
+    // _connectedUidSet is maintained by _fetchConnections onSnapshot listener.
+    // Outgoing + incoming requests still need live Firestore reads because
+    // they change independently and are not cached separately.
+
     var results = await Promise.all([
 
-      // 1. Connections where current user is a member
-      db.collection(CONNECTIONS_COLLECTION)
-        .where("users", "array-contains", currentUid)
-        .limit(200)
-        .get(),
-
-      // 2. Outgoing pending requests sent by current user
+      // Outgoing pending requests sent by current user
       db.collection(REQUESTS_COLLECTION)
         .where("fromUid", "==", currentUid)
         .where("status",  "==", "pending")
         .limit(200)
         .get(),
 
-      // 3. Incoming pending requests sent TO current user
+      // Incoming pending requests sent TO current user
       db.collection(REQUESTS_COLLECTION)
         .where("toUid",  "==", currentUid)
         .where("status", "==", "pending")
@@ -523,23 +575,11 @@
 
     ]).catch(function (err) {
       console.error("[Vaani] _buildSearchItemStates fetch error:", err);
-      return [null, null, null];
+      return [null, null];
     });
 
-    var connectionsSnap = results[0];
-    var outgoingSnap    = results[1];
-    var incomingSnap    = results[2];
-
-    // Build lookup sets from Firestore results
-    var connectedSet = new Set();
-    if (connectionsSnap) {
-      connectionsSnap.forEach(function (doc) {
-        var data = doc.data() || {};
-        (data.users || []).forEach(function (uid) {
-          if (uid && uid !== currentUid) connectedSet.add(uid);
-        });
-      });
-    }
+    var outgoingSnap = results[0];
+    var incomingSnap = results[1];
 
     var requestedSet = new Set();   // current user sent request to these uids
     if (outgoingSnap) {
@@ -559,10 +599,10 @@
 
     // ── Assign final state — priority: self > connected > requested > incoming > none
     targetUids.forEach(function (uid) {
-      if (uid === currentUid)       { stateByUid[uid] = "self";      return; }
-      if (connectedSet.has(uid))    { stateByUid[uid] = "connected"; return; }
-      if (requestedSet.has(uid))    { stateByUid[uid] = "requested"; return; }
-      if (incomingSet.has(uid))     { stateByUid[uid] = "incoming";  return; }
+      if (uid === currentUid)            { stateByUid[uid] = "self";      return; }
+      if (_connectedUidSet.has(uid))     { stateByUid[uid] = "connected"; return; }
+      if (requestedSet.has(uid))         { stateByUid[uid] = "requested"; return; }
+      if (incomingSet.has(uid))          { stateByUid[uid] = "incoming";  return; }
       stateByUid[uid] = "none";
     });
 
