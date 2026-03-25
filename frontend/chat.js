@@ -13,6 +13,7 @@
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
   var _unsubscribeConnections = null;   // realtime connections listener handle
+  var _unsubscribeMessages = null;      // realtime messages listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _activeChatId = null;          // chatId currently open
   var _activeChatUid = null;         // other user's uid in open chat
@@ -395,6 +396,10 @@
       _unsubscribeConnections();
       _unsubscribeConnections = null;
       _connectedUidSet.clear();
+    }
+    if (_unsubscribeMessages) {
+      _unsubscribeMessages();
+      _unsubscribeMessages = null;
     }
   }
 
@@ -1045,6 +1050,111 @@ async function _fetchOtherProfile(db, uid) {
   return {};
 }
 
+async function _sendMessage() {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+  var currentUser = window._vaaniCurrentUser || null;
+  var chatId = _activeChatId;
+  var inputEl = document.getElementById("vcChatInput");
+
+  if (!db || !currentUser || !chatId || !inputEl) return;
+
+  var message = String(inputEl.value || "").trim();
+  if (!message) return;
+
+  var sendBtn = document.getElementById("vcChatSend");
+
+  try {
+    inputEl.disabled = true;
+    if (sendBtn) sendBtn.disabled = true;
+
+    await db
+      .collection(CHATS_COLLECTION)
+      .doc(chatId)
+      .collection("messages")
+      .add({
+        senderId: currentUser.uid,
+        text: message,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+    await db.collection(CHATS_COLLECTION).doc(chatId).update({
+      lastMessage: message,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    inputEl.value = "";
+  } catch (err) {
+    console.error("[Vaani] Failed to send message:", err);
+  } finally {
+    inputEl.disabled = false;
+    if (sendBtn) sendBtn.disabled = !String(inputEl.value || "").trim();
+    inputEl.focus();
+  }
+}
+
+function _renderMessages(messages) {
+  var container = document.getElementById("vcChatMessages");
+  if (!container) return;
+
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? window._vaaniCurrentUser.uid
+    : null;
+
+  container.innerHTML = "";
+
+  if (!messages || messages.length === 0) {
+    container.innerHTML = '<div class="vc-chat-empty">No messages yet. Say hello 👋</div>';
+    return;
+  }
+
+  messages.forEach(function (msg) {
+    var isOwn = !!currentUid && msg.senderId === currentUid;
+    var row = document.createElement("div");
+    row.className = "vc-msg-row " + (isOwn ? "vc-msg-own" : "vc-msg-other");
+
+    var bubble = document.createElement("div");
+    bubble.className = "vc-msg-bubble";
+    bubble.textContent = String(msg.text || "");
+
+    row.appendChild(bubble);
+    container.appendChild(row);
+  });
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function _listenToMessages(chatId) {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+  if (!db || !chatId) return;
+
+  if (_unsubscribeMessages) {
+    _unsubscribeMessages();
+    _unsubscribeMessages = null;
+  }
+
+  _unsubscribeMessages = db
+    .collection(CHATS_COLLECTION)
+    .doc(chatId)
+    .collection("messages")
+    .orderBy("createdAt", "asc")
+    .onSnapshot(
+      function (snapshot) {
+        var messages = [];
+        snapshot.forEach(function (doc) {
+          messages.push(doc.data() || {});
+        });
+        _renderMessages(messages);
+      },
+      function (err) {
+        console.error("[Vaani] messages listener error:", err);
+      }
+    );
+}
+
 // ── Get or create a chat document between current user and otherUid ───────
 async function _getOrCreateChat(otherUid) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
@@ -1122,15 +1232,15 @@ function _openChatUI(chatId, otherProfile) {
     '</div>' +
     '</div>' +
 
-    // ── Messages area (placeholder for Step 2) ───────────────────────────
+    // ── Messages area ─────────────────────────────────────────────────────
     '<div class="vc-chat-messages" id="vcChatMessages">' +
-    '<div class="vc-chat-empty">Messages coming soon…</div>' +
+    '<div class="vc-chat-empty">Loading messages…</div>' +
     '</div>' +
 
-    // ── Input bar (wired up in Step 2) ───────────────────────────────────
+    // ── Input bar ────────────────────────────────────────────────────────
     '<div class="vc-chat-input-bar">' +
     '<input class="vc-chat-input" id="vcChatInput" type="text" ' +
-    'placeholder="Type a message…" autocomplete="off" disabled>' +
+    'placeholder="Type a message…" autocomplete="off">' +
     '<button class="vc-chat-send" id="vcChatSend" type="button" disabled>' +
     '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/>' +
     '<polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>' +
@@ -1143,6 +1253,10 @@ function _openChatUI(chatId, otherProfile) {
   var backBtn = document.getElementById("vcBackBtn");
   if (backBtn) {
     backBtn.addEventListener("click", function () {
+      if (_unsubscribeMessages) {
+        _unsubscribeMessages();
+        _unsubscribeMessages = null;
+      }
       _activeChatId  = null;
       _activeChatUid = null;
 
@@ -1164,6 +1278,30 @@ function _openChatUI(chatId, otherProfile) {
         .catch(function () { _renderLogin(); });
     });
   }
+
+  var inputEl = document.getElementById("vcChatInput");
+  var sendBtn = document.getElementById("vcChatSend");
+  function updateSendButtonState() {
+    if (!inputEl || !sendBtn) return;
+    sendBtn.disabled = !String(inputEl.value || "").trim();
+  }
+
+  if (inputEl) {
+    inputEl.addEventListener("input", updateSendButtonState);
+    inputEl.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        _sendMessage();
+      }
+    });
+  }
+
+  if (sendBtn) {
+    sendBtn.addEventListener("click", _sendMessage);
+  }
+
+  updateSendButtonState();
+  _listenToMessages(chatId);
 
   console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", username);
 }
