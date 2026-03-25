@@ -591,42 +591,73 @@
     }).join("");
   }
 
-  async function _fetchIncomingRequests(currentUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb()
-      : null;
-    if (!db || !currentUid) return;
+// ── Realtime incoming-requests listener ─────────────────────────────────
+// Called once from _renderChat. Attaches an onSnapshot listener and stores
+// the unsubscribe handle in _unsubscribeIncomingRequests so _stopListening
+// can tear it down cleanly on sign-out or screen change.
+async function _fetchIncomingRequests(currentUid) {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+  if (!db || !currentUid) return;
 
-    try {
-      var snapshot = await db
-        .collection(REQUESTS_COLLECTION)
-        .where("toUid",  "==", currentUid)
-        .where("status", "==", "pending")
-        .orderBy("createdAt", "desc")
-        .get();
+  // Tear down any previous listener before creating a new one
+  if (_unsubscribeIncomingRequests) {
+    _unsubscribeIncomingRequests();
+    _unsubscribeIncomingRequests = null;
+  }
 
+  var query = db
+    .collection("connectionRequests")
+    .where("toUid",  "==", currentUid)
+    .where("status", "==", "pending")
+    .orderBy("createdAt", "desc");
+
+  _unsubscribeIncomingRequests = query.onSnapshot(
+    async function (snapshot) {
       var pending = [];
-      for (var i = 0; i < snapshot.docs.length; i += 1) {
-        var doc         = snapshot.docs[i];
-        var data        = doc.data() || {};
-        var fromProfile = await db.collection("users").doc(data.fromUid).get();
-        var fromData    = fromProfile.exists ? fromProfile.data() : {};
-        pending.push({
-          id:           doc.id,
-          fromUid:      data.fromUid     || "",
-          toUid:        data.toUid       || "",
-          fromUsername: fromData.username || "user",
-          fromName:     fromData.name     || ""
-        });
+
+      // Build list: fetch sender profile for each request doc
+      for (var i = 0; i < snapshot.docs.length; i++) {
+        var doc  = snapshot.docs[i];
+        var data = doc.data() || {};
+        if (!data.fromUid) continue;
+
+        try {
+          var fromProfile = await db.collection("users").doc(data.fromUid).get();
+          var fromData    = fromProfile.exists ? fromProfile.data() : {};
+          pending.push({
+            id:           doc.id,
+            fromUid:      data.fromUid  || "",
+            toUid:        data.toUid    || "",
+            fromUsername: fromData.username || "user",
+            fromName:     fromData.name     || ""
+          });
+        } catch (_) {
+          // If one profile fetch fails, skip that request rather than
+          // crashing the whole list
+          pending.push({
+            id:           doc.id,
+            fromUid:      data.fromUid || "",
+            toUid:        data.toUid   || "",
+            fromUsername: "user",
+            fromName:     ""
+          });
+        }
       }
 
+      // Replace the module-level array and repaint — single source of truth
       incomingRequests = pending;
       _renderIncomingRequests(incomingRequests);
-    } catch (_) {
+    },
+    function (err) {
+      // Listener error (e.g. rules changed while listening)
+      console.error("[Vaani] incoming requests listener error:", err);
       incomingRequests = [];
       _renderIncomingRequests(incomingRequests);
     }
-  }
+  );
+}
 
   function _bindIncomingRequestActions() {
     var listEl    = document.getElementById("vcRequestsList");
