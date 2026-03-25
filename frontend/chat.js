@@ -1456,12 +1456,8 @@ function _openChatUI(chatId, otherProfile) {
   var chatMarkup =
     '<div class="vc-chat-view">' +
       '<div class="vc-chat-header">' +
-        '<button class="vc-back-btn" id="backBtn" aria-label="Go back">' +
-          backIconSVG +
-        '</button>' +
-        '<div class="vc-chat-avatar">' +
-          avatarHTML +
-        '</div>' +
+        '<button class="vc-back-btn" id="backBtn"></button>' +
+        '<div class="vc-chat-avatar">' + avatarHTML + '</div>' +
         '<div class="vc-chat-hinfo">' +
           '<div class="vc-chat-hname">@' + _esc(username) + '</div>' +
           '<div class="vc-chat-hsub">Connected</div>' +
