@@ -8,6 +8,9 @@
 
   var CHAT_ROOT_ID = "vaaniChat";
   var _unsubscribeDB = null;
+  var _searchDebounceTimer = null;
+  var _searchRequestSeq = 0;
+  var _outsideClickHandler = null;
 
   function _root() {
     return document.getElementById(CHAT_ROOT_ID);
@@ -151,6 +154,7 @@
     if (!root) return;
 
     _stopListening();
+    _clearSearchState();
     _removeMenu();
 
     root.innerHTML =
@@ -186,6 +190,7 @@
     if (!root) return;
 
     _stopListening();
+    _clearSearchState();
     _removeMenu();
 
     var firstName = (user.displayName || "").split(" ")[0] || "";
@@ -284,6 +289,7 @@
     var root = _root();
     if (!root) return;
 
+    _clearSearchState();
     _injectMenu(user, profile);
 
     var photo = user.photoURL || "";
@@ -296,6 +302,10 @@
         ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img">'
         : '<span class="vc-avatar-initials">' + _esc(initials) + "</span>") +
       "</button>" +
+      '<div class="vc-search-wrap" id="vcSearchWrap">' +
+      '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
+      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div>' +
+      "</div>" +
       '<div class="vc-empty-area" id="vcEmptyArea" aria-hidden="true"></div>' +
       "</section>";
 
@@ -307,6 +317,8 @@
         }
       });
     }
+
+    _bindUserSearch();
   }
 
   function _stopListening() {
@@ -314,6 +326,140 @@
       _unsubscribeDB();
       _unsubscribeDB = null;
     }
+  }
+
+  function _clearSearchState() {
+    if (_searchDebounceTimer) {
+      clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = null;
+    }
+    _searchRequestSeq += 1;
+    if (_outsideClickHandler) {
+      document.removeEventListener("mousedown", _outsideClickHandler);
+      _outsideClickHandler = null;
+    }
+  }
+
+  function _renderSearchResults(dropdown, users) {
+    if (!dropdown) return;
+
+    if (!users || !users.length) {
+      dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
+      dropdown.classList.add("vc-open");
+      return;
+    }
+
+    var markup = users.map(function (item) {
+      var username = item.username || "user";
+      var email = item.email || "";
+      var photo = item.photoURL || "";
+      var initial = (username.charAt(0) || "U").toUpperCase();
+
+      return (
+        '<button class="vc-search-item" type="button" data-uid="' + _esc(item.uid || "") + '">' +
+        '<span class="vc-search-avatar">' +
+        (photo
+          ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+          : '<span class="vc-search-initial">' + _esc(initial) + "</span>") +
+        "</span>" +
+        '<span class="vc-search-meta">' +
+        '<span class="vc-search-username">@' + _esc(username) + "</span>" +
+        '<span class="vc-search-email">' + _esc(email) + "</span>" +
+        "</span>" +
+        "</button>"
+      );
+    }).join("");
+
+    dropdown.innerHTML = markup;
+    dropdown.classList.add("vc-open");
+  }
+
+  async function _fetchUsersByPrefix(value, requestId, dropdown) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+
+    if (!db || !dropdown) return;
+
+    try {
+      var snapshot = await db
+        .collection("users")
+        .where("username", ">=", value)
+        .where("username", "<=", value + "\uf8ff")
+        .limit(10)
+        .get();
+
+      if (requestId !== _searchRequestSeq) return;
+
+      var users = [];
+      snapshot.forEach(function (doc) {
+        var data = doc.data() || {};
+        users.push({
+          uid: doc.id,
+          username: data.username || "",
+          email: data.email || "",
+          photoURL: data.photoURL || ""
+        });
+      });
+
+      _renderSearchResults(dropdown, users);
+    } catch (_) {
+      if (requestId !== _searchRequestSeq) return;
+      dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
+      dropdown.classList.add("vc-open");
+    }
+  }
+
+  function _bindUserSearch() {
+    var searchWrap = document.getElementById("vcSearchWrap");
+    var searchInput = document.getElementById("vcUserSearchInput");
+    var searchDropdown = document.getElementById("vcSearchDropdown");
+
+    if (!searchWrap || !searchInput || !searchDropdown) return;
+
+    function closeDropdown() {
+      searchDropdown.classList.remove("vc-open");
+    }
+
+    function handleInput() {
+      var query = (searchInput.value || "").trim().toLowerCase();
+
+      if (_searchDebounceTimer) {
+        clearTimeout(_searchDebounceTimer);
+      }
+
+      if (!query) {
+        _searchRequestSeq += 1;
+        searchDropdown.innerHTML = "";
+        closeDropdown();
+        return;
+      }
+
+      _searchDebounceTimer = setTimeout(function () {
+        _searchRequestSeq += 1;
+        var requestId = _searchRequestSeq;
+        _fetchUsersByPrefix(query, requestId, searchDropdown);
+      }, 300);
+    }
+
+    searchInput.addEventListener("input", handleInput);
+
+    searchDropdown.addEventListener("click", function (event) {
+      var btn = event.target.closest(".vc-search-item");
+      if (!btn) return;
+
+      closeDropdown();
+      if (typeof window.showToast === "function") {
+        window.showToast("Connection flow coming soon");
+      }
+    });
+
+    _outsideClickHandler = function (event) {
+      if (!searchWrap.contains(event.target)) {
+        closeDropdown();
+      }
+    };
+    document.addEventListener("mousedown", _outsideClickHandler);
   }
 
   window.vaaniChat = {
@@ -354,6 +500,7 @@
 
     close: function () {
       _stopListening();
+      _clearSearchState();
       _removeMenu();
     },
 
