@@ -541,22 +541,55 @@
   }
 
   async function _acceptConnectionRequest(db, requestId, currentUid, fromUid) {
-    if (!db || !requestId || !currentUid || !fromUid) return;
+    if (!db || !requestId || !currentUid || !fromUid) {
+      console.error("[Vaani] acceptConnectionRequest: missing required params");
+      return;
+    }
 
-    // Write to Firestore — onSnapshot handles the UI update automatically
-    await _createConnection(db, currentUid, fromUid);
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "accepted" });
+    try {
+      // ── Guard: skip if already connected ──────────────────────────────
+      var alreadyConnected = await _isConnected(db, currentUid, fromUid);
+      if (alreadyConnected) {
+        console.warn("[Vaani] acceptConnectionRequest: already connected, skipping");
+        // Still delete the stale request so it doesn't linger in UI
+        await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
+        return;
+      }
 
-    if (typeof window.showToast === "function") window.showToast("Connection accepted");
+      // ── Step 1: create the connection document ─────────────────────────
+      await db.collection(CONNECTIONS_COLLECTION).add({
+        users:     [currentUid, fromUid],
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // ── Step 2: delete the request document ───────────────────────────
+      // Deletion (not status update) triggers onSnapshot to remove the item
+      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
+
+      if (typeof window.showToast === "function") window.showToast("Connection accepted");
+
+    } catch (err) {
+      console.error("[Vaani] acceptConnectionRequest failed:", err);
+      throw err; // re-throw so the button re-enables in _bindIncomingRequestActions
+    }
   }
 
   async function _rejectConnectionRequest(db, requestId) {
-    if (!db || !requestId) return;
+    if (!db || !requestId) {
+      console.error("[Vaani] rejectConnectionRequest: missing required params");
+      return;
+    }
 
-    // Write to Firestore — onSnapshot handles the UI update automatically
-    await db.collection(REQUESTS_COLLECTION).doc(requestId).update({ status: "rejected" });
+    try {
+      // ── Delete the request document outright ──────────────────────────
+      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
 
-    if (typeof window.showToast === "function") window.showToast("Request rejected");
+      if (typeof window.showToast === "function") window.showToast("Request rejected");
+
+    } catch (err) {
+      console.error("[Vaani] rejectConnectionRequest failed:", err);
+      throw err; // re-throw so the button re-enables in _bindIncomingRequestActions
+    }
   }
 
   function _renderIncomingRequests(requests) {
