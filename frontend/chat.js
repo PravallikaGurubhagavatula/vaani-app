@@ -325,7 +325,7 @@
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div>' +
       "</div>" +
       "</div>" +
-      '<div class="vc-empty-area" id="vcEmptyArea" aria-hidden="true"></div>' +
+      '<div class="vc-chat-list" id="vcChatList"></div>' +
       "</section>";
 
     var profileBtn = document.getElementById("vcProfileBtn");
@@ -342,6 +342,7 @@
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _createChatListListener.call(window.vaaniChat);
+    _renderChatList();
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -441,12 +442,67 @@
           }));
 
           ctx._chatList = nextList;
+          _renderChatList();
         },
         function (err) {
           console.error("[Vaani] chat list listener error:", err);
           ctx._chatList = [];
+          _renderChatList();
         }
       );
+  }
+
+  function _renderChatList() {
+    var listEl = document.getElementById("vcChatList");
+    if (!listEl) return;
+
+    var list = window.vaaniChat && Array.isArray(window.vaaniChat._chatList)
+      ? window.vaaniChat._chatList
+      : [];
+
+    if (!list.length) {
+      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+      return;
+    }
+
+    listEl.innerHTML = "";
+
+    list.forEach(function (chat) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "vc-chat-list-item";
+
+      var username = chat.username || "user";
+      var lastMessage = chat.lastMessage || "No messages yet";
+      var timeText = "";
+      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+
+      item.innerHTML =
+        '<div class="vc-chat-list-top">' +
+        '<span class="vc-chat-list-username">@' + _esc(username) + "</span>" +
+        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+        "</div>" +
+        '<div class="vc-chat-list-last">' + _esc(lastMessage) + "</div>";
+
+      item.addEventListener("click", function () {
+        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+          ? window.vaaniRouter.getDb()
+          : null;
+        var targetUid = chat.otherUid || "";
+        if (!db || !targetUid) return;
+
+        _fetchOtherProfile(db, targetUid)
+          .then(function (profile) {
+            profile.uid = targetUid;
+            _openChatUI(chat.chatId, profile);
+          })
+          .catch(function () {});
+      });
+
+      listEl.appendChild(item);
+    });
   }
 
   function _stopListening() {
