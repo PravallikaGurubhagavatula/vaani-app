@@ -713,13 +713,20 @@
     if (!db || !dropdown) return;
 
     try {
-      var normalizedQuery = (value || "").toLowerCase();
+      var normalizedQuery = (value || "").trim().toLowerCase();
+      console.log("Search query:", normalizedQuery);
+
+      var allUsers = await db.collection("users").get();
+      console.log("ALL USERS:", allUsers.docs.map(function (d) { return d.data(); }));
+
       var snapshot = await db
         .collection("users")
-        .where("username", ">=", normalizedQuery)
-        .where("username", "<=", normalizedQuery + "\uf8ff")
+        .orderBy("username")
+        .startAt(normalizedQuery)
+        .endAt(normalizedQuery + "\uf8ff")
         .limit(10)
         .get();
+      console.log("Firestore docs:", snapshot.docs.map(function (d) { return d.data(); }));
 
       if (requestId !== _searchRequestSeq) return;
 
@@ -728,8 +735,9 @@
         : "";
       var list = [];
       snapshot.forEach(function (doc) {
-        var data = doc.data() || {};
-        if (!data.username || data.uid === currentUid) return;
+        var data = doc.data();
+        if (!data) return;
+        if (data.uid === currentUid) return;
 
         list.push({
           uid: data.uid,
