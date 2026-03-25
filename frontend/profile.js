@@ -128,7 +128,7 @@
       // 4. Write to users/{uid} — matches Firestore rule {uid}
       var profileData = {
         uid:       user.uid,
-        username:  username.toLowerCase().trim(),
+        username:  cleaned,
         name:      user.displayName || "",
         email:     user.email       || "",
         photoURL:  user.photoURL    || "",
