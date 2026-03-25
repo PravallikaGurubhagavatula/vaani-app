@@ -452,6 +452,17 @@
     });
   }
 
+  async function _hasPendingConnectionRequest(db, fromUid, toUid) {
+    var existing = await db
+      .collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", fromUid)
+      .where("toUid", "==", toUid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+    return !existing.empty;
+  }
+
   async function _createConnection(db, uidA, uidB) {
     var alreadyConnected = await _isConnected(db, uidA, uidB);
     if (alreadyConnected) return;
@@ -666,17 +677,9 @@
         : null;
       if (!db) return;
 
-      var state = await _getRequestState(db, currentUid, targetUid);
-      if (state === "connected") {
-        if (typeof window.showToast === "function") window.showToast("Already connected. Chat opening soon.");
-        return;
-      }
-      if (state === "requested") {
+      var alreadyRequested = await _hasPendingConnectionRequest(db, currentUid, targetUid);
+      if (alreadyRequested) {
         if (typeof window.showToast === "function") window.showToast("Request already sent");
-        return;
-      }
-      if (state === "incoming") {
-        if (typeof window.showToast === "function") window.showToast("This user already requested you. Check requests.");
         return;
       }
 
