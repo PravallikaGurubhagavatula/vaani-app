@@ -706,22 +706,26 @@
 
       if (requestId !== _searchRequestSeq) return;
 
-      var users = [];
+      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+        ? window._vaaniCurrentUser.uid
+        : "";
+      var list = [];
       snapshot.forEach(function (doc) {
         var data = doc.data() || {};
-        users.push({
+        if (!data.username || doc.id === currentUid) return;
+
+        list.push({
           uid: doc.id,
-          username: data.username || "",
+          username: data.username,
           name: data.name,
           photoURL: data.photoURL || ""
         });
       });
 
-      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-        ? window._vaaniCurrentUser.uid
-        : "";
-      var stateByUid = await _buildSearchItemStates(db, currentUid, users);
-      _renderSearchResults(dropdown, users, stateByUid, currentUid);
+      console.log("Fetched users:", list);
+
+      var stateByUid = await _buildSearchItemStates(db, currentUid, list);
+      _renderSearchResults(dropdown, list, stateByUid, currentUid);
     } catch (_) {
       if (requestId !== _searchRequestSeq) return;
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
