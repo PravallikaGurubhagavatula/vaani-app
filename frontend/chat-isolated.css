@@ -643,3 +643,152 @@ body.vm-menu-open {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* ── Chat view ──────────────────────────────────────────────────── */
+#vaaniChat .vc-chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg, #09090f);
+}
+
+#vaaniChat .vc-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-back-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: transparent;
+  color: #e8e8f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-back-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#vaaniChat .vc-chat-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-chat-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#vaaniChat .vc-chat-initial {
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+#vaaniChat .vc-chat-hinfo {
+  min-width: 0;
+}
+
+#vaaniChat .vc-chat-hname {
+  color: #ececff;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+#vaaniChat .vc-chat-hsub {
+  color: #9a9ab2;
+  font-size: 11px;
+}
+
+#vaaniChat .vc-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#vaaniChat .vc-chat-empty {
+  margin: auto;
+  color: #9a9ab2;
+  font-size: 13px;
+  text-align: center;
+}
+
+#vaaniChat .vc-chat-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-chat-input {
+  flex: 1;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: #12121d;
+  color: #ffffff;
+  font-family: 'Outfit', sans-serif;
+  font-size: 14px;
+  padding: 10px 14px;
+  outline: none;
+}
+
+#vaaniChat .vc-chat-input:disabled {
+  opacity: 0.45;
+}
+
+#vaaniChat .vc-chat-send {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 0;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-chat-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#vaaniChat .vc-chat-send svg {
+  width: 16px;
+  height: 16px;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
