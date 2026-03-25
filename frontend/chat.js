@@ -798,34 +798,60 @@
     });
 
     listEl.addEventListener("click", async function (event) {
-      var acceptBtn = event.target.closest(".vc-accept-btn");
-      var rejectBtn = event.target.closest(".vc-reject-btn");
-      if (!acceptBtn && !rejectBtn) return;
+       var acceptBtn = event.target.closest(".vc-accept-btn");
+       var rejectBtn = event.target.closest(".vc-reject-btn");
+       if (!acceptBtn && !rejectBtn) return;
+       var actionBtn  = acceptBtn || rejectBtn;
+       var requestId  = actionBtn.getAttribute("data-request-id") || "";
+       var fromUid    = actionBtn.getAttribute("data-from-uid")   || "";
+       
+       // ── Validate early — log and bail before touching Firestore ─────────
+       if (!requestId) {
+          console.error("[Vaani] request click: missing requestId");
+          return;
+       }
+       if (acceptBtn && !fromUid) {
+          console.error("[Vaani] request click: missing fromUid for accept");
+          return;
+       }
+       
+       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+          ? window._vaaniCurrentUser.uid
+          : "";
+       if (!currentUid) {
+          console.error("[Vaani] request click: no current user");
+          return;
+       }
+       
+       var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+          ? window.vaaniRouter.getDb()
+          : null;
+       if (!db) {
+          console.error("[Vaani] request click: db unavailable");
+          return;
+       }
 
-      var actionBtn  = acceptBtn || rejectBtn;
-      var requestId  = actionBtn.getAttribute("data-request-id") || "";
-      var fromUid    = actionBtn.getAttribute("data-from-uid")   || "";
-      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-        ? window._vaaniCurrentUser.uid
-        : "";
+  // ── Disable button for the duration of the async operation ──────────
+  // onSnapshot owns the repaint — we never manually remove DOM nodes.
+  actionBtn.disabled = true;
 
-      var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-        ? window.vaaniRouter.getDb()
-        : null;
-      if (!db || !requestId) return;
-      if (acceptBtn && (!fromUid || !currentUid)) return;
-
-      actionBtn.disabled = true;
-      try {
-        if (acceptBtn) {
-          await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
-        } else {
-          await _rejectConnectionRequest(db, requestId);
-        }
-      } catch (_) {
-        actionBtn.disabled = false;
-      }
-    });
+  try {
+    if (acceptBtn) {
+      await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
+    } else {
+      await _rejectConnectionRequest(db, requestId);
+    }
+    // Success: do NOT touch the DOM here.
+    // onSnapshot will fire and _renderIncomingRequests will repaint.
+  } catch (err) {
+    // Firestore failure — re-enable so user can retry
+    console.error("[Vaani] request action failed:", err);
+    actionBtn.disabled = false;
+    if (typeof window.showToast === "function") {
+      window.showToast("Action failed — please try again");
+    }
+  }
+});
   }
 
   // ── Core search fetch ────────────────────────────────────────────────────
