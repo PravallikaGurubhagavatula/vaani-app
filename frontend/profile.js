@@ -129,7 +129,7 @@
       var profileData = {
         uid:       user.uid,
         username:  cleaned,
-        name:      user.displayName || "",
+        name:      user.displayName || cleaned,
         email:     user.email       || "",
         photoURL:  user.photoURL    || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),

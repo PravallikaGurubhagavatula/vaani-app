@@ -290,7 +290,9 @@
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: #12121d;
-  color: var(--text, #e8e8f6);
+  color: #ffffff;
+  -webkit-text-fill-color: #ffffff;
+  caret-color: #ffffff;
   font-family: 'Outfit', sans-serif;
   font-size: 14px;
   padding: 11px 12px;
@@ -377,12 +379,106 @@
   font-weight: 600;
 }
 
-#vaaniChat .vc-search-email {
+#vaaniChat .vc-search-name {
   color: #9a9ab2;
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#vaaniChat .vc-search-action {
+  color: #c8b6ff;
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+#vaaniChat .vc-requests-wrap {
+  width: 100%;
+  margin-top: 10px;
+  position: relative;
+}
+
+#vaaniChat .vc-requests-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #12121d;
+  color: #ececff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+#vaaniChat .vc-requests-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  background: #4c1d95;
+  color: #fff;
+  font-size: 11px;
+  opacity: 0.45;
+}
+
+#vaaniChat .vc-requests-badge.vc-visible {
+  opacity: 1;
+}
+
+#vaaniChat .vc-requests-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: none;
+  background: #11111b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 8px;
+  z-index: 6;
+}
+
+#vaaniChat .vc-requests-panel.vc-open {
+  display: block;
+}
+
+#vaaniChat .vc-request-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+}
+
+#vaaniChat .vc-request-copy,
+#vaaniChat .vc-requests-empty {
+  color: #9a9ab2;
+  font-size: 12px;
+}
+
+#vaaniChat .vc-request-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#vaaniChat .vc-mini-btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#vaaniChat .vc-accept-btn {
+  background: #6d28d9;
+  color: #fff;
+}
+
+#vaaniChat .vc-reject-btn {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ececff;
 }
 
 #vaaniChat .vc-search-empty {
