@@ -1477,13 +1477,7 @@ function _openChatUI(chatId, otherProfile) {
   chatScreen.innerHTML = chatMarkup;
 
   // ── Wire up back button ───────────────────────────────────────────────
-  document.getElementById("backBtn").onclick = function () {
-    if (_unsubscribeMessages) {
-      _unsubscribeMessages();
-      _unsubscribeMessages = null;
-    }
-    _activeChatId  = null;
-    _activeChatUid = null;
+  document.getElementById("backBtn").onclick = () => {
     _setCurrentView("home");
   };
 
