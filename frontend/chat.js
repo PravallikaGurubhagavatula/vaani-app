@@ -713,17 +713,17 @@
       var list = [];
       snapshot.forEach(function (doc) {
         var data = doc.data() || {};
-        if (!data.username || doc.id === currentUid) return;
+        if (!data.username || data.uid === currentUid) return;
 
         list.push({
-          uid: doc.id,
+          uid: data.uid,
           username: data.username,
           name: data.name,
           photoURL: data.photoURL || ""
         });
       });
 
-      console.log("Fetched users:", list);
+      console.log("Search results:", list);
 
       var stateByUid = await _buildSearchItemStates(db, currentUid, list);
       _renderSearchResults(dropdown, list, stateByUid, currentUid);
