@@ -1064,6 +1064,7 @@ async function _sendMessage() {
   if (!message) return;
 
   var sendBtn = document.getElementById("vcChatSend");
+  if (sendBtn && sendBtn.disabled) return;
 
   try {
     inputEl.disabled = true;
@@ -1136,13 +1137,16 @@ function _listenToMessages(chatId) {
     _unsubscribeMessages = null;
   }
 
+  var listeningChatId = chatId;
+
   _unsubscribeMessages = db
     .collection(CHATS_COLLECTION)
-    .doc(chatId)
+    .doc(listeningChatId)
     .collection("messages")
     .orderBy("createdAt", "asc")
     .onSnapshot(
       function (snapshot) {
+        if (_activeChatId !== listeningChatId) return;
         var messages = [];
         snapshot.forEach(function (doc) {
           messages.push(doc.data() || {});
@@ -1289,7 +1293,7 @@ function _openChatUI(chatId, otherProfile) {
   if (inputEl) {
     inputEl.addEventListener("input", updateSendButtonState);
     inputEl.addEventListener("keydown", function (event) {
-      if (event.key === "Enter") {
+      if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         _sendMessage();
       }
