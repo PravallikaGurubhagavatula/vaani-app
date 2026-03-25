@@ -14,6 +14,10 @@
   var _unsubscribeIncomingRequests = null;
   var _unsubscribeConnections = null;   // realtime connections listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
+  var _activeChatId = null;          // chatId currently open
+  var _activeChatUid = null;         // other user's uid in open chat
+
+  var CHATS_COLLECTION = "chats";
   var incomingRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
@@ -936,13 +940,29 @@
         // Non-actionable states — do nothing
         return;
       }
-
+      // AFTER — opens real chat
       if (currentState === "connected") {
-        // "Message" button — navigate to chat with this user (stub for now)
-        if (typeof window.showToast === "function") {
-          window.showToast("Messaging coming soon");
-        }
-        return;
+         btn.disabled = true;
+         var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+            ? window.vaaniRouter.getDb()
+            : null;
+         if (!db) { btn.disabled = false; return; }
+         _getOrCreateChat(targetUid)
+            .then(function (chatId) {
+               return _fetchOtherProfile(db, targetUid).then(function (profile) {
+                  profile.uid = targetUid;
+                  closeDropdown();
+                  _openChatUI(chatId, profile);
+               });
+            })
+            .catch(function (err) {
+               console.error("[Vaani] Open chat error:", err);
+               btn.disabled = false;
+               if (typeof window.showToast === "function") {
+                  window.showToast("Could not open chat. Try again.");
+               }
+            });
+         return;
       }
 
       if (currentState === "incoming") {
@@ -989,6 +1009,140 @@
     document.addEventListener("mousedown", _outsideClickHandler);
   }
 
+
+// ── Fetch other user's profile (username, photoURL) ──────────────────────
+async function _fetchOtherProfile(db, uid) {
+  try {
+    var doc = await db.collection("users").doc(uid).get();
+    if (doc.exists) return doc.data() || {};
+  } catch (_) {}
+  return {};
+}
+
+// ── Get or create a chat document between current user and otherUid ───────
+async function _getOrCreateChat(otherUid) {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? window._vaaniCurrentUser.uid
+    : null;
+
+  if (!db || !currentUid || !otherUid) {
+    throw new Error("[Vaani] _getOrCreateChat: missing db or uid");
+  }
+
+  // ── Step 1: query all chats the current user participates in ─────────
+  var snapshot = await db
+    .collection(CHATS_COLLECTION)
+    .where("participants", "array-contains", currentUid)
+    .get();
+
+  // ── Step 2: find a chat that also contains the other user ────────────
+  var existingId = null;
+  snapshot.forEach(function (doc) {
+    var data = doc.data() || {};
+    var parts = data.participants || [];
+    if (parts.indexOf(otherUid) !== -1) {
+      existingId = doc.id;
+    }
+  });
+
+  if (existingId) {
+    console.log("[Vaani] Existing chat found:", existingId);
+    return existingId;
+  }
+
+  // ── Step 3: create a new chat document ───────────────────────────────
+  var newChatRef = await db.collection(CHATS_COLLECTION).add({
+    participants: [currentUid, otherUid],
+    createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+    lastMessage: ""
+  });
+
+  console.log("[Vaani] New chat created:", newChatRef.id);
+  return newChatRef.id;
+}
+
+// ── Render a basic chat UI (messages come in Step 2) ─────────────────────
+function _openChatUI(chatId, otherProfile) {
+  var root = _root();
+  if (!root) return;
+
+  _activeChatId  = chatId;
+  _activeChatUid = otherProfile.uid || "";
+
+  var username = otherProfile.username || "user";
+  var photo    = otherProfile.photoURL || "";
+  var initial  = (username.charAt(0) || "U").toUpperCase();
+
+  root.innerHTML =
+    '<section class="vc-chat-view" aria-label="Chat">' +
+
+    // ── Header ───────────────────────────────────────────────────────────
+    '<div class="vc-chat-header">' +
+    '<button class="vc-back-btn" id="vcBackBtn" type="button" aria-label="Back">' +
+    '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>' +
+    '</button>' +
+    '<span class="vc-chat-avatar">' +
+    (photo
+      ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+      : '<span class="vc-chat-initial">' + _esc(initial) + '</span>') +
+    '</span>' +
+    '<div class="vc-chat-hinfo">' +
+    '<div class="vc-chat-hname">@' + _esc(username) + '</div>' +
+    '<div class="vc-chat-hsub">Connected</div>' +
+    '</div>' +
+    '</div>' +
+
+    // ── Messages area (placeholder for Step 2) ───────────────────────────
+    '<div class="vc-chat-messages" id="vcChatMessages">' +
+    '<div class="vc-chat-empty">Messages coming soon…</div>' +
+    '</div>' +
+
+    // ── Input bar (wired up in Step 2) ───────────────────────────────────
+    '<div class="vc-chat-input-bar">' +
+    '<input class="vc-chat-input" id="vcChatInput" type="text" ' +
+    'placeholder="Type a message…" autocomplete="off" disabled>' +
+    '<button class="vc-chat-send" id="vcChatSend" type="button" disabled>' +
+    '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/>' +
+    '<polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>' +
+    '</button>' +
+    '</div>' +
+
+    '</section>';
+
+  // ── Back button → return to main chat shell ──────────────────────────
+  var backBtn = document.getElementById("vcBackBtn");
+  if (backBtn) {
+    backBtn.addEventListener("click", function () {
+      _activeChatId  = null;
+      _activeChatUid = null;
+
+      // Re-render the chat shell for the current user
+      var user    = window._vaaniCurrentUser;
+      var db      = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+        ? window.vaaniRouter.getDb()
+        : null;
+      if (!user || !db) { _renderLogin(); return; }
+
+      db.collection("users").doc(user.uid).get()
+        .then(function (doc) {
+          if (doc.exists && doc.data().username) {
+            _renderChat(user, doc.data());
+          } else {
+            _renderLogin();
+          }
+        })
+        .catch(function () { _renderLogin(); });
+    });
+  }
+
+  console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", username);
+}
+
+   
   // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
     open: function () {
