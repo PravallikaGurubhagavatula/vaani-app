@@ -1305,38 +1305,33 @@ async function _sendMessage() {
 }
 
 function _renderMessages(messages) {
-  // Container ID matches the one injected by _openChatUI above
   var container = document.getElementById("messagesContainer");
   if (!container) return;
 
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-    ? window._vaaniCurrentUser.uid
-    : null;
+    ? String(window._vaaniCurrentUser.uid)
+    : "";
 
   container.innerHTML = "";
 
-  if (!messages || messages.length === 0) {
-    container.innerHTML = '<div class="vc-chat-empty">No messages yet. Say hello 👋</div>';
-    return;
-  }
+  if (!messages || messages.length === 0) return;
 
   messages.forEach(function (msg) {
-    var isOwn = !!currentUid && msg.senderId === currentUid;
+    var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
+    var isOwn = senderId && currentUid && senderId === currentUid;
+    var row = document.createElement("div");
+    row.className = isOwn
+      ? "vc-msg-row vc-msg-own"
+      : "vc-msg-row vc-msg-other";
 
-    // ── Row ────────────────────────────────────────────────────────────
-    var row    = document.createElement("div");
-    row.className = "vc-msg-row " + (isOwn ? "vc-msg-own" : "vc-msg-other");
-
-    // ── Bubble ─────────────────────────────────────────────────────────
     var bubble = document.createElement("div");
-    bubble.className  = "vc-msg-bubble";
+    bubble.className = "vc-msg-bubble";
     bubble.textContent = String(msg.text || "");
 
     row.appendChild(bubble);
     container.appendChild(row);
   });
 
-  // Scroll to the latest message
   container.scrollTop = container.scrollHeight;
 }
 
