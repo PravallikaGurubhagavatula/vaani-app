@@ -317,6 +317,7 @@
         ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img">'
         : '<span class="vc-avatar-initials">' + _esc(initials) + "</span>") +
       "</button>" +
+      '<div class="vc-home-view" id="homeScreen">' +
       '<div class="vc-search-wrap" id="vcSearchWrap">' +
       '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
       '<div class="vc-search-dropdown" id="vcSearchDropdown"></div>' +
@@ -327,10 +328,9 @@
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div>' +
       "</div>" +
       "</div>" +
-      '<div class="vc-home-view" id="vcHomeView">' +
       '<div class="vc-chat-list" id="vcChatList"></div>' +
-      '</div>' +
-      '<div class="vc-chat-view-wrap" id="vcChatViewContainer" style="display:none;"></div>' +
+      "</div>" +
+      '<div class="vc-chat-view-wrap" id="chatScreen" style="display:none;"></div>' +
       "</section>";
 
     var profileBtn = document.getElementById("vcProfileBtn");
@@ -342,24 +342,21 @@
       });
     }
 
-    _bindUserSearch();
-    _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
-    _createChatListListener.call(window.vaaniChat);
     _renderChatList();
     _setCurrentView("home");
   }
 
   function _setCurrentView(viewName) {
-    var homeView = document.getElementById("vcHomeView");
-    var chatView = document.getElementById("vcChatViewContainer");
+    var homeView = document.getElementById("homeScreen");
+    var chatView = document.getElementById("chatScreen");
 
     if (!homeView || !chatView) return;
 
     var isChat = viewName === "chat";
-    homeView.style.display = isChat ? "none" : "";
-    chatView.style.display = isChat ? "" : "none";
+    homeView.style.display = isChat ? "none" : "block";
+    chatView.style.display = isChat ? "block" : "none";
 
     if (window.vaaniChat) {
       window.vaaniChat._currentView = isChat ? "chat" : "home";
@@ -399,6 +396,9 @@
             });
           });
           console.log("[Vaani] connections updated — " + _connectedUidSet.size + " connected");
+          if (window.vaaniChat && window.vaaniChat._currentView === "home") {
+            _renderChatList();
+          }
         },
         function (err) {
           console.error("[Vaani] connections listener error:", err);
@@ -475,51 +475,139 @@
 
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
-    if (!listEl) return;
+    var homeScreen = document.getElementById("homeScreen");
+    var chatScreen = document.getElementById("chatScreen");
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? window._vaaniCurrentUser.uid
+      : null;
+    if (!listEl || !db || !currentUid) return;
 
-    var list = window.vaaniChat && Array.isArray(window.vaaniChat._chatList)
-      ? window.vaaniChat._chatList
-      : [];
+    if (homeScreen) homeScreen.innerHTML = "";
+    if (chatScreen) chatScreen.innerHTML = "";
 
-    if (!list.length) {
-      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-      return;
+    var searchTemplate =
+      '<div class="vc-search-wrap" id="vcSearchWrap">' +
+      '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
+      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div>' +
+      "</div>" +
+      '<div class="vc-requests-wrap">' +
+      '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
+      '<div class="vc-requests-panel" id="vcRequestsPanel">' +
+      '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-chat-list" id="vcChatList"></div>';
+
+    if (homeScreen) {
+      homeScreen.innerHTML = searchTemplate;
+      listEl = document.getElementById("vcChatList");
+      _bindUserSearch();
+      _bindIncomingRequestActions();
+      _renderIncomingRequests(incomingRequests);
     }
 
-    listEl.innerHTML = "";
+    listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
 
-    list.forEach(function (chat) {
-      var item = document.createElement("button");
-      item.type = "button";
-      item.className = "vc-chat-list-item";
-
-      var username = chat.username || "user";
-      var lastMessage = chat.lastMessage || "No messages yet";
-      var timeText = "";
-      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
-        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      }
-
-      item.innerHTML =
-        '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">@' + _esc(username) + "</span>" +
-        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
-        "</div>" +
-        '<div class="vc-chat-list-last">' + _esc(lastMessage) + "</div>";
-
-      item.addEventListener("click", function () {
-        var chatId = chat.chatId || "";
-        var otherUid = chat.otherUid || "";
-        if (!chatId || !otherUid) return;
-
-        _openChatUI(chatId, {
-          uid: otherUid,
-          username: chat.username || "user"
+    db.collection(CONNECTIONS_COLLECTION)
+      .where("users", "array-contains", currentUid)
+      .get()
+      .then(async function (connectionSnap) {
+        var connectedUsers = [];
+        connectionSnap.forEach(function (doc) {
+          var data = doc.data() || {};
+          var users = Array.isArray(data.users) ? data.users : [];
+          var otherUid = users.find(function (uid) { return uid && uid !== currentUid; }) || null;
+          if (otherUid) connectedUsers.push(otherUid);
         });
-      });
 
-      listEl.appendChild(item);
-    });
+        if (!connectedUsers.length) {
+          listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+          return;
+        }
+
+        var items = await Promise.all(connectedUsers.map(async function (otherUid) {
+          var profile = { username: "user", uid: otherUid };
+          var lastMessage = "No messages yet";
+          var updatedAt = null;
+          var chatId = null;
+
+          try {
+            var userDoc = await db.collection("users").doc(otherUid).get();
+            if (userDoc.exists) {
+              var userData = userDoc.data() || {};
+              profile.username = userData.username || "user";
+              profile.photoURL = userData.photoURL || "";
+            }
+          } catch (_) {}
+
+          try {
+            var chatsSnap = await db
+              .collection(CHATS_COLLECTION)
+              .where("participants", "array-contains", currentUid)
+              .orderBy("updatedAt", "desc")
+              .limit(50)
+              .get();
+            chatsSnap.forEach(function (chatDoc) {
+              if (chatId) return;
+              var chatData = chatDoc.data() || {};
+              var participants = Array.isArray(chatData.participants) ? chatData.participants : [];
+              if (participants.indexOf(otherUid) !== -1) {
+                chatId = chatDoc.id;
+                lastMessage = chatData.lastMessage || "No messages yet";
+                updatedAt = chatData.updatedAt || null;
+              }
+            });
+          } catch (_) {}
+
+          return {
+            chatId: chatId,
+            otherUid: otherUid,
+            username: profile.username,
+            photoURL: profile.photoURL || "",
+            lastMessage: lastMessage,
+            updatedAt: updatedAt
+          };
+        }));
+
+        listEl.innerHTML = "";
+        items.forEach(function (chat) {
+          var item = document.createElement("button");
+          item.type = "button";
+          item.className = "vc-chat-list-item";
+
+          var timeText = "";
+          if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+            timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+          }
+
+          item.innerHTML =
+            '<div class="vc-chat-list-top">' +
+            '<span class="vc-chat-list-username">@' + _esc(chat.username || "user") + "</span>" +
+            (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+            "</div>" +
+            '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
+
+          item.addEventListener("click", async function () {
+            var existingChatId = chat.chatId;
+            if (!existingChatId) {
+              existingChatId = await _getOrCreateChat(chat.otherUid);
+            }
+            _openChatUI(existingChatId, {
+              uid: chat.otherUid,
+              username: chat.username || "user",
+              photoURL: chat.photoURL || ""
+            });
+          });
+
+          listEl.appendChild(item);
+        });
+      })
+      .catch(function () {
+        listEl.innerHTML = '<div class="vc-chat-list-empty">Could not load chats</div>';
+      });
   }
 
   function _stopListening() {
@@ -1350,12 +1438,19 @@ async function _getOrCreateChat(otherUid) {
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
-  var chatContainer = document.getElementById("vcChatViewContainer");
-  if (!chatContainer) return;
+  var homeScreen = document.getElementById("homeScreen");
+  var chatContainer = document.getElementById("chatScreen");
+  if (!homeScreen || !chatContainer) return;
 
   _activeChatId  = chatId;
   otherProfile = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
+
+  homeScreen.style.display = "none";
+  chatContainer.style.display = "block";
+  homeScreen.innerHTML = "";
+  chatContainer.innerHTML = "";
+  _setCurrentView("chat");
 
   var username = otherProfile.username || "user";
   var photo    = otherProfile.photoURL || "";
@@ -1397,8 +1492,6 @@ function _openChatUI(chatId, otherProfile) {
 
     '</section>';
 
-  _setCurrentView("chat");
-
   // ── Back button → return to home chat list ───────────────────────────
   var backBtn = document.getElementById("vcBackBtn");
   if (backBtn) {
@@ -1409,6 +1502,10 @@ function _openChatUI(chatId, otherProfile) {
       }
       _activeChatId  = null;
       _activeChatUid = null;
+      chatContainer.style.display = "none";
+      homeScreen.style.display = "block";
+      homeScreen.innerHTML = "";
+      chatContainer.innerHTML = "";
       _setCurrentView("home");
       _renderChatList();
     });
