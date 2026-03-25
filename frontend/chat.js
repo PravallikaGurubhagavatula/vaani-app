@@ -408,20 +408,37 @@
       .where("participants", "array-contains", currentUid)
       .orderBy("updatedAt", "desc")
       .onSnapshot(
-        function (snapshot) {
-          var nextList = [];
+        async function (snapshot) {
+          var baseList = [];
           snapshot.forEach(function (doc) {
             var data = doc.data() || {};
             var participants = Array.isArray(data.participants) ? data.participants : [];
             var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
 
-            nextList.push({
+            baseList.push({
               chatId: doc.id,
               otherUid: otherUid,
               lastMessage: data.lastMessage || "",
               updatedAt: data.updatedAt || null
             });
           });
+
+          var nextList = await Promise.all(baseList.map(async function (chat) {
+            if (!chat.otherUid) {
+              return Object.assign({}, chat, { username: "user", displayName: null });
+            }
+
+            try {
+              var userDoc = await db.collection("users").doc(chat.otherUid).get();
+              var userData = userDoc.exists ? (userDoc.data() || {}) : {};
+              return Object.assign({}, chat, {
+                username: userData.username || "user",
+                displayName: userData.displayName || null
+              });
+            } catch (e) {
+              return Object.assign({}, chat, { username: "user", displayName: null });
+            }
+          }));
 
           ctx._chatList = nextList;
         },
