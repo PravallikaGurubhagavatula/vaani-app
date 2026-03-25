@@ -475,8 +475,6 @@
 
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
-    var homeScreen = document.getElementById("homeScreen");
-    var chatScreen = document.getElementById("chatScreen");
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
       : null;
@@ -484,30 +482,6 @@
       ? window._vaaniCurrentUser.uid
       : null;
     if (!listEl || !db || !currentUid) return;
-
-    if (homeScreen) homeScreen.innerHTML = "";
-    if (chatScreen) chatScreen.innerHTML = "";
-
-    var searchTemplate =
-      '<div class="vc-search-wrap" id="vcSearchWrap">' +
-      '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
-      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div>' +
-      "</div>" +
-      '<div class="vc-requests-wrap">' +
-      '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
-      '<div class="vc-requests-panel" id="vcRequestsPanel">' +
-      '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div>' +
-      "</div>" +
-      "</div>" +
-      '<div class="vc-chat-list" id="vcChatList"></div>';
-
-    if (homeScreen) {
-      homeScreen.innerHTML = searchTemplate;
-      listEl = document.getElementById("vcChatList");
-      _bindUserSearch();
-      _bindIncomingRequestActions();
-      _renderIncomingRequests(incomingRequests);
-    }
 
     listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
 
@@ -1446,10 +1420,6 @@ function _openChatUI(chatId, otherProfile) {
   otherProfile = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
 
-  homeScreen.style.display = "none";
-  chatContainer.style.display = "block";
-  homeScreen.innerHTML = "";
-  chatContainer.innerHTML = "";
   _setCurrentView("chat");
 
   var username = otherProfile.username || "user";
@@ -1502,12 +1472,7 @@ function _openChatUI(chatId, otherProfile) {
       }
       _activeChatId  = null;
       _activeChatUid = null;
-      chatContainer.style.display = "none";
-      homeScreen.style.display = "block";
-      homeScreen.innerHTML = "";
-      chatContainer.innerHTML = "";
       _setCurrentView("home");
-      _renderChatList();
     });
   }
 
