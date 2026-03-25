@@ -487,18 +487,11 @@
         '<div class="vc-chat-list-last">' + _esc(lastMessage) + "</div>";
 
       item.addEventListener("click", function () {
-        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-          ? window.vaaniRouter.getDb()
-          : null;
-        var targetUid = chat.otherUid || "";
-        if (!db || !targetUid) return;
+        var chatId = chat.chatId || "";
+        var otherUid = chat.otherUid || "";
+        if (!chatId || !otherUid) return;
 
-        _fetchOtherProfile(db, targetUid)
-          .then(function (profile) {
-            profile.uid = targetUid;
-            _openChatUI(chat.chatId, profile);
-          })
-          .catch(function () {});
+        _openChatUI(chatId, otherUid);
       });
 
       listEl.appendChild(item);
