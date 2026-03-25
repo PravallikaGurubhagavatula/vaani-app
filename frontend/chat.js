@@ -357,7 +357,12 @@
     }
   }
 
-  function _renderSearchResults(dropdown, users) {
+  function _isSearchItemDisabled(state, isSelf) {
+    if (isSelf) return true;
+    return state === "connected" || state === "requested";
+  }
+
+  function _renderSearchResults(dropdown, users, stateByUid, currentUid) {
     if (!dropdown) return;
 
     if (!users || !users.length) {
@@ -371,9 +376,16 @@
       var name = item.name || username;
       var photo = item.photoURL || "";
       var initial = (username.charAt(0) || "U").toUpperCase();
+      var uid = item.uid || "";
+      var state = stateByUid && uid ? stateByUid[uid] || "none" : "none";
+      var isSelf = uid && currentUid && uid === currentUid;
+      var label = "Connect";
+      if (state === "requested") label = "Requested";
+      if (state === "connected") label = "Connected";
+      var disabled = _isSearchItemDisabled(state, isSelf);
 
       return (
-        '<button class="vc-search-item" type="button" data-uid="' + _esc(item.uid || "") + '">' +
+        '<button class="vc-search-item" type="button" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '"' + (disabled ? " disabled" : "") + ">" +
         '<span class="vc-search-avatar">' +
         (photo
           ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
@@ -383,7 +395,7 @@
         '<span class="vc-search-username">@' + _esc(username) + "</span>" +
         '<span class="vc-search-name">' + _esc(name) + "</span>" +
         "</span>" +
-        '<span class="vc-search-action" data-uid="' + _esc(item.uid || "") + '">Connect</span>' +
+        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>" +
         "</button>"
       );
     }).join("");
@@ -394,14 +406,20 @@
 
   function _setSearchItemState(dropdown, uid, state) {
     if (!dropdown || !uid) return;
+    var itemEl = dropdown.querySelector('.vc-search-item[data-uid="' + uid + '"]');
     var actionEl = dropdown.querySelector('.vc-search-action[data-uid="' + uid + '"]');
-    if (!actionEl) return;
+    if (!actionEl || !itemEl) return;
     var label = "Connect";
     if (state === "requested") label = "Requested";
     if (state === "connected") label = "Connected";
     if (state === "incoming") label = "Respond";
     actionEl.textContent = label;
     actionEl.setAttribute("data-state", state || "none");
+    itemEl.setAttribute("data-state", state || "none");
+    var isSelf = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? window._vaaniCurrentUser.uid === uid
+      : false;
+    itemEl.disabled = _isSearchItemDisabled(state, isSelf);
   }
 
   async function _isConnected(db, currentUid, targetUid) {
@@ -442,6 +460,62 @@
     if (!incoming.empty) return "incoming";
 
     return "none";
+  }
+
+  async function _buildSearchItemStates(db, currentUid, users) {
+    var stateByUid = {};
+    if (!db || !currentUid || !users || !users.length) return stateByUid;
+
+    var targetUids = users
+      .map(function (item) {
+        return item.uid || "";
+      })
+      .filter(Boolean);
+    if (!targetUids.length) return stateByUid;
+
+    targetUids.forEach(function (uid) {
+      stateByUid[uid] = "none";
+    });
+
+    var connectionsSnap = await db
+      .collection(CONNECTIONS_COLLECTION)
+      .where("users", "array-contains", currentUid)
+      .limit(200)
+      .get();
+
+    var connectedSet = new Set();
+    connectionsSnap.forEach(function (doc) {
+      var data = doc.data() || {};
+      var usersInConnection = data.users || [];
+      usersInConnection.forEach(function (uid) {
+        if (uid && uid !== currentUid) connectedSet.add(uid);
+      });
+    });
+
+    var outgoingSnap = await db
+      .collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .limit(200)
+      .get();
+
+    var requestedSet = new Set();
+    outgoingSnap.forEach(function (doc) {
+      var data = doc.data() || {};
+      if (data.toUid) requestedSet.add(data.toUid);
+    });
+
+    targetUids.forEach(function (uid) {
+      if (connectedSet.has(uid)) {
+        stateByUid[uid] = "connected";
+        return;
+      }
+      if (requestedSet.has(uid)) {
+        stateByUid[uid] = "requested";
+      }
+    });
+
+    return stateByUid;
   }
 
   async function _sendConnectionRequest(db, fromUid, toUid) {
@@ -643,7 +717,11 @@
         });
       });
 
-      _renderSearchResults(dropdown, users);
+      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+        ? window._vaaniCurrentUser.uid
+        : "";
+      var stateByUid = await _buildSearchItemStates(db, currentUid, users);
+      _renderSearchResults(dropdown, users, stateByUid, currentUid);
     } catch (_) {
       if (requestId !== _searchRequestSeq) return;
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
@@ -679,23 +757,7 @@
       _searchDebounceTimer = setTimeout(function () {
         _searchRequestSeq += 1;
         var requestId = _searchRequestSeq;
-        _fetchUsersByPrefix(query, requestId, searchDropdown).then(function () {
-          var uid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-            ? window._vaaniCurrentUser.uid
-            : "";
-          if (!uid) return;
-          var buttons = searchDropdown.querySelectorAll(".vc-search-item");
-          var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-            ? window.vaaniRouter.getDb()
-            : null;
-          if (!db) return;
-          buttons.forEach(async function (buttonEl) {
-            var targetUid = buttonEl.getAttribute("data-uid");
-            if (!targetUid || targetUid === uid) return;
-            var state = await _getRequestState(db, uid, targetUid);
-            _setSearchItemState(searchDropdown, targetUid, state);
-          });
-        });
+        _fetchUsersByPrefix(query, requestId, searchDropdown);
       }, 300);
     }
 
@@ -716,10 +778,19 @@
         ? window.vaaniRouter.getDb()
         : null;
       if (!db) return;
+      var currentState = btn.getAttribute("data-state") || "none";
+      if (currentState === "connected" || currentState === "requested") return;
 
       var alreadyRequested = await _hasPendingConnectionRequest(db, currentUid, targetUid);
       if (alreadyRequested) {
+        _setSearchItemState(searchDropdown, targetUid, "requested");
         if (typeof window.showToast === "function") window.showToast("Request already sent");
+        return;
+      }
+
+      var alreadyConnected = await _isConnected(db, currentUid, targetUid);
+      if (alreadyConnected) {
+        _setSearchItemState(searchDropdown, targetUid, "connected");
         return;
       }
 
