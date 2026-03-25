@@ -1305,7 +1305,8 @@ async function _sendMessage() {
 }
 
 function _renderMessages(messages) {
-  var container = document.getElementById("messagesContainer") || document.getElementById("vcChatMessages");
+  // Container ID matches the one injected by _openChatUI above
+  var container = document.getElementById("messagesContainer");
   if (!container) return;
 
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
@@ -1321,17 +1322,21 @@ function _renderMessages(messages) {
 
   messages.forEach(function (msg) {
     var isOwn = !!currentUid && msg.senderId === currentUid;
-    var row = document.createElement("div");
+
+    // ── Row ────────────────────────────────────────────────────────────
+    var row    = document.createElement("div");
     row.className = "vc-msg-row " + (isOwn ? "vc-msg-own" : "vc-msg-other");
 
+    // ── Bubble ─────────────────────────────────────────────────────────
     var bubble = document.createElement("div");
-    bubble.className = "vc-msg-bubble";
+    bubble.className  = "vc-msg-bubble";
     bubble.textContent = String(msg.text || "");
 
     row.appendChild(bubble);
     container.appendChild(row);
   });
 
+  // Scroll to the latest message
   container.scrollTop = container.scrollHeight;
 }
 
@@ -1420,14 +1425,69 @@ function _openChatUI(chatId, otherProfile) {
   if (!chatScreen) return;
 
   _activeChatId  = chatId;
-  otherProfile = otherProfile || {};
+  otherProfile   = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
 
   _setCurrentView("chat");
 
-  var otherUid = otherProfile.uid || otherProfile.username || "user";
-  chatScreen.innerHTML = '\n  <div class="chat-header">\n    <button id="backBtn">←</button>\n    <span>@' + _esc(otherUid) + '</span>\n  </div>\n\n  <div id="messagesContainer"></div>\n\n  <div class="chat-input">\n    <input id="messageInput" placeholder="Type a message..." />\n    <button id="sendBtn">Send</button>\n  </div>\n';
+  var username = otherProfile.username || "user";
+  var photo    = otherProfile.photoURL || "";
+  var initial  = (username.charAt(0) || "U").toUpperCase();
 
+  // ── Avatar: image or initial ──────────────────────────────────────────
+  var avatarHTML = photo
+    ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+    : '<span class="vc-chat-initial">' + _esc(initial) + '</span>';
+
+  // ── Send icon SVG (matches .vc-chat-send svg in CSS) ─────────────────
+  var sendIconSVG =
+    '<svg viewBox="0 0 24 24">' +
+      '<line x1="22" y1="2" x2="11" y2="13"/>' +
+      '<polygon points="22 2 15 22 11 13 2 9 22 2"/>' +
+    '</svg>';
+
+  // ── Back arrow SVG (matches .vc-back-btn svg in CSS) ─────────────────
+  var backIconSVG =
+    '<svg viewBox="0 0 24 24">' +
+      '<polyline points="15 18 9 12 15 6"/>' +
+    '</svg>';
+
+  // ── Inject EXACT structure expected by chat-isolated.css ─────────────
+  chatScreen.innerHTML =
+    '<div class="vc-chat-view">' +
+
+      '<div class="vc-chat-header">' +
+        '<button class="vc-back-btn" id="backBtn" aria-label="Go back">' +
+          backIconSVG +
+        '</button>' +
+        '<div class="vc-chat-avatar">' +
+          avatarHTML +
+        '</div>' +
+        '<div class="vc-chat-hinfo">' +
+          '<div class="vc-chat-hname">@' + _esc(username) + '</div>' +
+          '<div class="vc-chat-hsub">Connected</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="vc-chat-messages" id="messagesContainer"></div>' +
+
+      '<div class="vc-chat-input-bar">' +
+        '<input' +
+          ' id="messageInput"' +
+          ' class="vc-chat-input"' +
+          ' type="text"' +
+          ' placeholder="Type a message..."' +
+          ' autocomplete="off"' +
+          ' spellcheck="false"' +
+        '>' +
+        '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' +
+          sendIconSVG +
+        '</button>' +
+      '</div>' +
+
+    '</div>';
+
+  // ── Wire up back button ───────────────────────────────────────────────
   document.getElementById("backBtn").onclick = function () {
     if (_unsubscribeMessages) {
       _unsubscribeMessages();
@@ -1438,8 +1498,10 @@ function _openChatUI(chatId, otherProfile) {
     _setCurrentView("home");
   };
 
+  // ── Wire up input + send ──────────────────────────────────────────────
   var messageInput = document.getElementById("messageInput");
-  var sendBtn = document.getElementById("sendBtn");
+  var sendBtn      = document.getElementById("sendBtn");
+
   function _toggleSendState() {
     if (!messageInput || !sendBtn) return;
     sendBtn.disabled = !String(messageInput.value || "").trim();
@@ -1453,7 +1515,10 @@ function _openChatUI(chatId, otherProfile) {
         _sendMessage();
       }
     });
+    // Auto-focus so keyboard opens on mobile
+    messageInput.focus();
   }
+
   if (sendBtn) {
     sendBtn.addEventListener("click", _sendMessage);
   }
@@ -1461,7 +1526,7 @@ function _openChatUI(chatId, otherProfile) {
   _toggleSendState();
   _listenToMessages(chatId);
 
-  console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", otherUid);
+  console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", username);
 }
 
    
