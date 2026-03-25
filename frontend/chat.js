@@ -365,7 +365,6 @@
   function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
     if (!dropdown) return;
 
-    console.log("RENDER INPUT LIST:", list);
 
     if (!list || list.length === 0) {
       dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
@@ -378,9 +377,10 @@
     var visibleCount = 0;
     list.forEach(function (data) {
       var uid = data && data.uid ? data.uid : "";
-      if (uid && currentUid && uid === currentUid) return;
+      if (!uid || (currentUid && uid === currentUid)) return;
 
-      var username = (data && data.username) || "user";
+      var username = (data && data.username) || "";
+      if (!username) return;
       var name = (data && data.name) || username;
       var photo = (data && data.photoURL) || "";
       var initial = (username.charAt(0) || "U").toUpperCase();
@@ -714,10 +714,6 @@
 
     try {
       var normalizedQuery = (value || "").trim().toLowerCase();
-      console.log("Search query:", normalizedQuery);
-
-      var allUsers = await db.collection("users").get();
-      console.log("ALL USERS:", allUsers.docs.map(function (d) { return d.data(); }));
 
       var snapshot = await db
         .collection("users")
@@ -726,7 +722,6 @@
         .endAt(normalizedQuery + "\uf8ff")
         .limit(10)
         .get();
-      console.log("Firestore docs:", snapshot.docs.map(function (d) { return d.data(); }));
 
       if (requestId !== _searchRequestSeq) return;
 
@@ -737,10 +732,13 @@
       snapshot.forEach(function (doc) {
         var data = doc.data();
         if (!data) return;
-        if (data.uid === currentUid) return;
+
+        var uid = doc.id;
+        if (!uid || uid === currentUid) return;
+        if (!data.username) return;
 
         list.push({
-          uid: data.uid,
+          uid: uid,
           username: data.username,
           name: data.name,
           photoURL: data.photoURL || ""
