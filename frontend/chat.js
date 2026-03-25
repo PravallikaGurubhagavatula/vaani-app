@@ -1453,9 +1453,8 @@ function _openChatUI(chatId, otherProfile) {
     '</svg>';
 
   // ── Inject EXACT structure expected by chat-isolated.css ─────────────
-  chatScreen.innerHTML =
+  var chatMarkup =
     '<div class="vc-chat-view">' +
-
       '<div class="vc-chat-header">' +
         '<button class="vc-back-btn" id="backBtn" aria-label="Go back">' +
           backIconSVG +
@@ -1468,9 +1467,7 @@ function _openChatUI(chatId, otherProfile) {
           '<div class="vc-chat-hsub">Connected</div>' +
         '</div>' +
       '</div>' +
-
       '<div class="vc-chat-messages" id="messagesContainer"></div>' +
-
       '<div class="vc-chat-input-bar">' +
         '<input' +
           ' id="messageInput"' +
@@ -1484,8 +1481,8 @@ function _openChatUI(chatId, otherProfile) {
           sendIconSVG +
         '</button>' +
       '</div>' +
-
     '</div>';
+  chatScreen.innerHTML = chatMarkup;
 
   // ── Wire up back button ───────────────────────────────────────────────
   document.getElementById("backBtn").onclick = function () {
