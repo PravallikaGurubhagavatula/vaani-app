@@ -17,6 +17,7 @@
   var _activeMessagesSignature = "";    // avoids duplicate message renders
   var _optimisticMessages = [];         // local pending messages for instant UI feedback
   var _unsubscribeChatList = null;      // realtime chat list listener handle
+  var _activeChatListListenerUid = null; // guard to avoid duplicate chat-list listeners
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
   var _renderedChatListSignature = "";  // prevents duplicate chat-list paints
@@ -435,16 +436,21 @@
         var data = doc.exists ? (doc.data() || {}) : {};
         var profile = {
           username: data.username || "user",
+          displayName: data.displayName || null,
           photoURL: data.photoURL || ""
         };
         _userProfileCache[uid] = profile;
         return profile;
       })
       .catch(function () {
-        var fallback = { username: "user", photoURL: "" };
+        var fallback = { username: "user", displayName: null, photoURL: "" };
         _userProfileCache[uid] = fallback;
         return fallback;
       });
+  }
+
+  function _timestampToMillis(ts) {
+    return ts && typeof ts.toMillis === "function" ? ts.toMillis() : 0;
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -504,11 +510,13 @@
       : null;
 
     if (!db || !currentUid) return;
+    if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
 
     if (_unsubscribeChatList) {
       _unsubscribeChatList();
       _unsubscribeChatList = null;
     }
+    _activeChatListListenerUid = String(currentUid);
 
     window.vaaniChat._chatList = [];
     window.vaaniChat.conversations = [];
@@ -524,56 +532,41 @@
             var data = doc.data() || {};
             var participants = Array.isArray(data.participants) ? data.participants : [];
             var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
-            if (!otherUid || byOtherUid[otherUid]) return;
+            if (!otherUid) return;
 
-            byOtherUid[otherUid] = {
+            var nextConversation = {
               id: doc.id,
               chatId: data.chatId || null,
               otherUid: otherUid,
               lastMessage: data.text || "",
               timestamp: data.timestamp || null
             };
-          });
-
-          var baseConversations = Object.keys(byOtherUid).map(function (uid) {
-            return byOtherUid[uid];
-          });
-
-          var conversations = await Promise.all(baseConversations.map(async function (conversation) {
-            var fallbackUser = { uid: conversation.otherUid, username: "user", displayName: null, photoURL: "" };
-
-            try {
-              var userDoc = await db.collection("users").doc(conversation.otherUid).get();
-              var userData = userDoc.exists ? (userDoc.data() || {}) : {};
-              return {
-                id: conversation.id,
-                chatId: conversation.chatId,
-                otherUid: conversation.otherUid,
-                user: {
-                  uid: conversation.otherUid,
-                  username: userData.username || "user",
-                  displayName: userData.displayName || null,
-                  photoURL: userData.photoURL || ""
-                },
-                lastMessage: conversation.lastMessage || "",
-                timestamp: conversation.timestamp || null
-              };
-            } catch (e) {
-              return {
-                id: conversation.id,
-                chatId: conversation.chatId,
-                otherUid: conversation.otherUid,
-                user: fallbackUser,
-                lastMessage: conversation.lastMessage || "",
-                timestamp: conversation.timestamp || null
-              };
+            var prevConversation = byOtherUid[otherUid];
+            if (!prevConversation || _timestampToMillis(nextConversation.timestamp) > _timestampToMillis(prevConversation.timestamp)) {
+              byOtherUid[otherUid] = nextConversation;
             }
+          });
+
+          var baseConversations = Object.keys(byOtherUid).map(function (uid) { return byOtherUid[uid]; });
+          var conversations = await Promise.all(baseConversations.map(async function (conversation) {
+            var profile = await _getUserProfileCached(db, conversation.otherUid);
+            return {
+              id: conversation.id,
+              chatId: conversation.chatId,
+              otherUid: conversation.otherUid,
+              user: {
+                uid: conversation.otherUid,
+                username: profile.username || "user",
+                displayName: profile.displayName || null,
+                photoURL: profile.photoURL || ""
+              },
+              lastMessage: conversation.lastMessage || "",
+              timestamp: conversation.timestamp || null
+            };
           }));
 
           conversations.sort(function (a, b) {
-            var aTime = a.timestamp && typeof a.timestamp.toMillis === "function" ? a.timestamp.toMillis() : 0;
-            var bTime = b.timestamp && typeof b.timestamp.toMillis === "function" ? b.timestamp.toMillis() : 0;
-            return bTime - aTime;
+            return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp);
           });
 
           var signature = conversations.map(function (conversation) {
@@ -607,6 +600,7 @@
           console.error("[Vaani] chat list listener error:", err);
           window.vaaniChat._chatList = [];
           window.vaaniChat.conversations = [];
+          _activeChatListListenerUid = null;
           _renderChatList();
         }
       );
@@ -727,6 +721,7 @@
       _unsubscribeChatList();
       _unsubscribeChatList = null;
     }
+    _activeChatListListenerUid = null;
     _renderedChatListSignature = "";
     _createChatListListener._lastSignature = "";
     _fetchConnections._lastSignature = "";
