@@ -613,41 +613,28 @@
 
   async function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb()
-      : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-      ? window._vaaniCurrentUser.uid
-      : null;
-    if (!listEl || !db || !currentUid) return;
+    if (!listEl) return;
 
-    var chatMapByUid = Object.create(null);
-    (window.vaaniChat._chatList || []).forEach(function (chat) {
-      if (chat && chat.otherUid) chatMapByUid[chat.otherUid] = chat;
-    });
-
-    var connectedUsers = Array.from(_connectedUidSet);
-    if (!connectedUsers.length) {
+    var conversations = Array.isArray(window.vaaniChat.conversations)
+      ? window.vaaniChat.conversations
+      : [];
+    if (!conversations.length) {
       listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
       _renderedChatListSignature = "empty";
       return;
     }
 
-    var items = await Promise.all(connectedUsers.map(async function (otherUid) {
-      var chat = chatMapByUid[otherUid] || null;
-      var profile = chat
-        ? { username: chat.username || "user", photoURL: chat.photoURL || "" }
-        : await _getUserProfileCached(db, otherUid);
-
+    var items = conversations.map(function (conversation) {
+      var profile = conversation && conversation.user ? conversation.user : {};
       return {
-        chatId: chat && chat.chatId ? chat.chatId : null,
-        otherUid: otherUid,
+        chatId: conversation && conversation.chatId ? conversation.chatId : null,
+        otherUid: conversation && conversation.otherUid ? conversation.otherUid : null,
         username: profile.username || "user",
         photoURL: profile.photoURL || "",
-        lastMessage: chat && chat.lastMessage ? chat.lastMessage : "No messages yet",
-        updatedAt: chat ? chat.updatedAt || null : null
+        lastMessage: conversation && conversation.lastMessage ? conversation.lastMessage : "No messages yet",
+        updatedAt: conversation && conversation.timestamp ? conversation.timestamp : null
       };
-    }));
+    });
 
     items.sort(function (a, b) {
       var aTime = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
