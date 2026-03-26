@@ -1394,7 +1394,7 @@ function _renderMessages() {
 
   _messages.forEach(function (msg) {
     var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
-    var isOwn = senderId && currentUid && senderId === currentUid;
+    var isOwn = senderId === currentUid;
     var row = document.createElement("div");
     row.className = isOwn
       ? "vc-msg-row vc-msg-own"
