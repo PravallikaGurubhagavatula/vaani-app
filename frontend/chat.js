@@ -569,10 +569,21 @@
 
           item.addEventListener("click", async function () {
             console.log("User clicked:", chat.username);
+            if (!chat.otherUid) {
+              console.error("[Vaani] Missing otherUid for chat list item:", chat);
+              return;
+            }
+
             var existingChatId = chat.chatId;
             if (!existingChatId) {
               existingChatId = await _getOrCreateChat(chat.otherUid);
             }
+            if (!existingChatId) {
+              console.error("[Vaani] Invalid chatId for chat list item:", chat);
+              return;
+            }
+
+            console.log("Opening chat for UID:", chat.otherUid);
             _openChatUI(existingChatId, {
               uid: chat.otherUid,
               username: chat.username || "user",
