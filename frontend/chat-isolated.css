@@ -649,6 +649,8 @@ body.vm-menu-open {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-height: 0;
   background: var(--bg, #09090f);
 }
 
@@ -726,6 +728,7 @@ body.vm-menu-open {
 
 #vaaniChat .vc-chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
   display: flex;
@@ -747,10 +750,12 @@ body.vm-menu-open {
 
 #vaaniChat .vc-msg-own {
   justify-content: flex-end;
+  align-self: flex-end;
 }
 
 #vaaniChat .vc-msg-other {
   justify-content: flex-start;
+  align-self: flex-start;
 }
 
 #vaaniChat .vc-msg-bubble {
