@@ -22,6 +22,7 @@
   var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
   var _renderedChatListSignature = "";  // prevents duplicate chat-list paints
   var _chatListOpenRequestId = 0;       // prevents stale async click handlers from opening wrong chat
+  var _chatBackfillPromisesByUid = Object.create(null); // uid -> Promise for one-time legacy chat backfill
   var _activeChatId = null;          // chatId currently open
   var _selectedChatUser = null;      // null => home view, object => chat view
   var _messages = [];                // active chat messages
@@ -30,6 +31,7 @@
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
+  var LEGACY_MESSAGES_COLLECTION = "vaani_messages";
   var incomingRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
@@ -43,6 +45,130 @@
     var el = document.createElement("div");
     el.appendChild(document.createTextNode(String(value || "")));
     return el.innerHTML;
+  }
+
+  function _safeTimestampValue(value) {
+    if (!value) return null;
+    if (typeof value.toMillis === "function") return value;
+    if (value instanceof Date) return firebase.firestore.Timestamp.fromDate(value);
+    if (typeof value === "number" && isFinite(value)) {
+      return firebase.firestore.Timestamp.fromMillis(value);
+    }
+    return null;
+  }
+
+  function _extractLegacyMessageUsers(data) {
+    if (!data) return null;
+    var senderId = data.senderId || data.uid || data.fromUid || data.fromUserId || "";
+    var receiverId = data.receiverId || data.toUid || data.toUserId || "";
+    var participants = Array.isArray(data.participants) ? data.participants.filter(Boolean) : [];
+
+    if (!senderId && participants.length) senderId = participants[0];
+    if (!receiverId && participants.length > 1) {
+      receiverId = participants.find(function (uid) { return uid && uid !== senderId; }) || "";
+    }
+    if (!senderId || !receiverId || senderId === receiverId) return null;
+
+    return [String(senderId), String(receiverId)].sort();
+  }
+
+  async function _backfillChatsFromLegacyMessages() {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? String(window._vaaniCurrentUser.uid)
+      : "";
+
+    if (!db || !currentUid) return;
+    if (_chatBackfillPromisesByUid[currentUid]) return _chatBackfillPromisesByUid[currentUid];
+
+    _chatBackfillPromisesByUid[currentUid] = (async function () {
+      try {
+        var existingChatKeySet = new Set();
+        var existingChatSnap = await db.collection(CHATS_COLLECTION)
+          .where("participants", "array-contains", currentUid)
+          .get();
+
+        existingChatSnap.forEach(function (doc) {
+          var data = doc.data() || {};
+          var participants = Array.isArray(data.participants) ? data.participants.filter(Boolean).map(String).sort() : [];
+          if (participants.length === 2) existingChatKeySet.add(participants.join("|"));
+        });
+
+        var groupedByPair = Object.create(null);
+        var legacyQueries = [
+          db.collection(LEGACY_MESSAGES_COLLECTION).where("senderId", "==", currentUid).get(),
+          db.collection(LEGACY_MESSAGES_COLLECTION).where("receiverId", "==", currentUid).get(),
+          db.collection(LEGACY_MESSAGES_COLLECTION).where("uid", "==", currentUid).get()
+        ];
+        var legacySnapshots = await Promise.all(legacyQueries);
+        var seenMessageIds = new Set();
+
+        legacySnapshots.forEach(function (snapshot) {
+          snapshot.forEach(function (doc) {
+            if (seenMessageIds.has(doc.id)) return;
+            seenMessageIds.add(doc.id);
+
+            var data = doc.data() || {};
+            var participants = _extractLegacyMessageUsers(data);
+            if (!participants || participants.indexOf(currentUid) === -1) return;
+
+            var pairKey = participants.join("|");
+            var existing = groupedByPair[pairKey];
+            var timestamp = _safeTimestampValue(data.timestamp) || _safeTimestampValue(data.createdAt);
+            if (!existing) {
+              groupedByPair[pairKey] = {
+                participants: participants,
+                latestText: String(data.text || ""),
+                latestTimestamp: timestamp
+              };
+              return;
+            }
+
+            var prevMillis = existing.latestTimestamp && typeof existing.latestTimestamp.toMillis === "function"
+              ? existing.latestTimestamp.toMillis()
+              : 0;
+            var nextMillis = timestamp && typeof timestamp.toMillis === "function"
+              ? timestamp.toMillis()
+              : 0;
+            if (nextMillis >= prevMillis) {
+              existing.latestText = String(data.text || "");
+              existing.latestTimestamp = timestamp;
+            }
+          });
+        });
+
+        var pairKeys = Object.keys(groupedByPair);
+        if (!pairKeys.length) return;
+
+        var batch = db.batch();
+        var writes = 0;
+        pairKeys.forEach(function (pairKey) {
+          if (existingChatKeySet.has(pairKey)) return;
+          var group = groupedByPair[pairKey];
+          if (!group || !group.participants || group.participants.length !== 2) return;
+
+          var ts = group.latestTimestamp || firebase.firestore.FieldValue.serverTimestamp();
+          batch.set(db.collection(CHATS_COLLECTION).doc(pairKey), {
+            participants: group.participants,
+            lastMessage: group.latestText || "",
+            updatedAt: ts,
+            createdAt: ts
+          }, { merge: true });
+          writes += 1;
+        });
+
+        if (writes > 0) {
+          await batch.commit();
+          console.log("[Vaani] Legacy chat backfill created " + writes + " chat documents.");
+        }
+      } catch (err) {
+        console.error("[Vaani] Legacy chat backfill failed:", err);
+      }
+    })();
+
+    return _chatBackfillPromisesByUid[currentUid];
   }
 
   function _googleLogoSvg() {
@@ -354,7 +480,9 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
-    _createChatListListener();         // start realtime chat list listener
+    _backfillChatsFromLegacyMessages().finally(function () {
+      _createChatListListener();       // start realtime chat list listener
+    });
     _renderChatList();
     _setSelectedChatUser(null);
   }
