@@ -15,6 +15,7 @@
   var _unsubscribeMessages = null;      // realtime messages listener handle
   var _activeMessageListenerKey = null; // guard against duplicate listeners
   var _activeMessagesSignature = "";    // avoids duplicate message renders
+  var _optimisticMessages = [];         // local pending messages for instant UI feedback
   var _unsubscribeChatList = null;      // realtime chat list listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
@@ -390,7 +391,7 @@
       : "";
 
     if (_selectedChatUser && currentUid && otherUid) {
-      _listenToMessages(currentUid, otherUid);
+      _listenToMessages(currentUid, otherUid, _activeChatId);
     } else {
       _teardownMessageListener();
     }
@@ -421,6 +422,7 @@
     }
     _activeMessageListenerKey = null;
     _activeMessagesSignature = "";
+    _optimisticMessages = [];
   }
 
   function _getUserProfileCached(db, uid) {
@@ -1360,13 +1362,27 @@ async function _sendMessage() {
   var sendBtn = document.getElementById("sendBtn") || document.getElementById("vcChatSend");
   if (sendBtn && sendBtn.disabled) return;
 
+  var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+  _optimisticMessages.push({
+    _optimisticId: tempId,
+    text: message,
+    senderId: currentUser.uid,
+    timestamp: new Date()
+  });
+  _renderMessages();
+
   try {
     inputEl.disabled = true;
     if (sendBtn) sendBtn.disabled = true;
 
+    if (!_activeChatId) {
+      _activeChatId = await _getOrCreateChat(selectedChatUser.uid);
+    }
+
     await db
       .collection(MESSAGES_COLLECTION)
       .add({
+        chatId: _activeChatId || null,
         text: message,
         senderId: currentUser.uid,
         receiverId: selectedChatUser.uid,
@@ -1384,6 +1400,10 @@ async function _sendMessage() {
     _setInputMessage("");
     inputEl.value = _inputMessage;
   } catch (err) {
+    _optimisticMessages = _optimisticMessages.filter(function (m) {
+      return m._optimisticId !== tempId;
+    });
+    _renderMessages();
     console.error("[Vaani] Failed to send message:", err);
   } finally {
     inputEl.disabled = false;
@@ -1403,7 +1423,9 @@ function _renderMessages() {
 
   container.innerHTML = "";
 
-  var safeMessages = Array.isArray(_messages) ? _messages : [];
+  var safeMessages = (Array.isArray(_messages) ? _messages : []).concat(
+    Array.isArray(_optimisticMessages) ? _optimisticMessages : []
+  );
   if (safeMessages.length === 0) {
     var emptyState = document.createElement("div");
     emptyState.className = "vc-chat-empty";
@@ -1432,7 +1454,7 @@ function _renderMessages() {
   _scrollMessagesToBottom();
 }
 
-function _listenToMessages(currentUid, otherUid) {
+function _listenToMessages(currentUid, otherUid, chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
@@ -1444,17 +1466,20 @@ function _listenToMessages(currentUid, otherUid) {
   }
 
   var listenerUsers = [String(currentUid), String(otherUid)].sort();
-  var listenerKey = listenerUsers.join("::");
+  var listenerKey = chatId ? ("chat::" + String(chatId)) : listenerUsers.join("::");
   if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) return;
 
   _teardownMessageListener();
   _activeMessageListenerKey = listenerKey;
 
-  _unsubscribeMessages = db
-    .collection(MESSAGES_COLLECTION)
-    .where("participants", "array-contains", currentUid)
-    .orderBy("timestamp", "asc")
-    .onSnapshot(
+  var baseQuery = db.collection(MESSAGES_COLLECTION);
+  if (chatId) {
+    baseQuery = baseQuery.where("chatId", "==", chatId);
+  } else {
+    baseQuery = baseQuery.where("participants", "array-contains", currentUid);
+  }
+
+  _unsubscribeMessages = baseQuery.orderBy("timestamp", "asc").onSnapshot(
       function (snapshot) {
         if (_activeMessageListenerKey !== listenerKey) return;
         var messages = [];
@@ -1463,8 +1488,10 @@ function _listenToMessages(currentUid, otherUid) {
         snapshot.forEach(function (doc) {
           if (seenIds[doc.id]) return;
           var data = doc.data() || {};
-          var participants = Array.isArray(data.participants) ? data.participants : [];
-          if (participants.indexOf(otherUid) === -1) return;
+          if (!chatId) {
+            var participants = Array.isArray(data.participants) ? data.participants : [];
+            if (participants.indexOf(otherUid) === -1) return;
+          }
           seenIds[doc.id] = true;
           messages.push(data);
           messageSignatureParts.push(doc.id);
@@ -1479,6 +1506,7 @@ function _listenToMessages(currentUid, otherUid) {
         var nextSignature = messageSignatureParts.join("|");
         if (nextSignature === _activeMessagesSignature) return;
         _activeMessagesSignature = nextSignature;
+        _optimisticMessages = [];
         _setMessages(messages);
         _renderMessages();
       },
