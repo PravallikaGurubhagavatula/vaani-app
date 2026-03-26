@@ -23,6 +23,7 @@
   var _selectedChatUser = null;      // null => home view, object => chat view
   var _messages = [];                // active chat messages
   var _inputMessage = "";            // active chat input value
+  var _messagesContainerRef = null;  // active chat messages container element
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -367,6 +368,7 @@
       _activeChatId = null;
       _messages = [];
       _inputMessage = "";
+      _messagesContainerRef = null;
       _teardownMessageListener();
       home.style.display = "block";
       chat.style.display = "none";
@@ -402,6 +404,14 @@
 
   function _setInputMessage(nextValue) {
     _inputMessage = String(nextValue || "");
+  }
+
+  function _scrollMessagesToBottom() {
+    if (!_messagesContainerRef) return;
+    window.requestAnimationFrame(function () {
+      if (!_messagesContainerRef) return;
+      _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
+    });
   }
 
   function _teardownMessageListener() {
@@ -1384,7 +1394,7 @@ async function _sendMessage() {
 }
 
 function _renderMessages() {
-  var container = document.getElementById("messagesContainer");
+  var container = _messagesContainerRef;
   if (!container) return;
 
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
@@ -1399,6 +1409,7 @@ function _renderMessages() {
     emptyState.className = "vc-chat-empty";
     emptyState.textContent = "Start a conversation";
     container.appendChild(emptyState);
+    _scrollMessagesToBottom();
     return;
   }
 
@@ -1418,7 +1429,7 @@ function _renderMessages() {
     container.appendChild(row);
   });
 
-  container.scrollTop = container.scrollHeight;
+  _scrollMessagesToBottom();
 }
 
 function _listenToMessages(currentUid, otherUid) {
@@ -1589,8 +1600,10 @@ function _openChatUI(chatId, otherProfile) {
       '</div>' +
     '</div>';
   chatScreen.innerHTML = chatMarkup;
+  _messagesContainerRef = document.getElementById("messagesContainer");
   _renderMessages();
   _syncViewWithSelection();
+  _scrollMessagesToBottom();
 
   // ── Wire up back button ───────────────────────────────────────────────
   document.getElementById("backBtn").onclick = () => {
