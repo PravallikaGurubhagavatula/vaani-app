@@ -510,63 +510,102 @@
     }
 
     window.vaaniChat._chatList = [];
+    window.vaaniChat.conversations = [];
 
     _unsubscribeChatList = db
-      .collection(CHATS_COLLECTION)
+      .collection(MESSAGES_COLLECTION)
       .where("participants", "array-contains", currentUid)
-      .orderBy("updatedAt", "desc")
+      .orderBy("timestamp", "desc")
       .onSnapshot(
         async function (snapshot) {
-          var baseList = [];
+          var byOtherUid = Object.create(null);
           snapshot.forEach(function (doc) {
             var data = doc.data() || {};
             var participants = Array.isArray(data.participants) ? data.participants : [];
             var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
+            if (!otherUid || byOtherUid[otherUid]) return;
 
-            baseList.push({
-              chatId: doc.id,
+            byOtherUid[otherUid] = {
+              id: doc.id,
+              chatId: data.chatId || null,
               otherUid: otherUid,
-              lastMessage: data.lastMessage || "",
-              updatedAt: data.updatedAt || null
-            });
+              lastMessage: data.text || "",
+              timestamp: data.timestamp || null
+            };
           });
 
-          var nextList = await Promise.all(baseList.map(async function (chat) {
-            if (!chat.otherUid) {
-              return Object.assign({}, chat, { username: "user", displayName: null });
-            }
+          var baseConversations = Object.keys(byOtherUid).map(function (uid) {
+            return byOtherUid[uid];
+          });
+
+          var conversations = await Promise.all(baseConversations.map(async function (conversation) {
+            var fallbackUser = { uid: conversation.otherUid, username: "user", displayName: null, photoURL: "" };
 
             try {
-              var userDoc = await db.collection("users").doc(chat.otherUid).get();
+              var userDoc = await db.collection("users").doc(conversation.otherUid).get();
               var userData = userDoc.exists ? (userDoc.data() || {}) : {};
-              return Object.assign({}, chat, {
-                username: userData.username || "user",
-                displayName: userData.displayName || null
-              });
+              return {
+                id: conversation.id,
+                chatId: conversation.chatId,
+                otherUid: conversation.otherUid,
+                user: {
+                  uid: conversation.otherUid,
+                  username: userData.username || "user",
+                  displayName: userData.displayName || null,
+                  photoURL: userData.photoURL || ""
+                },
+                lastMessage: conversation.lastMessage || "",
+                timestamp: conversation.timestamp || null
+              };
             } catch (e) {
-              return Object.assign({}, chat, { username: "user", displayName: null });
+              return {
+                id: conversation.id,
+                chatId: conversation.chatId,
+                otherUid: conversation.otherUid,
+                user: fallbackUser,
+                lastMessage: conversation.lastMessage || "",
+                timestamp: conversation.timestamp || null
+              };
             }
           }));
 
-          var signature = nextList.map(function (chat) {
+          conversations.sort(function (a, b) {
+            var aTime = a.timestamp && typeof a.timestamp.toMillis === "function" ? a.timestamp.toMillis() : 0;
+            var bTime = b.timestamp && typeof b.timestamp.toMillis === "function" ? b.timestamp.toMillis() : 0;
+            return bTime - aTime;
+          });
+
+          var signature = conversations.map(function (conversation) {
             return [
-              chat.chatId || "",
-              chat.otherUid || "",
-              chat.lastMessage || "",
-              chat.updatedAt && typeof chat.updatedAt.toMillis === "function"
-                ? chat.updatedAt.toMillis()
+              conversation.chatId || "",
+              conversation.otherUid || "",
+              conversation.lastMessage || "",
+              conversation.timestamp && typeof conversation.timestamp.toMillis === "function"
+                ? conversation.timestamp.toMillis()
                 : ""
             ].join(":");
           }).join("|");
 
           var prev = _createChatListListener._lastSignature || "";
           _createChatListListener._lastSignature = signature;
-          window.vaaniChat._chatList = nextList;
+          window.vaaniChat.conversations = conversations;
+          window.vaaniChat._chatList = conversations.map(function (conversation) {
+            return {
+              chatId: conversation.chatId,
+              otherUid: conversation.otherUid,
+              username: conversation.user && conversation.user.username ? conversation.user.username : "user",
+              displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : null,
+              photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
+              lastMessage: conversation.lastMessage || "",
+              updatedAt: conversation.timestamp || null
+            };
+          });
           if (signature !== prev) _renderChatList();
         },
         function (err) {
           console.error("[Vaani] chat list listener error:", err);
           window.vaaniChat._chatList = [];
+          window.vaaniChat.conversations = [];
           _renderChatList();
         }
       );
