@@ -340,6 +340,8 @@
       });
     }
 
+    _bindUserSearch();
+    _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _renderChatList();
@@ -357,6 +359,12 @@
       home.style.display = "none";
       chat.style.display = "block";
     } else {
+      _activeChatId = null;
+      _activeChatUid = null;
+      if (_unsubscribeMessages) {
+        _unsubscribeMessages();
+        _unsubscribeMessages = null;
+      }
       home.style.display = "block";
       chat.style.display = "none";
     }
@@ -1467,7 +1475,7 @@ function _openChatUI(chatId, otherProfile) {
   var chatMarkup =
     '<div class="vc-chat-view">' +
       '<div class="vc-chat-header">' +
-        '<button class="vc-back-btn" id="backBtn"></button>' +
+        '<button class="vc-back-btn" id="backBtn">' + backIconSVG + '</button>' +
         '<div class="vc-chat-avatar">' + avatarHTML + '</div>' +
         '<div class="vc-chat-hinfo">' +
           '<div class="vc-chat-hname">@' + _esc(username) + '</div>' +
