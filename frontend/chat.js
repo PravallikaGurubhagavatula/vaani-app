@@ -1478,6 +1478,7 @@ function _openChatUI(chatId, otherProfile) {
       '</div>' +
     '</div>';
   chatScreen.innerHTML = chatMarkup;
+  _setCurrentView("chat");
 
   // ── Wire up back button ───────────────────────────────────────────────
   document.getElementById("backBtn").onclick = () => {
