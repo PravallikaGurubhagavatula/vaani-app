@@ -1329,14 +1329,20 @@ async function _sendMessage() {
     ? window.vaaniRouter.getDb()
     : null;
   var currentUser = window._vaaniCurrentUser || null;
-  var chatId = _activeChatId;
+  var selectedChatUser = _selectedChatUser || null;
   var inputEl = document.getElementById("messageInput") || document.getElementById("vcChatInput");
 
-  if (!db || !currentUser || !chatId || !inputEl) return;
+  if (!db || !currentUser || !selectedChatUser || !selectedChatUser.uid || !inputEl) {
+    console.error("[Vaani] Unable to send message: missing db/current user/selected user/input element.");
+    return;
+  }
 
   _setInputMessage(inputEl.value || "");
   var message = _inputMessage.trim();
-  if (!message) return;
+  if (!message) {
+    console.error("[Vaani] Empty message blocked.");
+    return;
+  }
 
   var sendBtn = document.getElementById("sendBtn") || document.getElementById("vcChatSend");
   if (sendBtn && sendBtn.disabled) return;
@@ -1348,18 +1354,19 @@ async function _sendMessage() {
     await db
       .collection(MESSAGES_COLLECTION)
       .add({
-        senderId: currentUser.uid,
         text: message,
-        participants: [currentUser.uid, _activeChatUid],
-        chatId: chatId,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        senderId: currentUser.uid,
+        receiverId: selectedChatUser.uid,
+        participants: [currentUser.uid, selectedChatUser.uid],
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
       });
 
-    await db.collection(CHATS_COLLECTION).doc(chatId).update({
-      lastMessage: message,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    if (_activeChatId) {
+      await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
+        lastMessage: message,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     _setInputMessage("");
     inputEl.value = _inputMessage;
