@@ -19,6 +19,8 @@
   var _activeChatId = null;          // chatId currently open
   var _activeChatUid = null;         // other user's uid in open chat
   var _selectedChatUser = null;      // null => home view, object => chat view
+  var _messages = [];                // active chat messages
+  var _inputMessage = "";            // active chat input value
 
   var CHATS_COLLECTION = "chats";
   var incomingRequests = [];
@@ -360,6 +362,8 @@
     } else {
       _activeChatId = null;
       _activeChatUid = null;
+      _messages = [];
+      _inputMessage = "";
       if (_unsubscribeMessages) {
         _unsubscribeMessages();
         _unsubscribeMessages = null;
@@ -376,6 +380,14 @@
   function _setSelectedChatUser(user) {
     _selectedChatUser = user || null;
     _syncViewWithSelection();
+  }
+
+  function _setMessages(nextMessages) {
+    _messages = Array.isArray(nextMessages) ? nextMessages : [];
+  }
+
+  function _setInputMessage(nextValue) {
+    _inputMessage = String(nextValue || "");
   }
 
   function _setCurrentView(view) {
@@ -1301,7 +1313,8 @@ async function _sendMessage() {
 
   if (!db || !currentUser || !chatId || !inputEl) return;
 
-  var message = String(inputEl.value || "").trim();
+  _setInputMessage(inputEl.value || "");
+  var message = _inputMessage.trim();
   if (!message) return;
 
   var sendBtn = document.getElementById("sendBtn") || document.getElementById("vcChatSend");
@@ -1326,17 +1339,19 @@ async function _sendMessage() {
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    inputEl.value = "";
+    _setInputMessage("");
+    inputEl.value = _inputMessage;
   } catch (err) {
     console.error("[Vaani] Failed to send message:", err);
   } finally {
     inputEl.disabled = false;
-    if (sendBtn) sendBtn.disabled = !String(inputEl.value || "").trim();
+    _setInputMessage(inputEl.value || "");
+    if (sendBtn) sendBtn.disabled = !_inputMessage.trim();
     inputEl.focus();
   }
 }
 
-function _renderMessages(messages) {
+function _renderMessages() {
   var container = document.getElementById("messagesContainer");
   if (!container) return;
 
@@ -1346,9 +1361,9 @@ function _renderMessages(messages) {
 
   container.innerHTML = "";
 
-  if (!messages || messages.length === 0) return;
+  if (!_messages || _messages.length === 0) return;
 
-  messages.forEach(function (msg) {
+  _messages.forEach(function (msg) {
     var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
     var isOwn = senderId && currentUid && senderId === currentUid;
     var row = document.createElement("div");
@@ -1392,7 +1407,8 @@ function _listenToMessages(chatId) {
         snapshot.forEach(function (doc) {
           messages.push(doc.data() || {});
         });
-        _renderMessages(messages);
+        _setMessages(messages);
+        _renderMessages();
       },
       function (err) {
         console.error("[Vaani] messages listener error:", err);
@@ -1458,6 +1474,8 @@ function _openChatUI(chatId, otherProfile) {
   _activeChatId  = chatId;
   otherProfile   = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
+  _setMessages([]);
+  _setInputMessage("");
   _setSelectedChatUser(otherProfile);
 
   var username = otherProfile.username || "user";
@@ -1527,10 +1545,12 @@ function _openChatUI(chatId, otherProfile) {
 
   function _toggleSendState() {
     if (!messageInput || !sendBtn) return;
-    sendBtn.disabled = !String(messageInput.value || "").trim();
+    _setInputMessage(messageInput.value || "");
+    sendBtn.disabled = !_inputMessage.trim();
   }
 
   if (messageInput) {
+    messageInput.value = _inputMessage;
     messageInput.addEventListener("input", _toggleSendState);
     messageInput.addEventListener("keydown", function (event) {
       if (event.key === "Enter" && !event.shiftKey) {
