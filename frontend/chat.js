@@ -15,8 +15,11 @@
   var _unsubscribeConnections = null;   // realtime connections listener handle
   var _unsubscribeMessages = null;      // realtime messages listener handle
   var _activeMessageListenerKey = null; // guard against duplicate listeners
+  var _activeMessagesSignature = "";    // avoids duplicate message renders
   var _unsubscribeChatList = null;      // realtime chat list listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
+  var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
+  var _renderedChatListSignature = "";  // prevents duplicate chat-list paints
   var _activeChatId = null;          // chatId currently open
   var _activeChatUid = null;         // other user's uid in open chat
   var _selectedChatUser = null;      // null => home view, object => chat view
@@ -349,6 +352,7 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
+    _createChatListListener();         // start realtime chat list listener
     _renderChatList();
     _setSelectedChatUser(null);
   }
@@ -411,6 +415,27 @@
     _inputMessage = String(nextValue || "");
   }
 
+  function _getUserProfileCached(db, uid) {
+    if (!db || !uid) return Promise.resolve({ username: "user", photoURL: "" });
+    if (_userProfileCache[uid]) return Promise.resolve(_userProfileCache[uid]);
+
+    return db.collection("users").doc(uid).get()
+      .then(function (doc) {
+        var data = doc.exists ? (doc.data() || {}) : {};
+        var profile = {
+          username: data.username || "user",
+          photoURL: data.photoURL || ""
+        };
+        _userProfileCache[uid] = profile;
+        return profile;
+      })
+      .catch(function () {
+        var fallback = { username: "user", photoURL: "" };
+        _userProfileCache[uid] = fallback;
+        return fallback;
+      });
+  }
+
   function _setCurrentView(view) {
     console.log("Switching view to:", view);
     if (view === "chat") {
@@ -452,8 +477,12 @@
               }
             });
           });
+          var nextSignature = Array.from(_connectedUidSet).sort().join("|");
+          var prevSignature = _fetchConnections._lastSignature || "";
+          _fetchConnections._lastSignature = nextSignature;
           console.log("[Vaani] connections updated — " + _connectedUidSet.size + " connected");
           if (window.vaaniChat && window.vaaniChat._currentView === "home") {
+            if (nextSignature === prevSignature) return;
             _renderChatList();
           }
         },
@@ -479,8 +508,7 @@
       _unsubscribeChatList = null;
     }
 
-    this._chatList = [];
-    var ctx = this;
+    window.vaaniChat._chatList = [];
 
     _unsubscribeChatList = db
       .collection(CHATS_COLLECTION)
@@ -519,18 +547,31 @@
             }
           }));
 
-          ctx._chatList = nextList;
-          _renderChatList();
+          var signature = nextList.map(function (chat) {
+            return [
+              chat.chatId || "",
+              chat.otherUid || "",
+              chat.lastMessage || "",
+              chat.updatedAt && typeof chat.updatedAt.toMillis === "function"
+                ? chat.updatedAt.toMillis()
+                : ""
+            ].join(":");
+          }).join("|");
+
+          var prev = _createChatListListener._lastSignature || "";
+          _createChatListListener._lastSignature = signature;
+          window.vaaniChat._chatList = nextList;
+          if (signature !== prev) _renderChatList();
         },
         function (err) {
           console.error("[Vaani] chat list listener error:", err);
-          ctx._chatList = [];
+          window.vaaniChat._chatList = [];
           _renderChatList();
         }
       );
   }
 
-  function _renderChatList() {
+  async function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
@@ -540,122 +581,95 @@
       : null;
     if (!listEl || !db || !currentUid) return;
 
-    listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
+    var chatMapByUid = Object.create(null);
+    (window.vaaniChat._chatList || []).forEach(function (chat) {
+      if (chat && chat.otherUid) chatMapByUid[chat.otherUid] = chat;
+    });
 
-    db.collection(CONNECTIONS_COLLECTION)
-      .where("users", "array-contains", currentUid)
-      .get()
-      .then(async function (connectionSnap) {
-        var connectedUsers = [];
-        connectionSnap.forEach(function (doc) {
-          var data = doc.data() || {};
-          var users = Array.isArray(data.users) ? data.users : [];
-          var otherUid = users.find(function (uid) { return uid && uid !== currentUid; }) || null;
-          if (otherUid) connectedUsers.push(otherUid);
-        });
+    var connectedUsers = Array.from(_connectedUidSet);
+    if (!connectedUsers.length) {
+      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+      _renderedChatListSignature = "empty";
+      return;
+    }
 
-        if (!connectedUsers.length) {
-          listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+    var items = await Promise.all(connectedUsers.map(async function (otherUid) {
+      var chat = chatMapByUid[otherUid] || null;
+      var profile = chat
+        ? { username: chat.username || "user", photoURL: chat.photoURL || "" }
+        : await _getUserProfileCached(db, otherUid);
+
+      return {
+        chatId: chat && chat.chatId ? chat.chatId : null,
+        otherUid: otherUid,
+        username: profile.username || "user",
+        photoURL: profile.photoURL || "",
+        lastMessage: chat && chat.lastMessage ? chat.lastMessage : "No messages yet",
+        updatedAt: chat ? chat.updatedAt || null : null
+      };
+    }));
+
+    items.sort(function (a, b) {
+      var aTime = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
+      var bTime = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
+      return bTime - aTime;
+    });
+
+    var nextSignature = items.map(function (chat) {
+      return [
+        chat.chatId || "",
+        chat.otherUid || "",
+        chat.lastMessage || "",
+        chat.updatedAt && typeof chat.updatedAt.toMillis === "function"
+          ? chat.updatedAt.toMillis()
+          : ""
+      ].join(":");
+    }).join("|");
+    if (nextSignature === _renderedChatListSignature) return;
+    _renderedChatListSignature = nextSignature;
+
+    listEl.innerHTML = "";
+    items.forEach(function (chat) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "vc-chat-list-item";
+
+      var timeText = "";
+      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+
+      item.innerHTML =
+        '<div class="vc-chat-list-top">' +
+        '<span class="vc-chat-list-username">@' + _esc(chat.username || "user") + "</span>" +
+        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+        "</div>" +
+        '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
+
+      item.addEventListener("click", async function () {
+        if (!chat.otherUid) {
+          console.error("[Vaani] Missing otherUid for chat list item:", chat);
           return;
         }
 
-        var items = await Promise.all(connectedUsers.map(async function (otherUid) {
-          var profile = { username: "user", uid: otherUid };
-          var lastMessage = "No messages yet";
-          var updatedAt = null;
-          var chatId = null;
+        var existingChatId = chat.chatId;
+        if (!existingChatId) {
+          existingChatId = await _getOrCreateChat(chat.otherUid);
+        }
+        if (!existingChatId) {
+          console.error("[Vaani] Invalid chatId for chat list item:", chat);
+          return;
+        }
 
-          try {
-            var userDoc = await db.collection("users").doc(otherUid).get();
-            if (userDoc.exists) {
-              var userData = userDoc.data() || {};
-              profile.username = userData.username || "user";
-              profile.photoURL = userData.photoURL || "";
-            }
-          } catch (err) {
-            console.error("[Vaani] Failed to load user profile from Firestore:", err);
-          }
-
-          try {
-            var chatsSnap = await db
-              .collection(CHATS_COLLECTION)
-              .where("participants", "array-contains", currentUid)
-              .orderBy("updatedAt", "desc")
-              .limit(50)
-              .get();
-            chatsSnap.forEach(function (chatDoc) {
-              if (chatId) return;
-              var chatData = chatDoc.data() || {};
-              var participants = Array.isArray(chatData.participants) ? chatData.participants : [];
-              if (participants.indexOf(otherUid) !== -1) {
-                chatId = chatDoc.id;
-                lastMessage = chatData.lastMessage || "No messages yet";
-                updatedAt = chatData.updatedAt || null;
-              }
-            });
-          } catch (err) {
-            console.error("[Vaani] Failed to load chat preview from Firestore:", err);
-          }
-
-          return {
-            chatId: chatId,
-            otherUid: otherUid,
-            username: profile.username,
-            photoURL: profile.photoURL || "",
-            lastMessage: lastMessage,
-            updatedAt: updatedAt
-          };
-        }));
-
-        listEl.innerHTML = "";
-        items.forEach(function (chat) {
-          var item = document.createElement("button");
-          item.type = "button";
-          item.className = "vc-chat-list-item";
-
-          var timeText = "";
-          if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
-            timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-          }
-
-          item.innerHTML =
-            '<div class="vc-chat-list-top">' +
-            '<span class="vc-chat-list-username">@' + _esc(chat.username || "user") + "</span>" +
-            (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
-            "</div>" +
-            '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
-
-          item.addEventListener("click", async function () {
-            console.log("User clicked:", chat.username);
-            if (!chat.otherUid) {
-              console.error("[Vaani] Missing otherUid for chat list item:", chat);
-              return;
-            }
-
-            var existingChatId = chat.chatId;
-            if (!existingChatId) {
-              existingChatId = await _getOrCreateChat(chat.otherUid);
-            }
-            if (!existingChatId) {
-              console.error("[Vaani] Invalid chatId for chat list item:", chat);
-              return;
-            }
-
-            console.log("Opening chat for UID:", chat.otherUid);
-            _openChatUI(existingChatId, {
-              uid: chat.otherUid,
-              username: chat.username || "user",
-              photoURL: chat.photoURL || ""
-            });
-          });
-
-          listEl.appendChild(item);
+        _openChatUI(existingChatId, {
+          uid: chat.otherUid,
+          username: chat.username || "user",
+          photoURL: chat.photoURL || ""
         });
-      })
-      .catch(function (err) {
-        console.error("[Vaani] Failed to load chat list from Firestore:", err);
-        listEl.innerHTML = '<div class="vc-chat-list-empty">Could not load chats</div>';
       });
+
+      listEl.appendChild(item);
+    });
   }
 
   function _stopListening() {
@@ -680,6 +694,10 @@
       _unsubscribeChatList();
       _unsubscribeChatList = null;
     }
+    _renderedChatListSignature = "";
+    _createChatListListener._lastSignature = "";
+    _fetchConnections._lastSignature = "";
+    _activeMessagesSignature = "";
   }
 
   // Clears debounce timer, resets the latest query string, and removes the
@@ -1446,6 +1464,7 @@ function _listenToMessages(currentUid, otherUid) {
     _unsubscribeMessages = null;
   }
   _activeMessageListenerKey = listenerKey;
+  _activeMessagesSignature = "";
 
   _unsubscribeMessages = db
     .collection(MESSAGES_COLLECTION)
@@ -1455,6 +1474,7 @@ function _listenToMessages(currentUid, otherUid) {
       function (snapshot) {
         if (_activeMessageListenerKey !== listenerKey) return;
         var messages = [];
+        var messageSignatureParts = [];
         var seenIds = {};
         snapshot.forEach(function (doc) {
           if (seenIds[doc.id]) return;
@@ -1463,7 +1483,18 @@ function _listenToMessages(currentUid, otherUid) {
           if (participants.indexOf(otherUid) === -1) return;
           seenIds[doc.id] = true;
           messages.push(data);
+          messageSignatureParts.push(doc.id);
+          messageSignatureParts.push(String(data.text || ""));
+          messageSignatureParts.push(String(data.senderId || ""));
+          messageSignatureParts.push(String(
+            data.timestamp && typeof data.timestamp.toMillis === "function"
+              ? data.timestamp.toMillis()
+              : ""
+          ));
         });
+        var nextSignature = messageSignatureParts.join("|");
+        if (nextSignature === _activeMessagesSignature) return;
+        _activeMessagesSignature = nextSignature;
         _setMessages(messages);
         _renderMessages();
       },
@@ -1585,11 +1616,7 @@ function _openChatUI(chatId, otherProfile) {
         '</button>' +
       '</div>' +
     '</div>';
-  chatScreen.innerHTML = "";
   chatScreen.innerHTML = chatMarkup;
-  if (!document.getElementById("messageInput")) {
-    chatScreen.innerHTML = chatMarkup;
-  }
   _renderMessages();
   _syncViewWithSelection();
 
