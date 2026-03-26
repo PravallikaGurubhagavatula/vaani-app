@@ -308,8 +308,6 @@
     var photo = user.photoURL || "";
     var initials = ((profile.username || "U").charAt(0) || "U").toUpperCase();
 
-    window.vaaniChat._currentView = "home";
-
     root.innerHTML =
       '<section class="vc-shell" aria-label="Chat screen">' +
       '<button class="vc-avatar-btn" id="vcProfileBtn" aria-label="Open profile menu" title="Profile menu">' +
