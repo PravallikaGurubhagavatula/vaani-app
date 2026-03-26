@@ -7,7 +7,6 @@
   "use strict";
 
   var CHAT_ROOT_ID = "vaaniChat";
-  var _unsubscribeDB = null;
   var _searchDebounceTimer = null;
   var _latestSearchQuery = "";          // replaces _searchRequestSeq — stale-check by query string
   var _outsideClickHandler = null;
@@ -21,7 +20,6 @@
   var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
   var _renderedChatListSignature = "";  // prevents duplicate chat-list paints
   var _activeChatId = null;          // chatId currently open
-  var _activeChatUid = null;         // other user's uid in open chat
   var _selectedChatUser = null;      // null => home view, object => chat view
   var _messages = [];                // active chat messages
   var _inputMessage = "";            // active chat input value
@@ -367,14 +365,9 @@
       chat.style.display = "block";
     } else {
       _activeChatId = null;
-      _activeChatUid = null;
       _messages = [];
       _inputMessage = "";
-      if (_unsubscribeMessages) {
-        _unsubscribeMessages();
-        _unsubscribeMessages = null;
-      }
-      _activeMessageListenerKey = null;
+      _teardownMessageListener();
       home.style.display = "block";
       chat.style.display = "none";
     }
@@ -397,11 +390,7 @@
     if (_selectedChatUser && currentUid && otherUid) {
       _listenToMessages(currentUid, otherUid);
     } else {
-      if (_unsubscribeMessages) {
-        _unsubscribeMessages();
-        _unsubscribeMessages = null;
-      }
-      _activeMessageListenerKey = null;
+      _teardownMessageListener();
     }
 
     _syncViewWithSelection();
@@ -413,6 +402,15 @@
 
   function _setInputMessage(nextValue) {
     _inputMessage = String(nextValue || "");
+  }
+
+  function _teardownMessageListener() {
+    if (_unsubscribeMessages) {
+      _unsubscribeMessages();
+      _unsubscribeMessages = null;
+    }
+    _activeMessageListenerKey = null;
+    _activeMessagesSignature = "";
   }
 
   function _getUserProfileCached(db, uid) {
@@ -434,15 +432,6 @@
         _userProfileCache[uid] = fallback;
         return fallback;
       });
-  }
-
-  function _setCurrentView(view) {
-    console.log("Switching view to:", view);
-    if (view === "chat") {
-      _syncViewWithSelection();
-      return;
-    }
-    _setSelectedChatUser(null);
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -673,10 +662,6 @@
   }
 
   function _stopListening() {
-    if (_unsubscribeDB) {
-      _unsubscribeDB();
-      _unsubscribeDB = null;
-    }
     if (_unsubscribeIncomingRequests) {
       _unsubscribeIncomingRequests();
       _unsubscribeIncomingRequests = null;
@@ -686,10 +671,7 @@
       _unsubscribeConnections = null;
       _connectedUidSet.clear();
     }
-    if (_unsubscribeMessages) {
-      _unsubscribeMessages();
-      _unsubscribeMessages = null;
-    }
+    _teardownMessageListener();
     if (_unsubscribeChatList) {
       _unsubscribeChatList();
       _unsubscribeChatList = null;
@@ -697,7 +679,6 @@
     _renderedChatListSignature = "";
     _createChatListListener._lastSignature = "";
     _fetchConnections._lastSignature = "";
-    _activeMessagesSignature = "";
   }
 
   // Clears debounce timer, resets the latest query string, and removes the
@@ -1272,10 +1253,6 @@
       // AFTER — opens real chat
       if (currentState === "connected") {
          btn.disabled = true;
-         var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-            ? window.vaaniRouter.getDb()
-            : null;
-         if (!db) { btn.disabled = false; return; }
          _getOrCreateChat(targetUid)
             .then(function (chatId) {
                return _fetchOtherProfile(db, targetUid).then(function (profile) {
@@ -1459,12 +1436,8 @@ function _listenToMessages(currentUid, otherUid) {
   var listenerKey = listenerUsers.join("::");
   if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) return;
 
-  if (_unsubscribeMessages) {
-    _unsubscribeMessages();
-    _unsubscribeMessages = null;
-  }
+  _teardownMessageListener();
   _activeMessageListenerKey = listenerKey;
-  _activeMessagesSignature = "";
 
   _unsubscribeMessages = db
     .collection(MESSAGES_COLLECTION)
@@ -1562,7 +1535,6 @@ function _openChatUI(chatId, otherProfile) {
 
   _activeChatId  = chatId;
   otherProfile   = otherProfile || {};
-  _activeChatUid = otherProfile.uid || "";
   _setMessages([]);
   _setInputMessage("");
   _setSelectedChatUser(otherProfile);
