@@ -18,6 +18,7 @@
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _activeChatId = null;          // chatId currently open
   var _activeChatUid = null;         // other user's uid in open chat
+  var _selectedChatUser = null;      // null => home view, object => chat view
 
   var CHATS_COLLECTION = "chats";
   var incomingRequests = [];
@@ -345,17 +346,15 @@
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _renderChatList();
-    _setCurrentView("home");
+    _setSelectedChatUser(null);
   }
 
-  function _setCurrentView(view) {
-    console.log("Switching view to:", view);
+  function _syncViewWithSelection() {
     var home = document.getElementById("vcHomeScreen");
     var chat = document.getElementById("vcChatScreen");
-
     if (!home || !chat) return;
 
-    if (view === "chat") {
+    if (_selectedChatUser) {
       home.style.display = "none";
       chat.style.display = "block";
     } else {
@@ -370,8 +369,22 @@
     }
 
     if (window.vaaniChat) {
-      window.vaaniChat._currentView = view === "chat" ? "chat" : "home";
+      window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
     }
+  }
+
+  function _setSelectedChatUser(user) {
+    _selectedChatUser = user || null;
+    _syncViewWithSelection();
+  }
+
+  function _setCurrentView(view) {
+    console.log("Switching view to:", view);
+    if (view === "chat") {
+      _syncViewWithSelection();
+      return;
+    }
+    _setSelectedChatUser(null);
   }
 
   // ── Realtime connections listener ─────────────────────────────────────────
@@ -1445,8 +1458,7 @@ function _openChatUI(chatId, otherProfile) {
   _activeChatId  = chatId;
   otherProfile   = otherProfile || {};
   _activeChatUid = otherProfile.uid || "";
-
-  _setCurrentView("chat");
+  _setSelectedChatUser(otherProfile);
 
   var username = otherProfile.username || "user";
   var photo    = otherProfile.photoURL || "";
@@ -1502,11 +1514,11 @@ function _openChatUI(chatId, otherProfile) {
   if (!document.getElementById("messageInput")) {
     chatScreen.innerHTML = chatMarkup;
   }
-  _setCurrentView("chat");
+  _syncViewWithSelection();
 
   // ── Wire up back button ───────────────────────────────────────────────
   document.getElementById("backBtn").onclick = () => {
-    _setCurrentView("home");
+    _setSelectedChatUser(null);
   };
 
   // ── Wire up input + send ──────────────────────────────────────────────
