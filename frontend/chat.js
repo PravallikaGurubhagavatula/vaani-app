@@ -14,6 +14,7 @@
   var _unsubscribeIncomingRequests = null;
   var _unsubscribeConnections = null;   // realtime connections listener handle
   var _unsubscribeMessages = null;      // realtime messages listener handle
+  var _activeMessageListenerKey = null; // guard against duplicate listeners
   var _unsubscribeChatList = null;      // realtime chat list listener handle
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _activeChatId = null;          // chatId currently open
@@ -23,6 +24,7 @@
   var _inputMessage = "";            // active chat input value
 
   var CHATS_COLLECTION = "chats";
+  var MESSAGES_COLLECTION = "messages";
   var incomingRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
@@ -368,6 +370,7 @@
         _unsubscribeMessages();
         _unsubscribeMessages = null;
       }
+      _activeMessageListenerKey = null;
       home.style.display = "block";
       chat.style.display = "none";
     }
@@ -379,6 +382,24 @@
 
   function _setSelectedChatUser(user) {
     _selectedChatUser = user || null;
+
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? String(window._vaaniCurrentUser.uid)
+      : "";
+    var otherUid = _selectedChatUser && _selectedChatUser.uid
+      ? String(_selectedChatUser.uid)
+      : "";
+
+    if (_selectedChatUser && currentUid && otherUid) {
+      _listenToMessages(currentUid, otherUid);
+    } else {
+      if (_unsubscribeMessages) {
+        _unsubscribeMessages();
+        _unsubscribeMessages = null;
+      }
+      _activeMessageListenerKey = null;
+    }
+
     _syncViewWithSelection();
   }
 
@@ -1325,12 +1346,13 @@ async function _sendMessage() {
     if (sendBtn) sendBtn.disabled = true;
 
     await db
-      .collection(CHATS_COLLECTION)
-      .doc(chatId)
-      .collection("messages")
+      .collection(MESSAGES_COLLECTION)
       .add({
         senderId: currentUser.uid,
         text: message,
+        participants: [currentUser.uid, _activeChatUid],
+        chatId: chatId,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
 
@@ -1382,30 +1404,38 @@ function _renderMessages() {
   container.scrollTop = container.scrollHeight;
 }
 
-function _listenToMessages(chatId) {
+function _listenToMessages(currentUid, otherUid) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
-  if (!db || !chatId) return;
+  if (!db || !currentUid || !otherUid) return;
+
+  var listenerUsers = [String(currentUid), String(otherUid)].sort();
+  var listenerKey = listenerUsers.join("::");
+  if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) return;
 
   if (_unsubscribeMessages) {
     _unsubscribeMessages();
     _unsubscribeMessages = null;
   }
-
-  var listeningChatId = chatId;
+  _activeMessageListenerKey = listenerKey;
 
   _unsubscribeMessages = db
-    .collection(CHATS_COLLECTION)
-    .doc(listeningChatId)
-    .collection("messages")
-    .orderBy("createdAt", "asc")
+    .collection(MESSAGES_COLLECTION)
+    .where("participants", "array-contains", currentUid)
+    .orderBy("timestamp", "asc")
     .onSnapshot(
       function (snapshot) {
-        if (_activeChatId !== listeningChatId) return;
+        if (_activeMessageListenerKey !== listenerKey) return;
         var messages = [];
+        var seenIds = {};
         snapshot.forEach(function (doc) {
-          messages.push(doc.data() || {});
+          if (seenIds[doc.id]) return;
+          var data = doc.data() || {};
+          var participants = Array.isArray(data.participants) ? data.participants : [];
+          if (participants.indexOf(otherUid) === -1) return;
+          seenIds[doc.id] = true;
+          messages.push(data);
         });
         _setMessages(messages);
         _renderMessages();
@@ -1567,7 +1597,6 @@ function _openChatUI(chatId, otherProfile) {
   }
 
   _toggleSendState();
-  _listenToMessages(chatId);
 
   console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", username);
 }
