@@ -1389,8 +1389,8 @@ async function _sendMessage() {
   }
 
   _setInputMessage(inputEl.value || "");
-  var message = _inputMessage.trim();
-  if (!message) {
+  var inputMessage = _inputMessage.trim();
+  if (!inputMessage) {
     console.error("[Vaani] Empty message blocked.");
     return;
   }
@@ -1401,7 +1401,7 @@ async function _sendMessage() {
   var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
   _optimisticMessages.push({
     _optimisticId: tempId,
-    text: message,
+    text: inputMessage,
     senderId: currentUser.uid,
     timestamp: new Date()
   });
@@ -1418,8 +1418,7 @@ async function _sendMessage() {
     await db
       .collection(MESSAGES_COLLECTION)
       .add({
-        chatId: _activeChatId || null,
-        text: message,
+        text: inputMessage,
         senderId: currentUser.uid,
         receiverId: selectedChatUser.uid,
         participants: [currentUser.uid, selectedChatUser.uid],
@@ -1428,7 +1427,7 @@ async function _sendMessage() {
 
     if (_activeChatId) {
       await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
-        lastMessage: message,
+        lastMessage: inputMessage,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
     }
