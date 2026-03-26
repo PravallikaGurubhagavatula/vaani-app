@@ -20,6 +20,7 @@
   var _connectedUidSet = new Set();     // fast O(1) lookup: is uid connected?
   var _userProfileCache = Object.create(null); // uid -> lightweight profile cache
   var _renderedChatListSignature = "";  // prevents duplicate chat-list paints
+  var _chatListOpenRequestId = 0;       // prevents stale async click handlers from opening wrong chat
   var _activeChatId = null;          // chatId currently open
   var _selectedChatUser = null;      // null => home view, object => chat view
   var _messages = [];                // active chat messages
@@ -679,20 +680,32 @@
           return;
         }
 
-        var existingChatId = chat.chatId;
-        if (!existingChatId) {
-          existingChatId = await _getOrCreateChat(chat.otherUid);
-        }
-        if (!existingChatId) {
-          console.error("[Vaani] Invalid chatId for chat list item:", chat);
-          return;
-        }
+        var openRequestId = ++_chatListOpenRequestId;
 
-        _openChatUI(existingChatId, {
-          uid: chat.otherUid,
-          username: chat.username || "user",
-          photoURL: chat.photoURL || ""
-        });
+        try {
+          var existingChatId = chat.chatId;
+          if (!existingChatId) {
+            existingChatId = await _getOrCreateChat(chat.otherUid);
+          }
+          if (!existingChatId) {
+            console.error("[Vaani] Invalid chatId for chat list item:", chat);
+            return;
+          }
+
+          // Ignore stale async completions if user has already clicked another conversation.
+          if (openRequestId !== _chatListOpenRequestId) return;
+
+          var selectedUser = {
+            uid: chat.otherUid,
+            username: chat.username || "user",
+            photoURL: chat.photoURL || ""
+          };
+
+          _setSelectedChatUser(selectedUser);
+          _openChatUI(existingChatId, selectedUser);
+        } catch (err) {
+          console.error("[Vaani] Could not open chat list item:", err);
+        }
       });
 
       listEl.appendChild(item);
