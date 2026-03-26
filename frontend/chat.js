@@ -572,7 +572,9 @@
               profile.username = userData.username || "user";
               profile.photoURL = userData.photoURL || "";
             }
-          } catch (_) {}
+          } catch (err) {
+            console.error("[Vaani] Failed to load user profile from Firestore:", err);
+          }
 
           try {
             var chatsSnap = await db
@@ -591,7 +593,9 @@
                 updatedAt = chatData.updatedAt || null;
               }
             });
-          } catch (_) {}
+          } catch (err) {
+            console.error("[Vaani] Failed to load chat preview from Firestore:", err);
+          }
 
           return {
             chatId: chatId,
@@ -648,7 +652,8 @@
           listEl.appendChild(item);
         });
       })
-      .catch(function () {
+      .catch(function (err) {
+        console.error("[Vaani] Failed to load chat list from Firestore:", err);
         listEl.innerHTML = '<div class="vc-chat-list-empty">Could not load chats</div>';
       });
   }
@@ -1042,7 +1047,8 @@
               fromUsername: fromData.username || "user",
               fromName:     fromData.name     || ""
             });
-          } catch (_) {
+          } catch (err) {
+            console.error("[Vaani] Failed to load incoming request profile from Firestore:", err);
             // Profile fetch failed — show request with fallback display values
             pending.push({
               id:           doc.id,
@@ -1320,7 +1326,9 @@ async function _fetchOtherProfile(db, uid) {
   try {
     var doc = await db.collection("users").doc(uid).get();
     if (doc.exists) return doc.data() || {};
-  } catch (_) {}
+  } catch (err) {
+    console.error("[Vaani] Failed to load user by uid from Firestore:", err);
+  }
   return {};
 }
 
@@ -1332,7 +1340,7 @@ async function _sendMessage() {
   var selectedChatUser = _selectedChatUser || null;
   var inputEl = document.getElementById("messageInput") || document.getElementById("vcChatInput");
 
-  if (!db || !currentUser || !selectedChatUser || !selectedChatUser.uid || !inputEl) {
+  if (!db || !currentUser || !currentUser.uid || !selectedChatUser || !selectedChatUser.uid || !inputEl) {
     console.error("[Vaani] Unable to send message: missing db/current user/selected user/input element.");
     return;
   }
@@ -1422,7 +1430,12 @@ function _listenToMessages(currentUid, otherUid) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
-  if (!db || !currentUid || !otherUid) return;
+  if (!db || !currentUid || !otherUid) {
+    console.error("[Vaani] Cannot listen to messages: missing db/currentUid/otherUid.");
+    _setMessages([]);
+    _renderMessages();
+    return;
+  }
 
   var listenerUsers = [String(currentUid), String(otherUid)].sort();
   var listenerKey = listenerUsers.join("::");
@@ -1470,7 +1483,8 @@ async function _getOrCreateChat(otherUid) {
     : null;
 
   if (!db || !currentUid || !otherUid) {
-    throw new Error("[Vaani] _getOrCreateChat: missing db or uid");
+    console.error("[Vaani] _getOrCreateChat: missing db/current user/other user.");
+    return null;
   }
 
   // ── Step 1: query all chats the current user participates in ─────────
