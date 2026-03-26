@@ -522,9 +522,9 @@
     window.vaaniChat.conversations = [];
 
     _unsubscribeChatList = db
-      .collection(MESSAGES_COLLECTION)
+      .collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
-      .orderBy("timestamp", "desc")
+      .orderBy("updatedAt", "desc")
       .onSnapshot(
         async function (snapshot) {
           var byOtherUid = Object.create(null);
@@ -536,10 +536,10 @@
 
             var nextConversation = {
               id: doc.id,
-              chatId: data.chatId || null,
+              chatId: doc.id,
               otherUid: otherUid,
-              lastMessage: data.text || "",
-              timestamp: data.timestamp || null
+              lastMessage: data.lastMessage || "",
+              timestamp: data.updatedAt || data.createdAt || null
             };
             var prevConversation = byOtherUid[otherUid];
             if (!prevConversation || _timestampToMillis(nextConversation.timestamp) > _timestampToMillis(prevConversation.timestamp)) {
@@ -557,7 +557,7 @@
               user: {
                 uid: conversation.otherUid,
                 username: profile.username || "user",
-                displayName: profile.displayName || null,
+                displayName: profile.displayName || profile.username || "user",
                 photoURL: profile.photoURL || ""
               },
               lastMessage: conversation.lastMessage || "",
@@ -588,7 +588,7 @@
               chatId: conversation.chatId,
               otherUid: conversation.otherUid,
               username: conversation.user && conversation.user.username ? conversation.user.username : "user",
-              displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : null,
+              displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : "user",
               photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
               lastMessage: conversation.lastMessage || "",
               updatedAt: conversation.timestamp || null
@@ -625,6 +625,7 @@
         chatId: conversation && conversation.chatId ? conversation.chatId : null,
         otherUid: conversation && conversation.otherUid ? conversation.otherUid : null,
         username: profile.username || "user",
+        displayName: profile.displayName || profile.username || "user",
         photoURL: profile.photoURL || "",
         lastMessage: conversation && conversation.lastMessage ? conversation.lastMessage : "No messages yet",
         updatedAt: conversation && conversation.timestamp ? conversation.timestamp : null
@@ -663,7 +664,7 @@
 
       item.innerHTML =
         '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">@' + _esc(chat.username || "user") + "</span>" +
+        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
         (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
         "</div>" +
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
@@ -692,6 +693,7 @@
           var selectedUser = {
             uid: chat.otherUid,
             username: chat.username || "user",
+            displayName: chat.displayName || chat.username || "user",
             photoURL: chat.photoURL || ""
           };
 
