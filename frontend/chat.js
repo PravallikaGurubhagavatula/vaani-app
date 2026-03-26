@@ -349,6 +349,7 @@
   }
 
   function _setCurrentView(view) {
+    console.log("Switching view to:", view);
     var home = document.getElementById("vcHomeScreen");
     var chat = document.getElementById("vcChatScreen");
 
@@ -569,6 +570,7 @@
             '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
           item.addEventListener("click", async function () {
+            console.log("User clicked:", chat.username);
             var existingChatId = chat.chatId;
             if (!existingChatId) {
               existingChatId = await _getOrCreateChat(chat.otherUid);
@@ -1416,6 +1418,7 @@ async function _getOrCreateChat(otherUid) {
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
+  console.log("Opening chat UI with chatId:", chatId);
   var chatScreen = document.getElementById("vcChatScreen");
   if (!chatScreen) return;
 
