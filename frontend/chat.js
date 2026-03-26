@@ -1418,7 +1418,10 @@ async function _getOrCreateChat(otherUid) {
 function _openChatUI(chatId, otherProfile) {
   console.log("Opening chat UI with chatId:", chatId);
   var chatScreen = document.getElementById("vcChatScreen");
-  if (!chatScreen) return;
+  if (!chatScreen) {
+    console.error("Chat screen not found");
+    return;
+  }
 
   _activeChatId  = chatId;
   otherProfile   = otherProfile || {};
@@ -1475,7 +1478,11 @@ function _openChatUI(chatId, otherProfile) {
         '</button>' +
       '</div>' +
     '</div>';
+  chatScreen.innerHTML = "";
   chatScreen.innerHTML = chatMarkup;
+  if (!document.getElementById("messageInput")) {
+    chatScreen.innerHTML = chatMarkup;
+  }
   _setCurrentView("chat");
 
   // ── Wire up back button ───────────────────────────────────────────────
