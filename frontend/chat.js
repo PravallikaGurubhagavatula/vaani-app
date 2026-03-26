@@ -1390,9 +1390,16 @@ function _renderMessages() {
 
   container.innerHTML = "";
 
-  if (!_messages || _messages.length === 0) return;
+  var safeMessages = Array.isArray(_messages) ? _messages : [];
+  if (safeMessages.length === 0) {
+    var emptyState = document.createElement("div");
+    emptyState.className = "vc-chat-empty";
+    emptyState.textContent = "Start a conversation";
+    container.appendChild(emptyState);
+    return;
+  }
 
-  _messages.forEach(function (msg) {
+  safeMessages.forEach(function (msg) {
     var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
     var isOwn = senderId === currentUid;
     var row = document.createElement("div");
@@ -1569,6 +1576,7 @@ function _openChatUI(chatId, otherProfile) {
   if (!document.getElementById("messageInput")) {
     chatScreen.innerHTML = chatMarkup;
   }
+  _renderMessages();
   _syncViewWithSelection();
 
   // ── Wire up back button ───────────────────────────────────────────────
