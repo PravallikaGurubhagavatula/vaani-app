@@ -1898,10 +1898,10 @@ function _renderMessages() {
 
   container.innerHTML = "";
 
-  var safeMessages = (Array.isArray(_messages) ? _messages : []).concat(
+  var messages = (Array.isArray(_messages) ? _messages : []).concat(
     Array.isArray(_optimisticMessages) ? _optimisticMessages : []
   );
-  if (safeMessages.length === 0) {
+  if (messages.length === 0) {
     var emptyState = document.createElement("div");
     emptyState.className = "vc-chat-empty";
     emptyState.textContent = "Start a conversation";
@@ -1910,7 +1910,7 @@ function _renderMessages() {
     return;
   }
 
-  safeMessages.forEach(function (msg) {
+  messages.forEach(function (msg) {
     var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
     var isOwn = senderId === currentUid;
     var row = document.createElement("div");
@@ -2004,26 +2004,16 @@ function _listenToMessages(chatId) {
         return;
       }
 
-      var messages             = [];
+      var messages = snapshot.docs
+        .map(function (doc) { return doc.data() || {}; })
+        .filter(function (data) {
+          return !data.chatId || data.chatId === chatId;
+        });
       var messageSignatureParts = [];
-      var seenIds              = {};
 
-      snapshot.forEach(function (doc) {
-        // ── Deduplicate (Firestore can emit the same doc twice during
-        //    an offline→online transition) ─────────────────────────────
-        if (seenIds[doc.id]) return;
-        seenIds[doc.id] = true;
-
+      snapshot.docs.forEach(function (doc) {
         var data = doc.data() || {};
-
-        // ── Sanity-check: skip docs that don't belong to this chat ──────
-        // Normally impossible with the chatId filter, but guards against
-        // misconfigured composite index fallback results.
         if (data.chatId && data.chatId !== chatId) return;
-
-        messages.push(data);
-
-        // Build a signature so identical snapshots never trigger a repaint
         messageSignatureParts.push(doc.id);
         messageSignatureParts.push(String(data.text      || ""));
         messageSignatureParts.push(String(data.senderId  || ""));
@@ -2048,6 +2038,7 @@ function _listenToMessages(chatId) {
       _setMessages(messages);
       _renderMessages();
 
+      console.log("Messages loaded:", messages);
       console.log("Messages snapshot:", snapshot.docs.map(function (d) { return d.data(); }));
       console.log("[Vaani] Messages received:", snapshot.docs.length);
       console.log("[Vaani] _listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
