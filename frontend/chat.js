@@ -712,46 +712,46 @@
   }
 
   function _syncViewWithSelection() {
-    var home = document.getElementById("vcHomeScreen");
-    var chat = document.getElementById("vcChatScreen");
-    if (!home || !chat) return;
+  var home = document.getElementById("vcHomeScreen");
+  var chat = document.getElementById("vcChatScreen");
+  if (!home || !chat) return;
 
-    if (_selectedChatUser) {
-      home.style.display = "none";
-      chat.style.display = "block";
-    } else {
-      _activeChatId = null;
-      _messages = [];
-      _inputMessage = "";
-      _messagesContainerRef = null;
-      _teardownMessageListener();
-      home.style.display = "block";
-      chat.style.display = "none";
-    }
-
-    if (window.vaaniChat) {
-      window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
-    }
+  if (_selectedChatUser) {
+    // Chat is open — just make sure the panels are visible.
+    // Do NOT touch _activeChatId or _messagesContainerRef here;
+    // _openChatUI is responsible for setting those.
+    home.style.display = "none";
+    chat.style.display = "block";
+  } else {
+    // Returning home — wipe everything cleanly.
+    home.style.display = "block";
+    chat.style.display = "none";
+    chat.innerHTML = "";   // clear stale DOM so next open starts fresh
   }
 
-  function _setSelectedChatUser(user) {
-    _selectedChatUser = user || null;
-
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-      ? String(window._vaaniCurrentUser.uid)
-      : "";
-    var otherUid = _selectedChatUser && _selectedChatUser.uid
-      ? String(_selectedChatUser.uid)
-      : "";
-
-    if (_selectedChatUser && currentUid && otherUid) {
-      _listenToMessages(currentUid, otherUid, _activeChatId);
-    } else {
-      _teardownMessageListener();
-    }
-
-    _syncViewWithSelection();
+  if (window.vaaniChat) {
+    window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
   }
+}
+
+function _setSelectedChatUser(user) {
+  _selectedChatUser = user || null;
+
+  // When clearing the selection (back button), tear down everything.
+  // When SETTING a user, _openChatUI is always the caller and it will
+  // attach the listener itself after the DOM is ready — do NOT
+  // call _listenToMessages here to avoid a race where chatId or
+  // _messagesContainerRef is still null.
+  if (!_selectedChatUser) {
+    _activeChatId         = null;
+    _messages             = [];
+    _inputMessage         = "";
+    _messagesContainerRef = null;
+    _teardownMessageListener();
+  }
+
+  _syncViewWithSelection();
+}
 
   function _setMessages(nextMessages) {
     _messages = Array.isArray(nextMessages) ? nextMessages : [];
@@ -2048,81 +2048,101 @@ async function _getOrCreateChat(otherUid) {
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
-  console.log("Opening chat:", chatId);
+  console.log("[Vaani] _openChatUI — chatId:", chatId);
   var chatScreen = document.getElementById("vcChatScreen");
   if (!chatScreen) {
-    console.error("Chat screen not found");
+    console.error("[Vaani] _openChatUI: vcChatScreen not found");
     return;
   }
 
-  _activeChatId  = chatId;
-  console.log("Active chat set:", _activeChatId);
-  otherProfile   = otherProfile || {};
-  _setMessages([]);
-  _setInputMessage("");
-  _setSelectedChatUser(otherProfile);
+  // ── 1. Set module-level state FIRST ──────────────────────────────────
+  // _activeChatId must be set before _setSelectedChatUser because
+  // _setSelectedChatUser calls _listenToMessages(currentUid, otherUid, _activeChatId).
+  // If _activeChatId is still null at that point, the listener aborts.
+  _activeChatId    = chatId ? String(chatId) : null;
+  _selectedChatUser = otherProfile ? Object.assign({}, otherProfile) : null;
 
+  if (!_activeChatId) {
+    console.error("[Vaani] _openChatUI: chatId is null — aborting");
+    return;
+  }
+
+  otherProfile = otherProfile || {};
   var username = otherProfile.username || "user";
   var photo    = otherProfile.photoURL || "";
   var initial  = (username.charAt(0) || "U").toUpperCase();
 
-  // ── Avatar: image or initial ──────────────────────────────────────────
-  var avatarHTML = photo
-    ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
-    : '<span class="vc-chat-initial">' + _esc(initial) + '</span>';
+  // ── 2. Build and inject the DOM ───────────────────────────────────────
+  var avatarHTML =
+    photo
+      ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+      : '<span class="vc-chat-initial">' + _esc(initial) + "</span>";
 
-  // ── Send icon SVG (matches .vc-chat-send svg in CSS) ─────────────────
   var sendIconSVG =
     '<svg viewBox="0 0 24 24">' +
       '<line x1="22" y1="2" x2="11" y2="13"/>' +
       '<polygon points="22 2 15 22 11 13 2 9 22 2"/>' +
-    '</svg>';
+    "</svg>";
 
-  // ── Back arrow SVG (matches .vc-back-btn svg in CSS) ─────────────────
   var backIconSVG =
     '<svg viewBox="0 0 24 24">' +
       '<polyline points="15 18 9 12 15 6"/>' +
-    '</svg>';
+    "</svg>";
 
-  // ── Inject EXACT structure expected by chat-isolated.css ─────────────
-  var messagesContainerMarkup = '<div class="vc-chat-messages" id="messagesContainer"></div>';
-  var chatMarkup =
+  chatScreen.innerHTML =
     '<div class="vc-chat-view">' +
       '<div class="vc-chat-header">' +
-        '<button class="vc-back-btn" id="backBtn">' + backIconSVG + '</button>' +
-        '<div class="vc-chat-avatar">' + avatarHTML + '</div>' +
+        '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
+        '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
         '<div class="vc-chat-hinfo">' +
-          '<div class="vc-chat-hname">@' + _esc(username) + '</div>' +
+          '<div class="vc-chat-hname">@' + _esc(username) + "</div>" +
           '<div class="vc-chat-hsub">Connected</div>' +
-        '</div>' +
-      '</div>' +
-      messagesContainerMarkup +
+        "</div>" +
+      "</div>" +
+      '<div class="vc-chat-messages" id="messagesContainer"></div>' +
       '<div class="vc-chat-input-bar">' +
-        '<input' +
-          ' id="messageInput"' +
-          ' class="vc-chat-input"' +
-          ' type="text"' +
-          ' placeholder="Type a message..."' +
-          ' autocomplete="off"' +
-          ' spellcheck="false"' +
-        '>' +
+        '<input id="messageInput" class="vc-chat-input" type="text"' +
+          ' placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
         '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' +
           sendIconSVG +
-        '</button>' +
-      '</div>' +
-    '</div>';
-  chatScreen.innerHTML = chatMarkup;
+        "</button>" +
+      "</div>" +
+    "</div>";
+
+  // ── 3. Wire the container ref BEFORE anything calls _renderMessages ───
   _messagesContainerRef = document.getElementById("messagesContainer");
-  _renderMessages();
-  _syncViewWithSelection();
+  _setMessages([]);
+  _setInputMessage("");
+  _renderMessages();        // paints "Start a conversation" optimistically
+
+  // ── 4. Show chat panel, hide home ────────────────────────────────────
+  var home = document.getElementById("vcHomeScreen");
+  var chat = document.getElementById("vcChatScreen");
+  if (home) home.style.display = "none";
+  if (chat) chat.style.display = "block";
+  if (window.vaaniChat) window.vaaniChat._currentView = "chat";
+
+  // ── 5. NOW attach the Firestore listener ─────────────────────────────
+  // _messagesContainerRef is guaranteed to exist at this point, so
+  // _renderMessages inside the snapshot callback will paint correctly.
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? String(window._vaaniCurrentUser.uid)
+    : "";
+  if (currentUid && _selectedChatUser && _selectedChatUser.uid) {
+    _listenToMessages(currentUid, String(_selectedChatUser.uid), _activeChatId);
+  }
+
   _scrollMessagesToBottom();
 
-  // ── Wire up back button ───────────────────────────────────────────────
-  document.getElementById("backBtn").onclick = () => {
-    _setSelectedChatUser(null);
-  };
+  // ── 6. Wire up back button ───────────────────────────────────────────
+  var backBtn = document.getElementById("backBtn");
+  if (backBtn) {
+    backBtn.onclick = function () {
+      _setSelectedChatUser(null);
+    };
+  }
 
-  // ── Wire up input + send ──────────────────────────────────────────────
+  // ── 7. Wire up input + send ──────────────────────────────────────────
   var messageInput = document.getElementById("messageInput");
   var sendBtn      = document.getElementById("sendBtn");
 
@@ -2141,7 +2161,6 @@ function _openChatUI(chatId, otherProfile) {
         _sendMessage();
       }
     });
-    // Auto-focus so keyboard opens on mobile
     messageInput.focus();
   }
 
@@ -2150,8 +2169,7 @@ function _openChatUI(chatId, otherProfile) {
   }
 
   _toggleSendState();
-
-  console.log("[Vaani] Chat UI opened — chatId:", chatId, "| with:", username);
+  console.log("[Vaani] Chat UI ready — chatId:", _activeChatId, "| with:", username);
 }
 
    
@@ -2160,39 +2178,66 @@ function _openChatUI(chatId, otherProfile) {
     _currentView: "home",
     _chatList: [],
     open: function () {
-      var root = _root();
-      if (root && !root.children.length) {
-        root.innerHTML =
-          '<div class="vg-screen vg-loading-screen">' +
-          '<div class="vg-spinner"></div>' +
-          "<p>Loading…</p>" +
-          "</div>";
-      }
+  var root = _root();
+  if (root && !root.children.length) {
+    root.innerHTML =
+      '<div class="vg-screen vg-loading-screen">' +
+      '<div class="vg-spinner"></div>' +
+      "<p>Loading…</p>" +
+      "</div>";
+  }
 
-      if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
-        var auth = window.vaaniRouter.getAuth();
-        if (auth) {
-          var user = auth.currentUser;
-          if (user && window._vaaniCurrentUser) {
-            window.vaaniRouter
-              .getDb()
-              .collection("users")
-              .doc(user.uid)
-              .get()
-              .then(function (doc) {
-                if (doc.exists && doc.data().username) {
-                  _renderChat(user, doc.data());
-                } else {
-                  _renderProfile(user);
+  if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
+    var auth = window.vaaniRouter.getAuth();
+    if (auth) {
+      var user = auth.currentUser;
+      if (user && window._vaaniCurrentUser) {
+        window.vaaniRouter
+          .getDb()
+          .collection("users")
+          .doc(user.uid)
+          .get()
+          .then(function (doc) {
+            if (doc.exists && doc.data().username) {
+              _renderChat(user, doc.data());
+
+              // ── Re-hydrate any in-progress chat from sessionStorage ──
+              // If the user refreshed mid-conversation, we restore them
+              // to that chat rather than dumping them on the home screen.
+              try {
+                var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
+                if (saved) {
+                  var state = JSON.parse(saved);
+                  if (state && state.chatId && state.otherUid) {
+                    // Fetch the other user's profile, then reopen the chat.
+                    var db = window.vaaniRouter.getDb();
+                    db.collection("users").doc(state.otherUid).get()
+                      .then(function (profileDoc) {
+                        var profile = profileDoc.exists ? profileDoc.data() : {};
+                        profile.uid = state.otherUid;
+                        _openChatUI(state.chatId, profile);
+                      })
+                      .catch(function (err) {
+                        console.warn("[Vaani] rehydrate: profile fetch failed:", err);
+                        sessionStorage.removeItem("vaani_active_chat_" + user.uid);
+                      });
+                  }
                 }
-              })
-              .catch(function () {
-                _renderProfile(user);
-              });
-          }
-        }
+              } catch (e) {
+                // sessionStorage unavailable or JSON corrupt — safe to ignore
+              }
+
+            } else {
+              _renderProfile(user);
+            }
+          })
+          .catch(function () {
+            _renderProfile(user);
+          });
       }
-    },
+    }
+  }
+},,
 
     close: function () {
       _stopListening();
