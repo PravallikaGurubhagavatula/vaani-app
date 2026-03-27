@@ -73,6 +73,40 @@
     return [String(senderId), String(receiverId)].sort();
   }
 
+  function _resolveMessageParticipants(data, currentUid) {
+    data = data || {};
+    var senderId = String(
+      data.senderId ||
+      data.uid ||
+      data.fromUid ||
+      data.fromUserId ||
+      ""
+    ).trim();
+    var receiverId = String(
+      data.receiverId ||
+      data.toUid ||
+      data.toUserId ||
+      ""
+    ).trim();
+
+    if (!receiverId && Array.isArray(data.participants)) {
+      receiverId = String((data.participants || []).find(function (uid) {
+        return uid && String(uid) !== senderId;
+      }) || "").trim();
+    }
+
+    if (!senderId || !receiverId || senderId === receiverId) return null;
+    if (currentUid && senderId !== currentUid && receiverId !== currentUid) return null;
+
+    var participants = [String(senderId), String(receiverId)].sort();
+    return {
+      senderId: senderId,
+      receiverId: receiverId,
+      participants: participants,
+      chatId: participants[0] + "_" + participants[1]
+    };
+  }
+
   async function _backfillChatsFromLegacyMessages() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
@@ -425,12 +459,21 @@
 
     console.log("[Vaani] _migrateTopLevelMessages: found", docs.length, "docs");
 
+    var skipped = 0;
+    var errors = 0;
+
     for (var i = 0; i < docs.length; i++) {
       var doc = docs[i];
       var data = doc.data() || {};
       try {
-        var chatId = data.chatId;
-        if (!chatId) continue;
+        var resolved = _resolveMessageParticipants(data, currentUid);
+        if (!resolved) {
+          skipped++;
+          console.log("[Vaani] _migrateTopLevelMessages: skip (unresolvable participants)", doc.id);
+          continue;
+        }
+
+        var chatId = resolved.chatId;
 
         // Check if already migrated to subcollection
         var existingSnap = await db
@@ -444,11 +487,8 @@
         var chatRef = db.collection("chats").doc(chatId);
         var chatSnap = await chatRef.get();
         if (!chatSnap.exists) {
-          var participants = Array.isArray(data.participants)
-            ? data.participants
-            : [data.senderId, data.receiverId].filter(Boolean).sort();
           await chatRef.set({
-            participants: participants,
+            participants: resolved.participants,
             lastMessage: data.text || "",
             createdAt: data.timestamp || firebase.firestore.FieldValue.serverTimestamp(),
             updatedAt: data.timestamp || firebase.firestore.FieldValue.serverTimestamp()
@@ -459,16 +499,24 @@
         await db.collection("chats").doc(chatId)
           .collection("messages").add({
             text: data.text || "",
-            senderId: data.senderId || "",
-            receiverId: data.receiverId || "",
-            participants: data.participants || [],
+            senderId: resolved.senderId,
+            receiverId: resolved.receiverId,
+            participants: resolved.participants,
+            chatId: chatId,
             timestamp: data.timestamp || firebase.firestore.FieldValue.serverTimestamp(),
             _migratedFrom: doc.id
           });
 
+        await db.collection("messages").doc(doc.id).set({
+          _migrated: true,
+          _chatId: chatId,
+          _migratedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
         migrated++;
         console.log("[Vaani] _migrateTopLevelMessages: migrated", doc.id, "→", chatId);
       } catch (e) {
+        errors++;
         console.error("[Vaani] _migrateTopLevelMessages: error on", doc.id, e);
       }
     }
@@ -478,7 +526,7 @@
   }
 
   sessionStorage.setItem(sessionKey, "1");
-  console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated");
+  console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
 }
 
   function _googleLogoSvg() {
@@ -788,11 +836,13 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
-    _fetchConnections(user.uid);       // start realtime connections Set
-    _fetchIncomingRequests(user.uid);  // start realtime requests listener
+    console.log("[Vaani] _renderChat: starting chat migrations before realtime listeners.");
     await _backfillChatsFromLegacyMessages();
     await _migrateLegacyMessages();
-    await _migrateTopLevelMessages();   // ← ADD THIS LINE
+    await _migrateTopLevelMessages();
+    console.log("[Vaani] _renderChat: migrations complete; attaching realtime listeners.");
+    _fetchConnections(user.uid);       // start realtime connections Set
+    _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _createChatListListener();
     _setSelectedChatUser(null);
   }
@@ -968,6 +1018,7 @@ function _setSelectedChatUser(user) {
       _unsubscribeChatList = null;
     }
     _activeChatListListenerUid = String(currentUid);
+    console.log("[Vaani] chat list listener: attaching for uid:", _activeChatListListenerUid);
 
     window.vaaniChat._chatList = [];
     window.vaaniChat.conversations = [];
@@ -978,6 +1029,7 @@ function _setSelectedChatUser(user) {
       .orderBy("updatedAt", "desc")
       .onSnapshot(
         async function (snapshot) {
+          console.log("[Vaani] chat list listener: snapshot size =", snapshot.size);
           var byOtherUid = Object.create(null);
           snapshot.forEach(function (doc) {
             var data = doc.data() || {};
@@ -1874,21 +1926,26 @@ async function sendMessage(chatId, text, currentUid, otherUid) {
     : null;
   if (!db || !chatId || !text || !currentUid || !otherUid) return;
 
+  var normalizedChatId = _generateChatId(currentUid, otherUid) || String(chatId || "");
+  var participants = [String(currentUid), String(otherUid)].sort();
+
   await db.collection("chats")
-    .doc(chatId)
+    .doc(normalizedChatId)
     .collection("messages")
     .add({
       text: text,
       senderId: currentUid,
       receiverId: otherUid,
-      participants: [currentUid, otherUid],
+      participants: participants,
+      chatId: normalizedChatId,
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-  await db.collection("chats").doc(chatId).update({
+  await db.collection("chats").doc(normalizedChatId).set({
+    participants: participants,
     lastMessage: text,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-  });
+  }, { merge: true });
 }
 
 async function _sendMessage() {
@@ -2091,7 +2148,7 @@ function listenToMessages(chatId) {
   //    function is called again synchronously before onSnapshot fires ────
   _activeMessageListenerKey = listenerKey;
 
-  console.log("[Vaani] Listening to chat:", chatId);
+  console.log("[Vaani] listenToMessages: attaching listener for chatId:", chatId);
 
   // ── Primary query: chats/{chatId}/messages ordered by timestamp asc ───
   // This matches the canonical chat-thread model and keeps each chat's
@@ -2146,7 +2203,7 @@ function listenToMessages(chatId) {
 
       console.log("Messages loaded:", messages);
       console.log("Messages snapshot:", snapshot.docs.map(function (d) { return d.data(); }));
-      console.log("[Vaani] Messages received:", snapshot.docs.length);
+      console.log("[Vaani] Messages received:", snapshot.docs.length, "| chatId:", chatId);
       console.log("[Vaani] listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
     },
 
@@ -2231,15 +2288,26 @@ function _openChatUI(chatId, user) {
       console.error("chatId missing");
       return;
     }
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? String(window._vaaniCurrentUser.uid)
+      : "";
+    var otherUid = user && user.uid ? String(user.uid) : "";
+    var normalizedChatId = (currentUid && otherUid)
+      ? _generateChatId(currentUid, otherUid)
+      : String(chatId);
 
-    _activeChatId = chatId;
+    if (normalizedChatId !== String(chatId)) {
+      console.warn("[Vaani] _openChatUI: normalized mismatched chatId", chatId, "→", normalizedChatId);
+    }
 
-    console.log("Opening chat UI:", chatId);
+    _activeChatId = normalizedChatId;
+
+    console.log("Opening chat UI:", normalizedChatId);
 
     _setSelectedChatUser(user || {});
     _renderChatUI(user || {});
 
-    _listenToMessages(chatId);
+    _listenToMessages(normalizedChatId);
 
   } catch (err) {
     console.error("OPEN CHAT UI ERROR:", err);
@@ -2400,33 +2468,32 @@ function _renderChatUI(otherProfile) {
           .get()
           .then(function (doc) {
             if (doc.exists && doc.data().username) {
-              _renderChat(user, doc.data());
-
-              // ── Re-hydrate any in-progress chat from sessionStorage ──
-              // If the user refreshed mid-conversation, we restore them
-              // to that chat rather than dumping them on the home screen.
-              try {
-                var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-                if (saved) {
-                  var state = JSON.parse(saved);
-                  if (state && state.chatId && state.otherUid) {
-                    // Fetch the other user's profile, then reopen the chat.
-                    var db = window.vaaniRouter.getDb();
-                    db.collection("users").doc(state.otherUid).get()
-                      .then(function (profileDoc) {
-                        var profile = profileDoc.exists ? profileDoc.data() : {};
-                        profile.uid = state.otherUid;
-                        _openChatUI(state.chatId, profile);
-                      })
-                      .catch(function (err) {
-                        console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-                        sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-                      });
+              Promise.resolve(_renderChat(user, doc.data()))
+                .then(function () {
+                  // ── Re-hydrate any in-progress chat from sessionStorage ──
+                  // Runs only after migrations/listeners are initialized.
+                  try {
+                    var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
+                    if (saved) {
+                      var state = JSON.parse(saved);
+                      if (state && state.chatId && state.otherUid) {
+                        var db = window.vaaniRouter.getDb();
+                        db.collection("users").doc(state.otherUid).get()
+                          .then(function (profileDoc) {
+                            var profile = profileDoc.exists ? profileDoc.data() : {};
+                            profile.uid = state.otherUid;
+                            _openChatUI(state.chatId, profile);
+                          })
+                          .catch(function (err) {
+                            console.warn("[Vaani] rehydrate: profile fetch failed:", err);
+                            sessionStorage.removeItem("vaani_active_chat_" + user.uid);
+                          });
+                      }
+                    }
+                  } catch (e) {
+                    // sessionStorage unavailable or JSON corrupt — safe to ignore
                   }
-                }
-              } catch (e) {
-                // sessionStorage unavailable or JSON corrupt — safe to ignore
-              }
+                });
 
             } else {
               _renderProfile(user);

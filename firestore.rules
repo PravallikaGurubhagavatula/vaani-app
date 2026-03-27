@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isTwoPartyParticipantList(participants) {
+      return participants is list
+        && participants.size() == 2
+        && participants[0] is string
+        && participants[1] is string
+        && participants[0] < participants[1];
+    }
+
+    function chatIdForParticipants(participants) {
+      return participants[0] + "_" + participants[1];
+    }
+
+    function userInParticipants(participants) {
+      return signedIn() && request.auth.uid in participants;
+    }
+
+    function isChatParticipantByDoc(chatData) {
+      return chatData != null
+        && chatData.participants is list
+        && request.auth.uid in chatData.participants;
+    }
+
+    function sameParticipants(a, b) {
+      return a is list
+        && b is list
+        && a.size() == 2
+        && b.size() == 2
+        && a[0] == b[0]
+        && a[1] == b[1];
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isSelf(uid);
+      allow delete: if false;
+    }
+
+    match /connections/{connectionId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.users;
+
+      allow create: if signedIn()
+        && request.resource.data.users is list
+        && request.resource.data.users.size() == 2
+        && request.auth.uid in request.resource.data.users;
+
+      allow update, delete: if signedIn() && request.auth.uid in resource.data.users;
+    }
+
+    match /connectionRequests/{requestId} {
+      allow read: if signedIn() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == "pending";
+
+      allow update: if signedIn() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+
+      allow delete: if signedIn() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+    }
+
+    match /chats/{chatId} {
+      allow read: if signedIn() && userInParticipants(resource.data.participants);
+
+      allow create: if signedIn()
+        && isTwoPartyParticipantList(request.resource.data.participants)
+        && userInParticipants(request.resource.data.participants)
+        && chatId == chatIdForParticipants(request.resource.data.participants);
+
+      allow update: if signedIn()
+        && isChatParticipantByDoc(resource.data)
+        && sameParticipants(request.resource.data.participants, resource.data.participants)
+        && chatId == chatIdForParticipants(resource.data.participants);
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && isChatParticipantByDoc(get(/databases/$(database)/documents/chats/$(chatId)).data);
+
+        allow create: if signedIn()
+          && isChatParticipantByDoc(get(/databases/$(database)/documents/chats/$(chatId)).data)
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.receiverId in get(/databases/$(database)/documents/chats/$(chatId)).data.participants
+          && request.resource.data.receiverId != request.auth.uid
+          && request.resource.data.chatId == chatId
+          && sameParticipants(
+            request.resource.data.participants,
+            get(/databases/$(database)/documents/chats/$(chatId)).data.participants
+          );
+
+        allow update, delete: if signedIn()
+          && isChatParticipantByDoc(get(/databases/$(database)/documents/chats/$(chatId)).data);
+      }
+    }
+
+    // Legacy top-level collection used by migration jobs.
+    match /messages/{messageId} {
+      allow read: if signedIn() && (
+        request.auth.uid == resource.data.senderId ||
+        request.auth.uid == resource.data.receiverId
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.receiverId is string
+        && request.resource.data.receiverId != request.auth.uid;
+
+      allow update: if signedIn() && (
+        request.auth.uid == resource.data.senderId ||
+        request.auth.uid == resource.data.receiverId
+      );
+
+      allow delete: if false;
+    }
+
+    // Legacy collection still read/updated by migration tooling.
+    match /vaani_messages/{messageId} {
+      allow read, update: if signedIn() && (
+        request.auth.uid == resource.data.uid ||
+        request.auth.uid == resource.data.senderId ||
+        request.auth.uid == resource.data.receiverId ||
+        (resource.data.participants is list && request.auth.uid in resource.data.participants)
+      );
+
+      allow create: if signedIn();
+      allow delete: if false;
+    }
+  }
+}
