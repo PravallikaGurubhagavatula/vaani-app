@@ -1760,6 +1760,29 @@ async function _fetchOtherProfile(db, uid) {
   return {};
 }
 
+async function sendMessage(chatId, text, currentUid, otherUid) {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+  if (!db || !chatId || !text || !currentUid || !otherUid) return;
+
+  await db.collection("chats")
+    .doc(chatId)
+    .collection("messages")
+    .add({
+      text: text,
+      senderId: currentUid,
+      receiverId: otherUid,
+      participants: [currentUid, otherUid],
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+  await db.collection("chats").doc(chatId).update({
+    lastMessage: text,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
 async function _sendMessage() {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
@@ -1853,21 +1876,7 @@ async function _sendMessage() {
   _setInputMessage("");
 
   try {
-    // ── Write the normalised message document ────────────────────────────
-    await db.collection(CHATS_COLLECTION).doc(_activeChatId).collection(MESSAGES_COLLECTION).add({
-      text:         inputMessage,
-      senderId:     currentUid,
-      receiverId:   otherUid,
-      participants: [currentUid, otherUid],
-      chatId:       _activeChatId,
-      timestamp:    firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    // ── Update chat list preview ──────────────────────────────────────────
-    await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
-      lastMessage: inputMessage,
-      updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
-    });
+    await sendMessage(_activeChatId, inputMessage, currentUid, otherUid);
 
     console.log("[Vaani] _sendMessage: write succeeded — chatId:", _activeChatId);
 
