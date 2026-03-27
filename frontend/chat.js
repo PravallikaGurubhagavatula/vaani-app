@@ -1943,53 +1943,39 @@ function _renderMessages() {
   _scrollMessagesToBottom();
 }
 
-function _listenToMessages(chatId) {
+function listenToMessages(chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
-  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-    ? String(window._vaaniCurrentUser.uid)
-    : "";
-  var otherUid = _selectedChatUser && _selectedChatUser.uid
-    ? String(_selectedChatUser.uid)
-    : "";
 
   // ── Guard: hard dependencies ──────────────────────────────────────────
   if (!db) {
-    console.error("[Vaani] _listenToMessages: db unavailable.");
-    _setMessages([]);
-    _renderMessages();
-    return;
-  }
-  if (!currentUid || !otherUid) {
-    console.error("[Vaani] _listenToMessages: missing currentUid or otherUid.", { currentUid, otherUid });
+    console.error("[Vaani] listenToMessages: db unavailable.");
     _setMessages([]);
     _renderMessages();
     return;
   }
   if (!chatId) {
-    console.error("[Vaani] _listenToMessages: chatId is null — cannot attach listener.", { currentUid, otherUid });
+    console.error("[Vaani] listenToMessages: chatId is null — cannot attach listener.");
     _setMessages([]);
     _renderMessages();
     return;
   }
 
-  currentUid = String(currentUid);
-  otherUid   = String(otherUid);
-  chatId     = String(chatId);
+  chatId = String(chatId);
 
   // ── Deduplication guard ───────────────────────────────────────────────
   // If the exact same listener is already active, do nothing.
   // "chat::" prefix distinguishes chatId-keyed listeners from uid-pair keys.
   var listenerKey = "chat::" + chatId;
   if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) {
-    console.log("[Vaani] _listenToMessages: listener already active for", chatId);
+    console.log("[Vaani] listenToMessages: listener already active for", chatId);
     return;
   }
 
   // ── Tear down any previous listener before attaching a new one ────────
   if (_unsubscribeMessages) {
-    console.log("[Vaani] _listenToMessages: unsubscribing previous listener.");
+    console.log("[Vaani] listenToMessages: unsubscribing previous listener.");
     _teardownMessageListener();
   }
 
@@ -2014,7 +2000,7 @@ function _listenToMessages(chatId) {
       // If _teardownMessageListener fired between attach and first callback,
       // the key will have changed — bail silently.
       if (_activeMessageListenerKey !== listenerKey) {
-        console.warn("[Vaani] _listenToMessages: stale snapshot discarded for", chatId);
+        console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId);
         return;
       }
 
@@ -2038,7 +2024,7 @@ function _listenToMessages(chatId) {
 
       var nextSignature = messageSignatureParts.join("|");
       if (nextSignature === _activeMessagesSignature) {
-        console.log("[Vaani] _listenToMessages: snapshot unchanged, skipping render.");
+        console.log("[Vaani] listenToMessages: snapshot unchanged, skipping render.");
         return;
       }
 
@@ -2053,14 +2039,14 @@ function _listenToMessages(chatId) {
       console.log("Messages loaded:", messages);
       console.log("Messages snapshot:", snapshot.docs.map(function (d) { return d.data(); }));
       console.log("[Vaani] Messages received:", snapshot.docs.length);
-      console.log("[Vaani] _listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
+      console.log("[Vaani] listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
     },
 
     function (err) {
       // ── Firestore listener error — could be a rules rejection or network
       //    issue. Clear state so the user sees an empty chat rather than
       //    stale messages, and log the full error for debugging. ──────────
-      console.error("[Vaani] _listenToMessages: snapshot error for chatId:", chatId, err);
+      console.error("[Vaani] listenToMessages: snapshot error for chatId:", chatId, err);
 
       // Only clear if this error belongs to the current listener
       if (_activeMessageListenerKey === listenerKey) {
@@ -2071,6 +2057,10 @@ function _listenToMessages(chatId) {
       }
     }
   );
+}
+
+function _listenToMessages(chatId) {
+  return listenToMessages(chatId);
 }
 
 // ── Get or create a chat document between current user and otherUid ───────
