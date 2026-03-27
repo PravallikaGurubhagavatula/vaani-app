@@ -1738,89 +1738,121 @@ async function _sendMessage() {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
-  var currentUser = window._vaaniCurrentUser || null;
-  var selectedChatUser = _selectedChatUser || null;
-  var inputEl = document.getElementById("messageInput") || document.getElementById("vcChatInput");
+  var currentUser    = window._vaaniCurrentUser || null;
+  var selectedUser   = _selectedChatUser || null;
+  var inputEl        = document.getElementById("messageInput");
+  var sendBtn        = document.getElementById("sendBtn");
 
   // ── Guard: all required refs must exist ───────────────────────────────
-  if (!db || !currentUser || !currentUser.uid || !selectedChatUser || !selectedChatUser.uid || !inputEl) {
-    console.error("[Vaani] sendMessage: missing db / currentUser / selectedUser / inputEl");
+  if (!db) {
+    console.error("[Vaani] _sendMessage: db unavailable");
+    return;
+  }
+  if (!currentUser || !currentUser.uid) {
+    console.error("[Vaani] _sendMessage: no current user");
+    return;
+  }
+  if (!selectedUser || !selectedUser.uid) {
+    console.error("[Vaani] _sendMessage: no selected chat user");
+    return;
+  }
+  if (!inputEl) {
+    console.error("[Vaani] _sendMessage: messageInput element not found");
+    return;
+  }
+
+  // ── Prevent double-fire while a send is already in flight ────────────
+  if (sendBtn && sendBtn.disabled) return;
+
+  // ── Read and validate the message text ───────────────────────────────
+  var inputMessage = (inputEl.value || "").trim();
+  if (!inputMessage) {
+    console.log("[Vaani] _sendMessage: blocked — empty message");
     return;
   }
 
   var currentUid = String(currentUser.uid);
-  var otherUid   = String(selectedChatUser.uid);
+  var otherUid   = String(selectedUser.uid);
 
-  _setInputMessage(inputEl.value || "");
-  var inputMessage = _inputMessage.trim();
-  if (!inputMessage) return;
-
-  var sendBtn = document.getElementById("sendBtn") || document.getElementById("vcChatSend");
-  if (sendBtn && sendBtn.disabled) return;
-
-  // ── Ensure chatId exists BEFORE optimistic render ─────────────────────
-  // This guarantees every message document carries a valid chatId.
+  // ── Ensure chatId exists BEFORE any UI mutation ───────────────────────
+  // If _activeChatId is null (e.g. first message in a new chat), we must
+  // resolve it synchronously before touching the DOM or Firestore messages.
   if (!_activeChatId) {
+    console.log("[Vaani] _sendMessage: no activeChatId — calling _getOrCreateChat");
     try {
       _activeChatId = await _getOrCreateChat(otherUid);
     } catch (err) {
-      console.error("[Vaani] sendMessage: could not get/create chat:", err);
+      console.error("[Vaani] _sendMessage: _getOrCreateChat threw:", err);
       return;
+    }
+    if (!_activeChatId) {
+      console.error("[Vaani] _sendMessage: chatId still null after _getOrCreateChat — aborting");
+      return;
+    }
+    console.log("[Vaani] _sendMessage: resolved chatId:", _activeChatId);
+
+    // Now that we have a chatId, attach the message listener if it isn't
+    // already running (covers the edge case where the chat was opened
+    // before a chat document existed in Firestore).
+    if (!_unsubscribeMessages) {
+      _listenToMessages(currentUid, otherUid, _activeChatId);
     }
   }
 
-  if (!_activeChatId) {
-    console.error("[Vaani] sendMessage: chatId is null after getOrCreateChat");
-    return;
-  }
+  console.log("[Vaani] Sending:", inputMessage, "| chatId:", _activeChatId);
 
-  // ── Optimistic message for instant UI feedback ────────────────────────
+  // ── Optimistic render ─────────────────────────────────────────────────
   var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
   _optimisticMessages.push({
     _optimisticId: tempId,
     text:          inputMessage,
-    senderId:      currentUid,      // NEW field — used by _renderMessages
+    senderId:      currentUid,
     timestamp:     new Date()
   });
   _renderMessages();
 
-  // ── Disable input while sending ───────────────────────────────────────
+  // ── Disable UI immediately — re-enabled in finally ────────────────────
   inputEl.disabled = true;
   if (sendBtn) sendBtn.disabled = true;
 
-  // ── Clear input immediately (feels snappy) ────────────────────────────
-  _setInputMessage("");
+  // ── Clear input right away (feels fast) ──────────────────────────────
   inputEl.value = "";
+  _setInputMessage("");
 
   try {
-    // ── Write message with FULL normalised structure ──────────────────────
+    // ── Write the normalised message document ────────────────────────────
     await db.collection(MESSAGES_COLLECTION).add({
       text:         inputMessage,
-      senderId:     currentUid,                                       // who sent
-      receiverId:   otherUid,                                         // who receives
-      participants: [currentUid, otherUid],                           // for array-contains queries
-      chatId:       _activeChatId,                                    // foreign key → chats doc
-      timestamp:    firebase.firestore.FieldValue.serverTimestamp()   // authoritative time
+      senderId:     currentUid,
+      receiverId:   otherUid,
+      participants: [currentUid, otherUid],
+      chatId:       _activeChatId,
+      timestamp:    firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    // ── Keep the chat list preview up to date ─────────────────────────────
+    // ── Update chat list preview ──────────────────────────────────────────
     await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
       lastMessage: inputMessage,
       updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
     });
 
+    console.log("[Vaani] _sendMessage: write succeeded — chatId:", _activeChatId);
+
   } catch (err) {
-    // ── Roll back optimistic message on failure ───────────────────────────
+    // ── Roll back optimistic bubble and restore the typed text ────────────
     _optimisticMessages = _optimisticMessages.filter(function (m) {
       return m._optimisticId !== tempId;
     });
-    // Restore what the user typed so they can retry
     _setInputMessage(inputMessage);
     inputEl.value = inputMessage;
     _renderMessages();
-    console.error("[Vaani] sendMessage: Firestore write failed:", err);
+    console.error("[Vaani] _sendMessage: Firestore write failed:", err);
+    if (typeof window.showToast === "function") {
+      window.showToast("Message failed to send — please try again");
+    }
 
   } finally {
+    // ── Always re-enable the input so the user can type again ─────────────
     inputEl.disabled = false;
     _setInputMessage(inputEl.value || "");
     if (sendBtn) sendBtn.disabled = !_inputMessage.trim();
@@ -2141,7 +2173,7 @@ function _openChatUI(chatId, otherProfile) {
 
   _scrollMessagesToBottom();
 
-  // ── 6. Wire up back button ───────────────────────────────────────────
+  // ── 6. Wire up back button ────────────────────────────────────────────
   var backBtn = document.getElementById("backBtn");
   if (backBtn) {
     backBtn.onclick = function () {
@@ -2149,30 +2181,43 @@ function _openChatUI(chatId, otherProfile) {
     };
   }
 
-  // ── 7. Wire up input + send ──────────────────────────────────────────
+  // ── 7. Wire up input + send button ───────────────────────────────────
   var messageInput = document.getElementById("messageInput");
   var sendBtn      = document.getElementById("sendBtn");
 
   function _toggleSendState() {
     if (!messageInput || !sendBtn) return;
-    _setInputMessage(messageInput.value || "");
-    sendBtn.disabled = !_inputMessage.trim();
+    var hasText = messageInput.value.trim().length > 0;
+    sendBtn.disabled = !hasText;
+    _setInputMessage(messageInput.value);
   }
 
   if (messageInput) {
-    messageInput.value = _inputMessage;
+    // Sync the send-button enabled state on every keystroke
     messageInput.addEventListener("input", _toggleSendState);
+
+    // Enter key → send (Shift+Enter is reserved for future multiline support)
     messageInput.addEventListener("keydown", function (event) {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      // Only fire if there is actually text — mirrors the button's disabled state
+      if (messageInput.value.trim()) {
         _sendMessage();
       }
     });
+
+    messageInput.value = "";   // always start with empty input on chat open
     messageInput.focus();
   }
 
   if (sendBtn) {
-    sendBtn.addEventListener("click", _sendMessage);
+    sendBtn.addEventListener("click", function () {
+      // Belt-and-suspenders: guard here too in case disabled state got out of sync
+      if (messageInput && messageInput.value.trim()) {
+        _sendMessage();
+      }
+    });
+    sendBtn.disabled = true;   // disabled until the user types something
   }
 
   _toggleSendState();
@@ -2255,7 +2300,7 @@ function _openChatUI(chatId, otherProfile) {
       }
     }
   }
-},,
+},
 
     close: function () {
       _stopListening();
