@@ -1511,63 +1511,84 @@ async function _sendMessage() {
   var selectedChatUser = _selectedChatUser || null;
   var inputEl = document.getElementById("messageInput") || document.getElementById("vcChatInput");
 
+  // ── Guard: all required refs must exist ───────────────────────────────
   if (!db || !currentUser || !currentUser.uid || !selectedChatUser || !selectedChatUser.uid || !inputEl) {
-    console.error("[Vaani] Unable to send message: missing db/current user/selected user/input element.");
+    console.error("[Vaani] sendMessage: missing db / currentUser / selectedUser / inputEl");
     return;
   }
 
+  var currentUid = String(currentUser.uid);
+  var otherUid   = String(selectedChatUser.uid);
+
   _setInputMessage(inputEl.value || "");
   var inputMessage = _inputMessage.trim();
-  if (!inputMessage) {
-    console.error("[Vaani] Empty message blocked.");
-    return;
-  }
+  if (!inputMessage) return;
 
   var sendBtn = document.getElementById("sendBtn") || document.getElementById("vcChatSend");
   if (sendBtn && sendBtn.disabled) return;
 
+  // ── Ensure chatId exists BEFORE optimistic render ─────────────────────
+  // This guarantees every message document carries a valid chatId.
+  if (!_activeChatId) {
+    try {
+      _activeChatId = await _getOrCreateChat(otherUid);
+    } catch (err) {
+      console.error("[Vaani] sendMessage: could not get/create chat:", err);
+      return;
+    }
+  }
+
+  if (!_activeChatId) {
+    console.error("[Vaani] sendMessage: chatId is null after getOrCreateChat");
+    return;
+  }
+
+  // ── Optimistic message for instant UI feedback ────────────────────────
   var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
   _optimisticMessages.push({
     _optimisticId: tempId,
-    text: inputMessage,
-    senderId: currentUser.uid,
-    timestamp: new Date()
+    text:          inputMessage,
+    senderId:      currentUid,      // NEW field — used by _renderMessages
+    timestamp:     new Date()
   });
   _renderMessages();
 
+  // ── Disable input while sending ───────────────────────────────────────
+  inputEl.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  // ── Clear input immediately (feels snappy) ────────────────────────────
+  _setInputMessage("");
+  inputEl.value = "";
+
   try {
-    inputEl.disabled = true;
-    if (sendBtn) sendBtn.disabled = true;
+    // ── Write message with FULL normalised structure ──────────────────────
+    await db.collection(MESSAGES_COLLECTION).add({
+      text:         inputMessage,
+      senderId:     currentUid,                                       // who sent
+      receiverId:   otherUid,                                         // who receives
+      participants: [currentUid, otherUid],                           // for array-contains queries
+      chatId:       _activeChatId,                                    // foreign key → chats doc
+      timestamp:    firebase.firestore.FieldValue.serverTimestamp()   // authoritative time
+    });
 
-    if (!_activeChatId) {
-      _activeChatId = await _getOrCreateChat(selectedChatUser.uid);
-    }
+    // ── Keep the chat list preview up to date ─────────────────────────────
+    await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
+      lastMessage: inputMessage,
+      updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
+    });
 
-    await db
-      .collection(MESSAGES_COLLECTION)
-      .add({
-        text: inputMessage,
-        senderId: currentUser.uid,
-        receiverId: selectedChatUser.uid,
-        participants: [currentUser.uid, selectedChatUser.uid],
-        timestamp: firebase.firestore.FieldValue.serverTimestamp()
-      });
-
-    if (_activeChatId) {
-      await db.collection(CHATS_COLLECTION).doc(_activeChatId).update({
-        lastMessage: inputMessage,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-    }
-
-    _setInputMessage("");
-    inputEl.value = _inputMessage;
   } catch (err) {
+    // ── Roll back optimistic message on failure ───────────────────────────
     _optimisticMessages = _optimisticMessages.filter(function (m) {
       return m._optimisticId !== tempId;
     });
+    // Restore what the user typed so they can retry
+    _setInputMessage(inputMessage);
+    inputEl.value = inputMessage;
     _renderMessages();
-    console.error("[Vaani] Failed to send message:", err);
+    console.error("[Vaani] sendMessage: Firestore write failed:", err);
+
   } finally {
     inputEl.disabled = false;
     _setInputMessage(inputEl.value || "");
