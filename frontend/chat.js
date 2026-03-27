@@ -951,6 +951,7 @@ function _setSelectedChatUser(user) {
               updatedAt: conversation.timestamp || null
             };
           });
+          console.log("Chat list:", window.vaaniChat.conversations);
           if (signature !== prev) _renderChatList();
         },
         function (err) {
@@ -2058,6 +2059,7 @@ function _listenToMessages(chatId) {
       _setMessages(messages);
       _renderMessages();
 
+      console.log("Messages snapshot:", snapshot.docs.map(function (d) { return d.data(); }));
       console.log("[Vaani] Messages received:", snapshot.docs.length);
       console.log("[Vaani] _listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
     },
@@ -2136,6 +2138,8 @@ async function _getOrCreateChat(otherUid) {
 function _openChatUI(chatId, otherProfile) {
   console.log("[Vaani] _openChatUI — chatId:", chatId);
   _activeChatId = chatId ? String(chatId) : null;
+  console.log("Active Chat ID:", _activeChatId);
+  console.log("Opening chat with:", otherProfile && otherProfile.uid ? otherProfile.uid : null);
 
   if (!_activeChatId) {
     console.error("[Vaani] _openChatUI: chatId is null — aborting");
