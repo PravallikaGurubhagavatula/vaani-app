@@ -972,17 +972,18 @@ function _setSelectedChatUser(user) {
     var conversations = Array.isArray(window.vaaniChat.conversations)
       ? window.vaaniChat.conversations
       : [];
-    if (!conversations.length) {
-      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-      _renderedChatListSignature = "empty";
-      return;
-    }
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
 
-    var items = conversations.map(function (conversation) {
+    var itemsByUid = Object.create(null);
+    conversations.forEach(function (conversation) {
       var profile = conversation && conversation.user ? conversation.user : {};
-      return {
+      var otherUid = conversation && conversation.otherUid ? conversation.otherUid : null;
+      if (!otherUid) return;
+      itemsByUid[otherUid] = {
         chatId: conversation && conversation.chatId ? conversation.chatId : null,
-        otherUid: conversation && conversation.otherUid ? conversation.otherUid : null,
+        otherUid: otherUid,
         username: profile.username || "user",
         displayName: profile.displayName || profile.username || "user",
         photoURL: profile.photoURL || "",
@@ -990,6 +991,41 @@ function _setSelectedChatUser(user) {
         updatedAt: conversation && conversation.timestamp ? conversation.timestamp : null
       };
     });
+
+    var connectedUids = Array.from(_connectedUidSet);
+    var missingConnectedUids = connectedUids.filter(function (uid) {
+      return uid && !itemsByUid[uid];
+    });
+
+    if (missingConnectedUids.length && db) {
+      var connectedProfiles = await Promise.all(missingConnectedUids.map(async function (uid) {
+        var profile = await _getUserProfileCached(db, uid);
+        return { uid: uid, profile: profile || {} };
+      }));
+
+      connectedProfiles.forEach(function (entry) {
+        var profile = entry.profile || {};
+        itemsByUid[entry.uid] = {
+          chatId: null,
+          otherUid: entry.uid,
+          username: profile.username || "user",
+          displayName: profile.displayName || profile.username || "user",
+          photoURL: profile.photoURL || "",
+          lastMessage: "Start a conversation",
+          updatedAt: null
+        };
+      });
+    }
+
+    var items = Object.keys(itemsByUid).map(function (uid) {
+      return itemsByUid[uid];
+    });
+
+    if (!items.length) {
+      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+      _renderedChatListSignature = "empty";
+      return;
+    }
 
     items.sort(function (a, b) {
       var aTime = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
@@ -1037,18 +1073,6 @@ function _setSelectedChatUser(user) {
         var openRequestId = ++_chatListOpenRequestId;
 
         try {
-          var existingChatId = chat.chatId;
-          if (!existingChatId) {
-            existingChatId = await _getOrCreateChat(chat.otherUid);
-          }
-          if (!existingChatId) {
-            console.error("[Vaani] Invalid chatId for chat list item:", chat);
-            return;
-          }
-
-          // Ignore stale async completions if user has already clicked another conversation.
-          if (openRequestId !== _chatListOpenRequestId) return;
-
           var selectedUser = {
             uid: chat.otherUid,
             username: chat.username || "user",
@@ -1056,8 +1080,17 @@ function _setSelectedChatUser(user) {
             photoURL: chat.photoURL || ""
           };
 
+          var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
+          if (!chatId) {
+            console.error("[Vaani] Invalid chatId for chat list item:", chat);
+            return;
+          }
+
+          // Ignore stale async completions if user has already clicked another conversation.
+          if (openRequestId !== _chatListOpenRequestId) return;
+
           _setSelectedChatUser(selectedUser);
-          _openChatUI(existingChatId, selectedUser);
+          _openChatUI(chatId, selectedUser);
         } catch (err) {
           console.error("[Vaani] Could not open chat list item:", err);
         }
