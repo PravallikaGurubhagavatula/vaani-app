@@ -1706,45 +1706,52 @@ async function _getOrCreateChat(otherUid) {
     ? window.vaaniRouter.getDb()
     : null;
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-    ? window._vaaniCurrentUser.uid
+    ? String(window._vaaniCurrentUser.uid)
     : null;
 
+  // ── Guard: all three deps must be present ─────────────────────────────
   if (!db || !currentUid || !otherUid) {
-    console.error("[Vaani] _getOrCreateChat: missing db/current user/other user.");
+    console.error("[Vaani] _getOrCreateChat: missing db / currentUid / otherUid.", {
+      db: !!db, currentUid, otherUid
+    });
     return null;
   }
 
-  // ── Step 1: query all chats the current user participates in ─────────
-  var snapshot = await db
-    .collection(CHATS_COLLECTION)
-    .where("participants", "array-contains", currentUid)
-    .get();
+  otherUid = String(otherUid);
 
-  // ── Step 2: find a chat that also contains the other user ────────────
-  var existingId = null;
-  snapshot.forEach(function (doc) {
-    var data = doc.data() || {};
-    var parts = data.participants || [];
-    if (parts.indexOf(otherUid) !== -1) {
-      existingId = doc.id;
+  // ── Deterministic chat ID: sorted UIDs joined by "_" ─────────────────
+  // Using a predictable ID means two concurrent calls for the same pair
+  // can never create duplicate chat documents — the second set() is a
+  // silent no-op thanks to { merge: true }.
+  var sortedPair  = [currentUid, otherUid].sort();
+  var chatId      = sortedPair[0] + "_" + sortedPair[1];
+  var chatRef     = db.collection(CHATS_COLLECTION).doc(chatId);
+
+  try {
+    // ── Step 1: try to fetch the existing chat document ──────────────────
+    var snap = await chatRef.get();
+
+    if (snap.exists) {
+      console.log("[Vaani] Chat fetched (existing):", chatId);
+      return chatId;
     }
-  });
 
-  if (existingId) {
-    console.log("[Vaani] Existing chat found:", existingId);
-    return existingId;
+    // ── Step 2: document does not exist — create it ──────────────────────
+    // set() with merge:true is idempotent; safe even if two tabs race here.
+    await chatRef.set({
+      participants: sortedPair,                                      // always sorted
+      lastMessage:  "",
+      createdAt:    firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt:    firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    console.log("[Vaani] Chat created (new):", chatId);
+    return chatId;
+
+  } catch (err) {
+    console.error("[Vaani] _getOrCreateChat failed for pair", sortedPair, ":", err);
+    return null;
   }
-
-  // ── Step 3: create a new chat document ───────────────────────────────
-  var newChatRef = await db.collection(CHATS_COLLECTION).add({
-    participants: [currentUid, otherUid],
-    createdAt:   firebase.firestore.FieldValue.serverTimestamp(),
-    updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-    lastMessage: ""
-  });
-
-  console.log("[Vaani] New chat created:", newChatRef.id);
-  return newChatRef.id;
 }
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
