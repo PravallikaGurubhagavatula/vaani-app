@@ -171,6 +171,228 @@
     return _chatBackfillPromisesByUid[currentUid];
   }
 
+  async function _migrateLegacyMessages() {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb()
+      : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? String(window._vaaniCurrentUser.uid)
+      : "";
+
+    if (!db || !currentUid) {
+      console.warn("[Vaani] _migrateLegacyMessages: db or currentUid unavailable — aborting.");
+      return;
+    }
+
+    // ── Guard: run at most once per session per user ──────────────────────
+    var sessionKey = "vaani_migration_done_" + currentUid;
+    if (sessionStorage.getItem(sessionKey)) {
+      console.log("[Vaani] _migrateLegacyMessages: already ran this session — skipping.");
+      return;
+    }
+
+    console.log("[Vaani] _migrateLegacyMessages: starting for uid:", currentUid);
+
+    var migrated = 0;
+    var skipped  = 0;
+    var errors   = 0;
+
+    try {
+      // ── Step 1: fetch all legacy messages involving currentUid ────────────
+      // Three queries cover the old field naming variants your app has used.
+      var legacyQueries = [
+        db.collection(LEGACY_MESSAGES_COLLECTION).where("uid",        "==", currentUid).get(),
+        db.collection(LEGACY_MESSAGES_COLLECTION).where("senderId",   "==", currentUid).get(),
+        db.collection(LEGACY_MESSAGES_COLLECTION).where("receiverId", "==", currentUid).get()
+      ];
+
+      var snapshots  = await Promise.all(legacyQueries);
+      var seenDocIds = new Set();
+      var docsToProcess = [];
+
+      snapshots.forEach(function (snap) {
+        snap.forEach(function (doc) {
+          if (seenDocIds.has(doc.id)) return;  // deduplicate across query results
+          seenDocIds.add(doc.id);
+          docsToProcess.push(doc);
+        });
+      });
+
+      console.log("[Vaani] _migrateLegacyMessages: found", docsToProcess.length, "candidate doc(s).");
+
+      if (!docsToProcess.length) {
+        sessionStorage.setItem(sessionKey, "1");
+        console.log("[Vaani] _migrateLegacyMessages: nothing to migrate.");
+        return;
+      }
+
+      // ── Step 2: process each doc individually (never batch writes here) ───
+      // Individual try/catch means one bad doc cannot abort the rest.
+      for (var i = 0; i < docsToProcess.length; i++) {
+        var doc  = docsToProcess[i];
+        var data = doc.data() || {};
+
+        try {
+          // ── 2a. Already migrated — skip ─────────────────────────────────
+          if (data.chatId && data.senderId && data.receiverId && data.participants) {
+            skipped++;
+            console.log("[Vaani] skip (already migrated):", doc.id);
+            continue;
+          }
+
+          // ── 2b. Must have text ──────────────────────────────────────────
+          var text = String(data.text || "").trim();
+          if (!text) {
+            skipped++;
+            console.log("[Vaani] skip (empty text):", doc.id);
+            continue;
+          }
+
+          // ── 2c. Resolve senderId ────────────────────────────────────────
+          // Priority: senderId field > uid field > fromUid field.
+          var senderId = String(
+            data.senderId  ||
+            data.uid       ||
+            data.fromUid   ||
+            data.fromUserId ||
+            ""
+          ).trim();
+
+          if (!senderId) {
+            skipped++;
+            console.log("[Vaani] skip (no senderId resolvable):", doc.id);
+            continue;
+          }
+
+          // ── 2d. Resolve receiverId ──────────────────────────────────────
+          // Priority: receiverId > toUid > participants array > infer from
+          // currentUid (if sender is not currentUid, receiver IS currentUid).
+          var receiverId = String(
+            data.receiverId  ||
+            data.toUid       ||
+            data.toUserId    ||
+            ""
+          ).trim();
+
+          if (!receiverId && Array.isArray(data.participants)) {
+            receiverId = data.participants.find(function (uid) {
+              return uid && uid !== senderId;
+            }) || "";
+          }
+
+          // Last-resort inference: if we know the sender and it's not us,
+          // we must be the receiver (and vice versa).
+          if (!receiverId) {
+            if (senderId !== currentUid) {
+              receiverId = currentUid;
+            } else {
+              // Sender is currentUid but we cannot identify who received it —
+              // cannot create a valid chat pair. Skip safely.
+              skipped++;
+              console.log("[Vaani] skip (receiverId unresolvable, sender is currentUid):", doc.id);
+              continue;
+            }
+          }
+
+          // ── 2e. Sanity checks ───────────────────────────────────────────
+          if (senderId === receiverId) {
+            skipped++;
+            console.log("[Vaani] skip (senderId === receiverId):", doc.id);
+            continue;
+          }
+
+          // At least one participant must be currentUid (we only migrate
+          // messages that belong to this user's conversations).
+          if (senderId !== currentUid && receiverId !== currentUid) {
+            skipped++;
+            console.log("[Vaani] skip (currentUid not a participant):", doc.id);
+            continue;
+          }
+
+          // ── 2f. Build participants array (sorted — matches _getOrCreateChat) ─
+          var participants = [senderId, receiverId].sort();
+
+          // ── 2g. Get or create the chat document ─────────────────────────
+          // Reuse the deterministic ID scheme from _getOrCreateChat so this
+          // migration is fully consistent with the rest of the app.
+          var sortedPair = participants;
+          var chatId     = sortedPair[0] + "_" + sortedPair[1];
+          var chatRef    = db.collection(CHATS_COLLECTION).doc(chatId);
+
+          var chatSnap = await chatRef.get();
+          if (!chatSnap.exists) {
+            // Resolve a safe timestamp for the chat document
+            var chatTimestamp = _safeTimestampValue(data.timestamp) ||
+                                _safeTimestampValue(data.createdAt) ||
+                                firebase.firestore.FieldValue.serverTimestamp();
+
+            await chatRef.set({
+              participants: sortedPair,
+              lastMessage:  text,
+              createdAt:    chatTimestamp,
+              updatedAt:    chatTimestamp
+            }, { merge: true });
+
+            console.log("[Vaani] _migrateLegacyMessages: created chat doc:", chatId);
+          }
+
+          // ── 2h. Resolve a safe timestamp for the message ────────────────
+          var msgTimestamp = _safeTimestampValue(data.timestamp) ||
+                             _safeTimestampValue(data.createdAt) ||
+                             firebase.firestore.FieldValue.serverTimestamp();
+
+          // ── 2i. Write the normalised message to the NEW collection ───────
+          // We INSERT into MESSAGES_COLLECTION rather than updating the legacy
+          // doc in-place, so the legacy data is preserved untouched as a backup.
+          await db.collection(MESSAGES_COLLECTION).add({
+            text:         text,
+            senderId:     senderId,
+            receiverId:   receiverId,
+            participants: sortedPair,
+            chatId:       chatId,
+            timestamp:    msgTimestamp,
+            _migratedFrom: doc.id          // provenance — links back to legacy doc
+          });
+
+          // ── 2j. Stamp the legacy doc so we never re-process it ──────────
+          await db.collection(LEGACY_MESSAGES_COLLECTION).doc(doc.id).update({
+            _migrated:  true,
+            _chatId:    chatId,
+            _migratedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+
+          migrated++;
+          console.log("[Vaani] migrated:", doc.id, "→ chatId:", chatId);
+
+        } catch (docErr) {
+          // One doc failed — log it and keep going, never abort the loop.
+          errors++;
+          console.error("[Vaani] _migrateLegacyMessages: error processing doc", doc.id, ":", docErr);
+        }
+      }
+
+    } catch (fatalErr) {
+      // Outer fetch failed (e.g. permission denied on the whole collection).
+      // Log and return — do NOT set the session flag so we retry next session.
+      console.error("[Vaani] _migrateLegacyMessages: fatal error during fetch:", fatalErr);
+      return;
+    }
+
+    // ── Mark done for this session only ──────────────────────────────────
+    // We use sessionStorage (not localStorage) so the migration re-runs
+    // once per browser session, making it safe to deploy incrementally while
+    // there may still be un-migrated docs from other devices.
+    sessionStorage.setItem(sessionKey, "1");
+
+    console.log(
+      "[Vaani] _migrateLegacyMessages: complete —",
+      migrated, "migrated |",
+      skipped,  "skipped |",
+      errors,   "errors"
+    );
+  }
+
+
   function _googleLogoSvg() {
     return (
       '<svg class="vg-g-logo" viewBox="0 0 24 24" fill="none">' +
@@ -481,7 +703,9 @@
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     _backfillChatsFromLegacyMessages().finally(function () {
-      _createChatListListener();       // start realtime chat list listener
+      _migrateLegacyMessages().finally(function () {
+        _createChatListListener();     // start realtime chat list listener
+      });
     });
     _renderChatList();
     _setSelectedChatUser(null);
