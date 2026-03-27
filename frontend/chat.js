@@ -1795,7 +1795,7 @@ async function _sendMessage() {
     // already running (covers the edge case where the chat was opened
     // before a chat document existed in Firestore).
     if (!_unsubscribeMessages) {
-      _listenToMessages(currentUid, otherUid, _activeChatId);
+      _listenToMessages(_activeChatId);
     }
   }
 
@@ -1901,10 +1901,16 @@ function _renderMessages() {
   _scrollMessagesToBottom();
 }
 
-function _listenToMessages(currentUid, otherUid, chatId) {
+function _listenToMessages(chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? String(window._vaaniCurrentUser.uid)
+    : "";
+  var otherUid = _selectedChatUser && _selectedChatUser.uid
+    ? String(_selectedChatUser.uid)
+    : "";
 
   // ── Guard: hard dependencies ──────────────────────────────────────────
   if (!db) {
@@ -1940,13 +1946,16 @@ function _listenToMessages(currentUid, otherUid, chatId) {
   }
 
   // ── Tear down any previous listener before attaching a new one ────────
-  _teardownMessageListener();
+  if (_unsubscribeMessages) {
+    console.log("[Vaani] _listenToMessages: unsubscribing previous listener.");
+    _teardownMessageListener();
+  }
 
   // ── Record new key immediately — prevents duplicate attach if this
   //    function is called again synchronously before onSnapshot fires ────
   _activeMessageListenerKey = listenerKey;
 
-  console.log("[Vaani] _listenToMessages: attaching listener — chatId:", chatId);
+  console.log("[Vaani] Listening to chat:", chatId);
 
   // ── Primary query: chatId == activeChatId, ordered by timestamp asc ───
   // This is the fast, index-friendly path. Every message written by the
@@ -2011,6 +2020,7 @@ function _listenToMessages(currentUid, otherUid, chatId) {
       _setMessages(messages);
       _renderMessages();
 
+      console.log("[Vaani] Messages received:", snapshot.docs.length);
       console.log("[Vaani] _listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
     },
 
@@ -2085,24 +2095,25 @@ async function _getOrCreateChat(otherUid) {
   }
 }
 
-// ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
   console.log("[Vaani] _openChatUI — chatId:", chatId);
-  var chatScreen = document.getElementById("vcChatScreen");
-  if (!chatScreen) {
-    console.error("[Vaani] _openChatUI: vcChatScreen not found");
-    return;
-  }
-
-  // ── 1. Set module-level state FIRST ──────────────────────────────────
-  // _activeChatId must be set before _setSelectedChatUser because
-  // _setSelectedChatUser calls _listenToMessages(currentUid, otherUid, _activeChatId).
-  // If _activeChatId is still null at that point, the listener aborts.
-  _activeChatId    = chatId ? String(chatId) : null;
-  _selectedChatUser = otherProfile ? Object.assign({}, otherProfile) : null;
+  _activeChatId = chatId ? String(chatId) : null;
 
   if (!_activeChatId) {
     console.error("[Vaani] _openChatUI: chatId is null — aborting");
+    return;
+  }
+
+  _setSelectedChatUser(otherProfile || {});
+  _renderChatUI(otherProfile || {});
+  _listenToMessages(_activeChatId);
+}
+
+// ── Render a basic chat UI (messages come in Step 2) ─────────────────────
+function _renderChatUI(otherProfile) {
+  var chatScreen = document.getElementById("vcChatScreen");
+  if (!chatScreen) {
+    console.error("[Vaani] _renderChatUI: vcChatScreen not found");
     return;
   }
 
@@ -2160,16 +2171,6 @@ function _openChatUI(chatId, otherProfile) {
   if (home) home.style.display = "none";
   if (chat) chat.style.display = "block";
   if (window.vaaniChat) window.vaaniChat._currentView = "chat";
-
-  // ── 5. NOW attach the Firestore listener ─────────────────────────────
-  // _messagesContainerRef is guaranteed to exist at this point, so
-  // _renderMessages inside the snapshot callback will paint correctly.
-  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-    ? String(window._vaaniCurrentUser.uid)
-    : "";
-  if (currentUid && _selectedChatUser && _selectedChatUser.uid) {
-    _listenToMessages(currentUid, String(_selectedChatUser.uid), _activeChatId);
-  }
 
   _scrollMessagesToBottom();
 
