@@ -1824,7 +1824,7 @@ async function _getOrCreateChat(otherUid) {
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
 function _openChatUI(chatId, otherProfile) {
-  console.log("Opening chat UI with chatId:", chatId);
+  console.log("Opening chat:", chatId);
   var chatScreen = document.getElementById("vcChatScreen");
   if (!chatScreen) {
     console.error("Chat screen not found");
@@ -1832,6 +1832,7 @@ function _openChatUI(chatId, otherProfile) {
   }
 
   _activeChatId  = chatId;
+  console.log("Active chat set:", _activeChatId);
   otherProfile   = otherProfile || {};
   _setMessages([]);
   _setInputMessage("");
