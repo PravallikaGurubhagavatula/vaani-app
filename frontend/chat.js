@@ -1665,14 +1665,56 @@ function _setSelectedChatUser(user) {
       }, 300);
     });
 
+    async function handleMessageClick(user) {
+      try {
+        var currentUser = window._vaaniCurrentUser || null;
+        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+          ? window.vaaniRouter.getDb()
+          : null;
+
+        if (!currentUser || !user || !currentUser.uid || !user.uid || !db) {
+          console.error("Invalid user data");
+          return;
+        }
+
+        // ✅ STEP 1: Generate chatId
+        var chatId = [currentUser.uid, user.uid].sort().join("_");
+
+        console.log("Generated chatId:", chatId);
+
+        // ✅ STEP 2: Create chat safely
+        var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
+
+        await chatRef.set({
+          participants: [currentUser.uid, user.uid],
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log("Chat ensured in Firestore");
+
+        // ✅ STEP 3: SET ACTIVE CHAT FIRST
+        _activeChatId = chatId;
+
+        console.log("Active chat set:", _activeChatId);
+
+        // ✅ STEP 4: OPEN CHAT UI
+        _openChatUI(chatId, user);
+
+      } catch (error) {
+        console.error("CHAT OPEN ERROR:", error);
+        alert("Chat failed: " + error.message);
+      }
+    }
+
     searchDropdown.addEventListener("click", async function (event) {
       var btn = event.target.closest(".vc-search-item");
       if (!btn) return;
 
+      var targetUid = btn.getAttribute("data-uid") || "";
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
         ? window._vaaniCurrentUser.uid
         : "";
-      var targetUid = btn.getAttribute("data-uid") || "";
       if (!currentUid || !targetUid || currentUid === targetUid) return;
 
       var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
@@ -1680,30 +1722,14 @@ function _setSelectedChatUser(user) {
         : null;
       if (!db) return;
 
-      function generateChatId(uid1, uid2) {
-        return [String(uid1 || ""), String(uid2 || "")].sort().join("_");
-      }
-
       btn.disabled = true;
 
       try {
-        var chatId = generateChatId(currentUid, targetUid);
-        await db.collection(CHATS_COLLECTION).doc(chatId).set({
-          participants: [currentUid, targetUid],
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
         var profile = await _fetchOtherProfile(db, targetUid);
         profile.uid = targetUid;
 
-        console.log("Opening chat from search:", chatId);
         closeDropdown();
-        _openChatUI(chatId, profile);
-      } catch (err) {
-        console.error("[Vaani] Open chat from search failed:", err);
-        if (typeof window.showToast === "function") {
-          window.showToast("Could not open chat. Try again.");
-        }
+        await handleMessageClick(profile);
       } finally {
         btn.disabled = false;
       }
@@ -2098,20 +2124,25 @@ async function _getOrCreateChat(otherUid) {
   }
 }
 
-function _openChatUI(chatId, otherProfile) {
-  console.log("[Vaani] _openChatUI — chatId:", chatId);
-  _activeChatId = chatId ? String(chatId) : null;
-  console.log("Active Chat ID:", _activeChatId);
-  console.log("Opening chat with:", otherProfile && otherProfile.uid ? otherProfile.uid : null);
+function _openChatUI(chatId, user) {
+  try {
+    if (!chatId) {
+      console.error("chatId missing");
+      return;
+    }
 
-  if (!_activeChatId) {
-    console.error("[Vaani] _openChatUI: chatId is null — aborting");
-    return;
+    _activeChatId = chatId;
+
+    console.log("Opening chat UI:", chatId);
+
+    _setSelectedChatUser(user || {});
+    _renderChatUI(user || {});
+
+    _listenToMessages(chatId);
+
+  } catch (err) {
+    console.error("OPEN CHAT UI ERROR:", err);
   }
-
-  _setSelectedChatUser(otherProfile || {});
-  _renderChatUI(otherProfile || {});
-  _listenToMessages(_activeChatId);
 }
 
 // ── Render a basic chat UI (messages come in Step 2) ─────────────────────
