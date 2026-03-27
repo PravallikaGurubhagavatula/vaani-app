@@ -1799,6 +1799,13 @@ async function _sendMessage() {
     }
   }
 
+  _activeChatId = String(_activeChatId || "");
+  if (!_activeChatId) {
+    console.error("[Vaani] _sendMessage: activeChatId resolved to empty string — aborting");
+    return;
+  }
+
+  console.log("Sending message with chatId:", _activeChatId);
   console.log("[Vaani] Sending:", inputMessage, "| chatId:", _activeChatId);
 
   // ── Optimistic render ─────────────────────────────────────────────────
