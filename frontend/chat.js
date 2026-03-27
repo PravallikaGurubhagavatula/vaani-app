@@ -1669,8 +1669,6 @@ function _setSelectedChatUser(user) {
       var btn = event.target.closest(".vc-search-item");
       if (!btn) return;
 
-      closeDropdown();
-
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
         ? window._vaaniCurrentUser.uid
         : "";
@@ -1682,68 +1680,33 @@ function _setSelectedChatUser(user) {
         : null;
       if (!db) return;
 
-      var currentState = btn.getAttribute("data-state") || "none";
-
-      // ── Route click by current state ────────────────────────────────────
-      if (currentState === "self" || currentState === "requested") {
-        // Non-actionable states — do nothing
-        return;
-      }
-      // AFTER — opens real chat
-      if (currentState === "connected") {
-         btn.disabled = true;
-         _getOrCreateChat(targetUid)
-            .then(function (chatId) {
-               return _fetchOtherProfile(db, targetUid).then(function (profile) {
-                  profile.uid = targetUid;
-                  closeDropdown();
-                  _openChatUI(chatId, profile);
-               });
-            })
-            .catch(function (err) {
-               console.error("[Vaani] Open chat error:", err);
-               btn.disabled = false;
-               if (typeof window.showToast === "function") {
-                  window.showToast("Could not open chat. Try again.");
-               }
-            });
-         return;
+      function generateChatId(uid1, uid2) {
+        return [String(uid1 || ""), String(uid2 || "")].sort().join("_");
       }
 
-      if (currentState === "incoming") {
-        // "Accept" button — find and accept the incoming request
-        var incomingReq = incomingRequests.find(function (r) {
-          return r.fromUid === targetUid;
-        });
-        if (incomingReq) {
-          btn.disabled = true;
-          try {
-            await _acceptConnectionRequest(db, incomingReq.id, currentUid, targetUid);
-            _setSearchItemState(searchDropdown, targetUid, "connected");
-          } catch (_) {
-            btn.disabled = false;
-          }
+      btn.disabled = true;
+
+      try {
+        var chatId = generateChatId(currentUid, targetUid);
+        await db.collection(CHATS_COLLECTION).doc(chatId).set({
+          participants: [currentUid, targetUid],
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        var profile = await _fetchOtherProfile(db, targetUid);
+        profile.uid = targetUid;
+
+        console.log("Opening chat from search:", chatId);
+        closeDropdown();
+        _openChatUI(chatId, profile);
+      } catch (err) {
+        console.error("[Vaani] Open chat from search failed:", err);
+        if (typeof window.showToast === "function") {
+          window.showToast("Could not open chat. Try again.");
         }
-        return;
+      } finally {
+        btn.disabled = false;
       }
-
-      // ── "none" state: send a new connection request ───────────────────
-      var alreadyRequested = await _hasPendingConnectionRequest(db, currentUid, targetUid);
-      if (alreadyRequested) {
-        _setSearchItemState(searchDropdown, targetUid, "requested");
-        if (typeof window.showToast === "function") window.showToast("Request already sent");
-        return;
-      }
-
-      var alreadyConnected = await _isConnected(db, currentUid, targetUid);
-      if (alreadyConnected) {
-        _setSearchItemState(searchDropdown, targetUid, "connected");
-        return;
-      }
-
-      await _sendConnectionRequest(db, currentUid, targetUid);
-      _setSearchItemState(searchDropdown, targetUid, "requested");
-      if (typeof window.showToast === "function") window.showToast("Connection request sent");
     });
 
     _outsideClickHandler = function (event) {
