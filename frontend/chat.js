@@ -656,7 +656,7 @@
     }
   }
 
-  function _renderChat(user, profile) {
+  async function _renderChat(user, profile) {
     var root = _root();
     if (!root) return;
 
@@ -702,12 +702,10 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);       // start realtime connections Set
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
-    _backfillChatsFromLegacyMessages().finally(function () {
-      _migrateLegacyMessages().finally(function () {
-        _createChatListListener();     // start realtime chat list listener
-      });
-    });
-    _renderChatList();
+    await _backfillChatsFromLegacyMessages();
+    await _migrateLegacyMessages();
+    _createChatListListener();     // start realtime chat list listener
+    await _renderChatList();
     _setSelectedChatUser(null);
   }
 
