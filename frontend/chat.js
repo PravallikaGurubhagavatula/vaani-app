@@ -735,6 +735,13 @@
 }
 
 function _setSelectedChatUser(user) {
+  if (!user) {
+    try {
+      var cu = window._vaaniCurrentUser;
+      if (cu && cu.uid) sessionStorage.removeItem("vaani_active_chat_" + cu.uid);
+    } catch (e) { /* ignore */ }
+  }
+
   _selectedChatUser = user || null;
 
   // When clearing the selection (back button), tear down everything.
@@ -2169,6 +2176,17 @@ function _openChatUI(chatId, otherProfile) {
   }
 
   _toggleSendState();
+
+  try {
+    var currentUserForStorage = window._vaaniCurrentUser;
+    if (currentUserForStorage && currentUserForStorage.uid && _activeChatId && _selectedChatUser) {
+      sessionStorage.setItem(
+        "vaani_active_chat_" + currentUserForStorage.uid,
+        JSON.stringify({ chatId: _activeChatId, otherUid: _selectedChatUser.uid })
+      );
+    }
+  } catch (e) { /* storage unavailable */ }
+
   console.log("[Vaani] Chat UI ready — chatId:", _activeChatId, "| with:", username);
 }
 
