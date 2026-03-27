@@ -345,7 +345,7 @@
           // ── 2i. Write the normalised message to the NEW collection ───────
           // We INSERT into MESSAGES_COLLECTION rather than updating the legacy
           // doc in-place, so the legacy data is preserved untouched as a backup.
-          await db.collection(MESSAGES_COLLECTION).add({
+          await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
             text:         text,
             senderId:     senderId,
             receiverId:   receiverId,
@@ -1854,7 +1854,7 @@ async function _sendMessage() {
 
   try {
     // ── Write the normalised message document ────────────────────────────
-    await db.collection(MESSAGES_COLLECTION).add({
+    await db.collection(CHATS_COLLECTION).doc(_activeChatId).collection(MESSAGES_COLLECTION).add({
       text:         inputMessage,
       senderId:     currentUid,
       receiverId:   otherUid,
