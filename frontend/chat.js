@@ -1989,13 +1989,13 @@ function _listenToMessages(chatId) {
 
   console.log("[Vaani] Listening to chat:", chatId);
 
-  // ── Primary query: chatId == activeChatId, ordered by timestamp asc ───
-  // This is the fast, index-friendly path. Every message written by the
-  // updated _sendMessage already carries chatId, so this query is complete
-  // for all new messages.
+  // ── Primary query: chats/{chatId}/messages ordered by timestamp asc ───
+  // This matches the canonical chat-thread model and keeps each chat's
+  // messages isolated under its parent chat document.
   var query = db
+    .collection(CHATS_COLLECTION)
+    .doc(chatId)
     .collection(MESSAGES_COLLECTION)
-    .where("chatId", "==", chatId)
     .orderBy("timestamp", "asc");
 
   _unsubscribeMessages = query.onSnapshot(
@@ -2009,15 +2009,13 @@ function _listenToMessages(chatId) {
       }
 
       var messages = snapshot.docs
-        .map(function (doc) { return doc.data() || {}; })
-        .filter(function (data) {
-          return !data.chatId || data.chatId === chatId;
+        .map(function (doc) {
+          return Object.assign({ id: doc.id }, doc.data() || {});
         });
       var messageSignatureParts = [];
 
       snapshot.docs.forEach(function (doc) {
         var data = doc.data() || {};
-        if (data.chatId && data.chatId !== chatId) return;
         messageSignatureParts.push(doc.id);
         messageSignatureParts.push(String(data.text      || ""));
         messageSignatureParts.push(String(data.senderId  || ""));
