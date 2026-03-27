@@ -1677,8 +1677,12 @@ function _setSelectedChatUser(user) {
           return;
         }
 
-        // ✅ STEP 1: Generate chatId
-        var chatId = [currentUser.uid, user.uid].sort().join("_");
+        // ✅ STEP 1: Generate chatId consistently for both participants
+        var selectedUser = user;
+        var chatId =
+          currentUser.uid < selectedUser.uid
+            ? currentUser.uid + "_" + selectedUser.uid
+            : selectedUser.uid + "_" + currentUser.uid;
 
         console.log("Generated chatId:", chatId);
 
