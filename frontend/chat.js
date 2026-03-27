@@ -393,6 +393,93 @@
     );
   }
 
+  async function _migrateTopLevelMessages() {
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb() : null;
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? String(window._vaaniCurrentUser.uid) : "";
+  if (!db || !currentUid) return;
+
+  var sessionKey = "vaani_toplevel_migration_" + currentUid;
+  if (sessionStorage.getItem(sessionKey)) return;
+
+  console.log("[Vaani] _migrateTopLevelMessages: starting");
+  var migrated = 0;
+
+  try {
+    // Fetch messages from top-level /messages where user is participant
+    var snaps = await Promise.all([
+      db.collection("messages").where("senderId", "==", currentUid).get(),
+      db.collection("messages").where("receiverId", "==", currentUid).get()
+    ]);
+
+    var seen = new Set();
+    var docs = [];
+    snaps.forEach(function(snap) {
+      snap.forEach(function(doc) {
+        if (seen.has(doc.id)) return;
+        seen.add(doc.id);
+        docs.push(doc);
+      });
+    });
+
+    console.log("[Vaani] _migrateTopLevelMessages: found", docs.length, "docs");
+
+    for (var i = 0; i < docs.length; i++) {
+      var doc = docs[i];
+      var data = doc.data() || {};
+      try {
+        var chatId = data.chatId;
+        if (!chatId) continue;
+
+        // Check if already migrated to subcollection
+        var existingSnap = await db
+          .collection("chats").doc(chatId)
+          .collection("messages")
+          .where("_migratedFrom", "==", doc.id)
+          .limit(1).get();
+        if (!existingSnap.empty) continue;
+
+        // Ensure chat doc exists
+        var chatRef = db.collection("chats").doc(chatId);
+        var chatSnap = await chatRef.get();
+        if (!chatSnap.exists) {
+          var participants = Array.isArray(data.participants)
+            ? data.participants
+            : [data.senderId, data.receiverId].filter(Boolean).sort();
+          await chatRef.set({
+            participants: participants,
+            lastMessage: data.text || "",
+            createdAt: data.timestamp || firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: data.timestamp || firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+
+        // Write to subcollection
+        await db.collection("chats").doc(chatId)
+          .collection("messages").add({
+            text: data.text || "",
+            senderId: data.senderId || "",
+            receiverId: data.receiverId || "",
+            participants: data.participants || [],
+            timestamp: data.timestamp || firebase.firestore.FieldValue.serverTimestamp(),
+            _migratedFrom: doc.id
+          });
+
+        migrated++;
+        console.log("[Vaani] _migrateTopLevelMessages: migrated", doc.id, "→", chatId);
+      } catch (e) {
+        console.error("[Vaani] _migrateTopLevelMessages: error on", doc.id, e);
+      }
+    }
+  } catch (err) {
+    console.error("[Vaani] _migrateTopLevelMessages: fatal", err);
+    return;
+  }
+
+  sessionStorage.setItem(sessionKey, "1");
+  console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated");
+}
 
   function _googleLogoSvg() {
     return (
@@ -705,8 +792,8 @@
     _fetchIncomingRequests(user.uid);  // start realtime requests listener
     await _backfillChatsFromLegacyMessages();
     await _migrateLegacyMessages();
-    _createChatListListener();     // start realtime chat list listener
-    await _renderChatList();
+    await _migrateTopLevelMessages();   // ← ADD THIS LINE
+    _createChatListListener();
     _setSelectedChatUser(null);
   }
 
