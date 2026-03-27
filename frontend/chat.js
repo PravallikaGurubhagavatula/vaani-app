@@ -25,6 +25,7 @@
   var _chatBackfillPromisesByUid = Object.create(null); // uid -> Promise for one-time legacy chat backfill
   var _activeChatId = null;          // chatId currently open
   var _selectedChatUser = null;      // null => home view, object => chat view
+  var _loading = true;               // STEP 3 (critical): initial loading state
   var _messages = [];                // active chat messages
   var _inputMessage = "";            // active chat input value
   var _messagesContainerRef = null;  // active chat messages container element
