@@ -811,6 +811,12 @@ function _setSelectedChatUser(user) {
     return ts && typeof ts.toMillis === "function" ? ts.toMillis() : 0;
   }
 
+  function _generateChatId(uidA, uidB) {
+    if (!uidA || !uidB) return null;
+    var sortedPair = [String(uidA), String(uidB)].sort();
+    return sortedPair[0] + "_" + sortedPair[1];
+  }
+
   // ── Realtime connections listener ─────────────────────────────────────────
   // Attaches once from _renderChat. Keeps _connectedUidSet in sync with
   // the "connections" collection so search results never need an extra
@@ -975,6 +981,9 @@ function _setSelectedChatUser(user) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb()
       : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+      ? String(window._vaaniCurrentUser.uid)
+      : null;
 
     var itemsByUid = Object.create(null);
     conversations.forEach(function (conversation) {
@@ -992,28 +1001,40 @@ function _setSelectedChatUser(user) {
       };
     });
 
-    var connectedUids = Array.from(_connectedUidSet);
-    var missingConnectedUids = connectedUids.filter(function (uid) {
-      return uid && !itemsByUid[uid];
-    });
+    var connectedUids = Array.from(_connectedUidSet).filter(Boolean);
 
-    if (missingConnectedUids.length && db) {
-      var connectedProfiles = await Promise.all(missingConnectedUids.map(async function (uid) {
+    if (connectedUids.length && db && currentUid) {
+      var connectedUsers = await Promise.all(connectedUids.map(async function (uid) {
         var profile = await _getUserProfileCached(db, uid);
-        return { uid: uid, profile: profile || {} };
+        var chatId = _generateChatId(currentUid, uid);
+        var chatDoc = null;
+        if (chatId) {
+          try {
+            chatDoc = await db.collection(CHATS_COLLECTION).doc(chatId).get();
+          } catch (err) {
+            console.error("[Vaani] Failed to fetch chat for connected user:", uid, err);
+          }
+        }
+
+        var existingItem = itemsByUid[uid] || null;
+        var chatData = chatDoc && chatDoc.exists ? (chatDoc.data() || {}) : {};
+        return {
+          chatId: chatDoc && chatDoc.exists ? chatId : (existingItem && existingItem.chatId ? existingItem.chatId : null),
+          otherUid: uid,
+          username: profile && profile.username ? profile.username : "user",
+          displayName: profile && (profile.displayName || profile.username)
+            ? (profile.displayName || profile.username)
+            : "user",
+          photoURL: profile && profile.photoURL ? profile.photoURL : "",
+          lastMessage: (chatData.lastMessage || (existingItem && existingItem.lastMessage))
+            ? (chatData.lastMessage || (existingItem && existingItem.lastMessage))
+            : "Start chatting",
+          updatedAt: chatData.updatedAt || chatData.createdAt || (existingItem ? existingItem.updatedAt : null) || null
+        };
       }));
 
-      connectedProfiles.forEach(function (entry) {
-        var profile = entry.profile || {};
-        itemsByUid[entry.uid] = {
-          chatId: null,
-          otherUid: entry.uid,
-          username: profile.username || "user",
-          displayName: profile.displayName || profile.username || "user",
-          photoURL: profile.photoURL || "",
-          lastMessage: "Start a conversation",
-          updatedAt: null
-        };
+      connectedUsers.forEach(function (entry) {
+        itemsByUid[entry.otherUid] = entry;
       });
     }
 
