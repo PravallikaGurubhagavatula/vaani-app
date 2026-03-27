@@ -1642,62 +1642,130 @@ function _listenToMessages(currentUid, otherUid, chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb()
     : null;
-  if (!db || !currentUid || !otherUid) {
-    console.error("[Vaani] Cannot listen to messages: missing db/currentUid/otherUid.");
+
+  // ── Guard: hard dependencies ──────────────────────────────────────────
+  if (!db) {
+    console.error("[Vaani] _listenToMessages: db unavailable.");
+    _setMessages([]);
+    _renderMessages();
+    return;
+  }
+  if (!currentUid || !otherUid) {
+    console.error("[Vaani] _listenToMessages: missing currentUid or otherUid.", { currentUid, otherUid });
+    _setMessages([]);
+    _renderMessages();
+    return;
+  }
+  if (!chatId) {
+    console.error("[Vaani] _listenToMessages: chatId is null — cannot attach listener.", { currentUid, otherUid });
     _setMessages([]);
     _renderMessages();
     return;
   }
 
-  var listenerUsers = [String(currentUid), String(otherUid)].sort();
-  var listenerKey = chatId ? ("chat::" + String(chatId)) : listenerUsers.join("::");
-  if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) return;
+  currentUid = String(currentUid);
+  otherUid   = String(otherUid);
+  chatId     = String(chatId);
 
-  _teardownMessageListener();
-  _activeMessageListenerKey = listenerKey;
-
-  var baseQuery = db.collection(MESSAGES_COLLECTION);
-  if (chatId) {
-    baseQuery = baseQuery.where("chatId", "==", chatId);
-  } else {
-    baseQuery = baseQuery.where("participants", "array-contains", currentUid);
+  // ── Deduplication guard ───────────────────────────────────────────────
+  // If the exact same listener is already active, do nothing.
+  // "chat::" prefix distinguishes chatId-keyed listeners from uid-pair keys.
+  var listenerKey = "chat::" + chatId;
+  if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) {
+    console.log("[Vaani] _listenToMessages: listener already active for", chatId);
+    return;
   }
 
-  _unsubscribeMessages = baseQuery.orderBy("timestamp", "asc").onSnapshot(
-      function (snapshot) {
-        if (_activeMessageListenerKey !== listenerKey) return;
-        var messages = [];
-        var messageSignatureParts = [];
-        var seenIds = {};
-        snapshot.forEach(function (doc) {
-          if (seenIds[doc.id]) return;
-          var data = doc.data() || {};
-          if (!chatId) {
-            var participants = Array.isArray(data.participants) ? data.participants : [];
-            if (participants.indexOf(otherUid) === -1) return;
-          }
-          seenIds[doc.id] = true;
-          messages.push(data);
-          messageSignatureParts.push(doc.id);
-          messageSignatureParts.push(String(data.text || ""));
-          messageSignatureParts.push(String(data.senderId || ""));
-          messageSignatureParts.push(String(
-            data.timestamp && typeof data.timestamp.toMillis === "function"
-              ? data.timestamp.toMillis()
-              : ""
-          ));
-        });
-        var nextSignature = messageSignatureParts.join("|");
-        if (nextSignature === _activeMessagesSignature) return;
-        _activeMessagesSignature = nextSignature;
-        _optimisticMessages = [];
-        _setMessages(messages);
-        _renderMessages();
-      },
-      function (err) {
-        console.error("[Vaani] messages listener error:", err);
+  // ── Tear down any previous listener before attaching a new one ────────
+  _teardownMessageListener();
+
+  // ── Record new key immediately — prevents duplicate attach if this
+  //    function is called again synchronously before onSnapshot fires ────
+  _activeMessageListenerKey = listenerKey;
+
+  console.log("[Vaani] _listenToMessages: attaching listener — chatId:", chatId);
+
+  // ── Primary query: chatId == activeChatId, ordered by timestamp asc ───
+  // This is the fast, index-friendly path. Every message written by the
+  // updated _sendMessage already carries chatId, so this query is complete
+  // for all new messages.
+  var query = db
+    .collection(MESSAGES_COLLECTION)
+    .where("chatId", "==", chatId)
+    .orderBy("timestamp", "asc");
+
+  _unsubscribeMessages = query.onSnapshot(
+    function (snapshot) {
+      // ── Stale-listener guard ────────────────────────────────────────────
+      // If _teardownMessageListener fired between attach and first callback,
+      // the key will have changed — bail silently.
+      if (_activeMessageListenerKey !== listenerKey) {
+        console.warn("[Vaani] _listenToMessages: stale snapshot discarded for", chatId);
+        return;
       }
-    );
+
+      var messages             = [];
+      var messageSignatureParts = [];
+      var seenIds              = {};
+
+      snapshot.forEach(function (doc) {
+        // ── Deduplicate (Firestore can emit the same doc twice during
+        //    an offline→online transition) ─────────────────────────────
+        if (seenIds[doc.id]) return;
+        seenIds[doc.id] = true;
+
+        var data = doc.data() || {};
+
+        // ── Sanity-check: skip docs that don't belong to this chat ──────
+        // Normally impossible with the chatId filter, but guards against
+        // misconfigured composite index fallback results.
+        if (data.chatId && data.chatId !== chatId) return;
+
+        messages.push(data);
+
+        // Build a signature so identical snapshots never trigger a repaint
+        messageSignatureParts.push(doc.id);
+        messageSignatureParts.push(String(data.text      || ""));
+        messageSignatureParts.push(String(data.senderId  || ""));
+        messageSignatureParts.push(String(
+          data.timestamp && typeof data.timestamp.toMillis === "function"
+            ? data.timestamp.toMillis()
+            : ""
+        ));
+      });
+
+      var nextSignature = messageSignatureParts.join("|");
+      if (nextSignature === _activeMessagesSignature) {
+        console.log("[Vaani] _listenToMessages: snapshot unchanged, skipping render.");
+        return;
+      }
+
+      _activeMessagesSignature = nextSignature;
+
+      // ── Flush optimistic messages now that the real snapshot arrived ───
+      _optimisticMessages = [];
+
+      _setMessages(messages);
+      _renderMessages();
+
+      console.log("[Vaani] _listenToMessages: rendered", messages.length, "message(s) for chatId:", chatId);
+    },
+
+    function (err) {
+      // ── Firestore listener error — could be a rules rejection or network
+      //    issue. Clear state so the user sees an empty chat rather than
+      //    stale messages, and log the full error for debugging. ──────────
+      console.error("[Vaani] _listenToMessages: snapshot error for chatId:", chatId, err);
+
+      // Only clear if this error belongs to the current listener
+      if (_activeMessageListenerKey === listenerKey) {
+        _activeMessagesSignature = "";
+        _optimisticMessages      = [];
+        _setMessages([]);
+        _renderMessages();
+      }
+    }
+  );
 }
 
 // ── Get or create a chat document between current user and otherUid ───────
