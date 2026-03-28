@@ -639,9 +639,6 @@
         var prev = _createChatListListener._lastSignature || "";
         _createChatListListener._lastSignature = signature;
         window.vaaniChat.conversations = conversations;
-        if (!_hasLoadedChatListOnce) {
-          _hasLoadedChatListOnce = true;
-        }
         window.vaaniChat._chatList = conversations.map(function (c) {
           return {
             chatId: c.chatId, otherUid: c.otherUid,
@@ -649,6 +646,9 @@
             lastMessage: c.lastMessage, updatedAt: c.timestamp || null
           };
         });
+        if (!_hasLoadedChatListOnce) {
+          _hasLoadedChatListOnce = true;
+        }
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
         if (isFirstSnapshot || signature !== prev) _renderChatList();
       }, function (err) {
