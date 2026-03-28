@@ -748,7 +748,8 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    if (nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
+    // TEMP: disable signature blocking (causing UI freeze)
+    if (false && nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
