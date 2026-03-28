@@ -594,10 +594,6 @@
       .onSnapshot(async function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
         var isFirstSnapshot = !_hasLoadedChatListOnce;
-        if (isFirstSnapshot) {
-          _hasLoadedChatListOnce = true;
-          _renderChatList();
-        }
 
         // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
         var byOtherUid = Object.create(null);
@@ -643,6 +639,9 @@
         var prev = _createChatListListener._lastSignature || "";
         _createChatListListener._lastSignature = signature;
         window.vaaniChat.conversations = conversations;
+        if (!_hasLoadedChatListOnce) {
+          _hasLoadedChatListOnce = true;
+        }
         window.vaaniChat._chatList = conversations.map(function (c) {
           return {
             chatId: c.chatId, otherUid: c.otherUid,
