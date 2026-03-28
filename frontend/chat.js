@@ -35,6 +35,7 @@
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
   var _renderedChatListSignature = "";
+  var _hasLoadedChatListOnce = false;
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
   var _activeChatId = null;
@@ -478,14 +479,17 @@
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
 
-    // Migrations MUST complete before listeners attach
-    console.log("[Vaani] _renderChat: running all migrations…");
-    await _backfillChatsFromLegacyMessages();
-    await _migrateLegacyMessages();
-    await _migrateTopLevelMessages();
-    console.log("[Vaani] _renderChat: migrations done — attaching chat list listener.");
-
+    // Attach listener first for fast initial render; run migrations in background.
+    _hasLoadedChatListOnce = false;
     _createChatListListener();
+    console.log("[Vaani] _renderChat: running migrations in background…");
+    Promise.allSettled([
+      _backfillChatsFromLegacyMessages(),
+      _migrateLegacyMessages(),
+      _migrateTopLevelMessages()
+    ]).then(function () {
+      console.log("[Vaani] _renderChat: background migrations finished.");
+    });
     _setSelectedChatUser(null);
   }
 
@@ -580,7 +584,8 @@
     if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = String(currentUid);
-    window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
+    if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
+    if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
@@ -641,10 +646,12 @@
           };
         });
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        if (signature !== prev) _renderChatList();
+        if (!_hasLoadedChatListOnce || signature !== prev) _renderChatList();
+        _hasLoadedChatListOnce = true;
       }, function (err) {
         console.error("[Vaani] chat list listener error:", err);
         window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
+        _hasLoadedChatListOnce = true;
         _activeChatListListenerUid = null; _renderChatList();
       });
   }
