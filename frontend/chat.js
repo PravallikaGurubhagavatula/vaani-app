@@ -582,7 +582,6 @@
     if (!db || !currentUid) return;
     if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _hasLoadedChatListOnce = false;
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
@@ -591,7 +590,7 @@
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
       .orderBy("updatedAt", "desc")
-      .onSnapshot(async function (snapshot) {
+      .onSnapshot(function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
         var isFirstSnapshot = !_hasLoadedChatListOnce;
 
@@ -619,15 +618,14 @@
           else if (_timestampToMillis(candidate.timestamp) > _timestampToMillis(prev.timestamp)) { byOtherUid[otherUid] = candidate; }
         });
 
-        var conversations = await Promise.all(Object.keys(byOtherUid).map(async function (uid) {
+        var conversations = Object.keys(byOtherUid).map(function (uid) {
           var conv = byOtherUid[uid];
-          var profile = await _getUserProfileCached(db, conv.otherUid);
           return {
             id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
-            user: { uid: conv.otherUid, username: profile.username || "user", displayName: profile.displayName || profile.username || "user", photoURL: profile.photoURL || "" },
+            user: { uid: conv.otherUid, username: "user", displayName: "Loading...", photoURL: "" },
             lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
           };
-        }));
+        });
 
         conversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
 
@@ -651,6 +649,29 @@
         }
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
         if (isFirstSnapshot || signature !== prev) _renderChatList();
+
+        Promise.all(Object.keys(byOtherUid).map(async function (uid) {
+          var conv = byOtherUid[uid];
+          var profile = await _getUserProfileCached(db, conv.otherUid);
+          return {
+            id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
+            user: { uid: conv.otherUid, username: profile.username || "user", displayName: profile.displayName || profile.username || "user", photoURL: profile.photoURL || "" },
+            lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
+          };
+        })).then(function (updatedConversations) {
+          updatedConversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
+          window.vaaniChat.conversations = updatedConversations;
+          window.vaaniChat._chatList = updatedConversations.map(function (c) {
+            return {
+              chatId: c.chatId, otherUid: c.otherUid,
+              username: c.user.username, displayName: c.user.displayName, photoURL: c.user.photoURL,
+              lastMessage: c.lastMessage, updatedAt: c.timestamp || null
+            };
+          });
+          _renderChatList();
+        }).catch(function (err) {
+          console.error("[Vaani] chat list profile hydration error:", err);
+        });
       }, function (err) {
         console.error("[Vaani] chat list listener error:", err);
         window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
