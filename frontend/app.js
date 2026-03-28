@@ -2022,12 +2022,21 @@ function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.
 const PAGES     = ["Home","Single","Conversation","Chat","Travel","History","Favourites","Settings"];
 const _navStack = [];
 
+
+function _syncChatViewportLock(page) {
+  const isChat = page === "Chat";
+  document.documentElement.classList.toggle("vaani-chat-locked", isChat);
+  document.body.classList.toggle("vaani-chat-locked", isChat);
+}
+
+
 function navigateTo(page) {
   if (!PAGES.includes(page)) page = "Home";
   PAGES.forEach(p => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
+  _syncChatViewportLock(page);
   closeMenu();
   const currentHash = location.hash.replace("#", "").toLowerCase();
   const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
@@ -2059,6 +2068,7 @@ window.addEventListener("popstate", (e) => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
+  _syncChatViewportLock(page);
   closeMenu(); _onPageActivate(page);
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
@@ -2130,6 +2140,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
+  _syncChatViewportLock(initialPage);
 
   _refreshAuthSensitivePages();
 

@@ -19,8 +19,10 @@
 }
 
 /* ── BASE ── */
+html,body{height:100%;margin:0}
 html{scroll-behavior:smooth}
 body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;transition:background var(--transition),color var(--transition);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+html.vaani-chat-locked,body.vaani-chat-locked{overflow:hidden;overscroll-behavior:none}
 svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;pointer-events:none}
 button{cursor:pointer;font-family:'Outfit',sans-serif;border:none;outline:none}
 select{font-family:'Outfit',sans-serif}
@@ -80,6 +82,26 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .page-title{font-size:24px;font-weight:700;color:var(--text);letter-spacing:-0.5px;margin-bottom:6px}
 .page-sub{font-size:14px;color:var(--text2)}
 
+
+#pageChat{padding:0}
+#pageChat.active{
+  position:fixed;
+  left:0;
+  right:0;
+  top:var(--nav-h);
+  height:calc(100dvh - var(--nav-h));
+  margin:0;
+  max-width:none;
+  padding:0;
+  display:flex;
+  justify-content:center;
+  overflow:hidden;
+  overscroll-behavior:none;
+}
+#pageChat.active #vaaniChat{
+  height:100dvh;
+  max-height:100%;
+}
 /* ── HOME ── */
 .home-hero{padding:52px 0 40px;text-align:center;animation:heroIn 0.6s cubic-bezier(0.4,0,0.2,1)}
 @keyframes heroIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
