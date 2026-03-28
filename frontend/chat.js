@@ -646,7 +646,8 @@
           };
         });
         if (!_hasLoadedChatListOnce) {
-          _hasLoadedChatListOnce = true;
+           _hasLoadedChatListOnce = true;
+           _renderChatList(); // 🔥 critical fix: render immediately
         }
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
         if (isFirstSnapshot || signature !== prev) _renderChatList();
