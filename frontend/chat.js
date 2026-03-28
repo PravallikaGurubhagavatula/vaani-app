@@ -480,7 +480,6 @@
     _fetchIncomingRequests(user.uid);
 
     // Attach listener first for fast initial render; run migrations in background.
-    _hasLoadedChatListOnce = false;
     _createChatListListener();
     console.log("[Vaani] _renderChat: running migrations in background…");
     Promise.allSettled([
@@ -583,6 +582,7 @@
     if (!db || !currentUid) return;
     if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
+    _hasLoadedChatListOnce = false;
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
@@ -702,14 +702,18 @@
     }
 
     var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
+    if (!_hasLoadedChatListOnce) {
+      if (_renderedChatListSignature !== "loading") {
+        listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
+        _renderedChatListSignature = "loading";
+      }
+      return;
+    }
+
     if (!items.length) {
-      var emptyHtml = _hasLoadedChatListOnce
-        ? '<div class="vc-chat-list-empty">Start a conversation</div>'
-        : '<div class="vc-chat-list-empty">Loading chats…</div>';
-      var emptySig = _hasLoadedChatListOnce ? "empty" : "loading";
-      if (_renderedChatListSignature !== emptySig) {
-        listEl.innerHTML = emptyHtml;
-        _renderedChatListSignature = emptySig;
+      if (_renderedChatListSignature !== "empty") {
+        listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+        _renderedChatListSignature = "empty";
       }
       return;
     }
