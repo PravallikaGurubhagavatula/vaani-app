@@ -726,10 +726,7 @@
 
     var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
     if (!_hasLoadedChatListOnce) {
-      if (_renderedChatListSignature !== "loading") {
-        listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
-        _renderedChatListSignature = "loading";
-      }
+         // Do nothing — wait for first snapshot
       return;
     }
 
