@@ -737,42 +737,18 @@ if (_hasLoadedChatListOnce && conversations.length > 0) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
 
-    var itemsByUid = Object.create(null);
-    conversations.forEach(function (conversation) {
-      var profile = conversation && conversation.user ? conversation.user : {};
-      var otherUid = conversation && conversation.otherUid ? conversation.otherUid : null;
-      if (!otherUid) return;
-      itemsByUid[otherUid] = {
-        chatId: conversation.chatId || null, otherUid: otherUid,
-        username: profile.username || "user", displayName: profile.displayName || profile.username || "user",
-        photoURL: profile.photoURL || "", lastMessage: conversation.lastMessage || "No messages yet",
-        updatedAt: conversation.timestamp || null
-      };
-    });
-
-    var connectedUids = Array.from(_connectedUidSet).filter(Boolean);
-    if (connectedUids.length && db && currentUid) {
-      var connectedUsers = await Promise.all(connectedUids.map(async function (uid) {
-        var profile = await _getUserProfileCached(db, uid);
-        var chatId  = _generateChatId(currentUid, uid);
-        var chatDoc = null;
-        if (chatId) { try { chatDoc = await db.collection(CHATS_COLLECTION).doc(chatId).get(); } catch (e) {} }
-        var existing = itemsByUid[uid] || null;
-        var chatData = chatDoc && chatDoc.exists ? chatDoc.data() || {} : {};
-        return {
-          chatId: chatDoc && chatDoc.exists ? chatId : (existing && existing.chatId ? existing.chatId : null),
-          otherUid: uid,
-          username: profile.username || "user",
-          displayName: profile.displayName || profile.username || "user",
-          photoURL: profile.photoURL || "",
-          lastMessage: chatData.lastMessage || (existing && existing.lastMessage) || "Start chatting",
-          updatedAt: chatData.updatedAt || chatData.createdAt || (existing ? existing.updatedAt : null) || null
-        };
-      }));
-      connectedUsers.forEach(function (entry) { itemsByUid[entry.otherUid] = entry; });
-    }
-
-    var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
+    var items = conversations.map(function (conversation) {
+  var profile = conversation.user || {};
+  return {
+    chatId: conversation.chatId || null,
+    otherUid: conversation.otherUid || null,
+    username: profile.username || "user",
+    displayName: profile.displayName || profile.username || "user",
+    photoURL: profile.photoURL || "",
+    lastMessage: conversation.lastMessage || "No messages yet",
+    updatedAt: conversation.timestamp || null
+  };
+});
     if (!_hasLoadedChatListOnce) {
          // Do nothing — wait for first snapshot
       return;
