@@ -686,6 +686,54 @@
   async function _renderChatList() {
     var listEl = document.getElementById("vcChatList"); if (!listEl) return;
     var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    // 🔥 STABILITY FIX: render directly from conversations if available
+if (_hasLoadedChatListOnce && conversations.length > 0) {
+  var quickItems = conversations.map(function (c) {
+    return {
+      chatId: c.chatId,
+      otherUid: c.otherUid,
+      username: (c.user && c.user.username) || "user",
+      displayName: (c.user && c.user.displayName) || (c.user && c.user.username) || "user",
+      photoURL: (c.user && c.user.photoURL) || "",
+      lastMessage: c.lastMessage || "No messages yet",
+      updatedAt: c.timestamp || null
+    };
+  });
+  listEl.innerHTML = "";
+  quickItems.forEach(function (chat) {
+    var item = document.createElement("button");
+    item.type = "button";
+    item.className = "vc-chat-list-item";
+    var timeText = "";
+    if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+      timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    item.innerHTML =
+      '<div class="vc-chat-list-top">' +
+      '<span class="vc-chat-list-username">' + _esc(chat.displayName) + "</span>" +
+      (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+      "</div>" +
+      '<div class="vc-chat-list-last">' + _esc(chat.lastMessage) + "</div>";
+    item.addEventListener("click", async function () {
+      if (!chat.otherUid) return;
+      var openRequestId = ++_chatListOpenRequestId;
+      try {
+        var selectedUser = {
+          uid: chat.otherUid,
+          username: chat.username || "user",
+          displayName: chat.displayName || chat.username || "user",
+          photoURL: chat.photoURL || ""
+        };
+        var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
+        if (!chatId || openRequestId !== _chatListOpenRequestId) return;
+        _setSelectedChatUser(selectedUser);
+        _openChatUI(chatId, selectedUser);
+      } catch (err) { console.error("[Vaani] Could not open chat:", err); }
+    });
+    listEl.appendChild(item);
+  });
+  return; // 🔥 stop here — hydration pass will re-render with real usernames
+}
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
 
