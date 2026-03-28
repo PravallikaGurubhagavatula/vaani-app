@@ -35,6 +35,7 @@
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
   var _renderedChatListSignature = "";
+  var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
@@ -669,6 +670,7 @@
               lastMessage: c.lastMessage, updatedAt: c.timestamp || null
             };
           });
+          _forceRenderChatList = true;
           _renderChatList();
         }).catch(function (err) {
           console.error("[Vaani] chat list profile hydration error:", err);
@@ -749,7 +751,8 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    if (nextSig === _renderedChatListSignature) return;
+    if (nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
+    _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
     listEl.innerHTML = "";
