@@ -593,6 +593,11 @@
       .orderBy("updatedAt", "desc")
       .onSnapshot(async function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
+        var isFirstSnapshot = !_hasLoadedChatListOnce;
+        if (isFirstSnapshot) {
+          _hasLoadedChatListOnce = true;
+          _renderChatList();
+        }
 
         // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
         var byOtherUid = Object.create(null);
@@ -646,8 +651,7 @@
           };
         });
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        if (!_hasLoadedChatListOnce || signature !== prev) _renderChatList();
-        _hasLoadedChatListOnce = true;
+        if (isFirstSnapshot || signature !== prev) _renderChatList();
       }, function (err) {
         console.error("[Vaani] chat list listener error:", err);
         window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
@@ -699,8 +703,15 @@
 
     var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
     if (!items.length) {
-      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-      _renderedChatListSignature = "empty"; return;
+      var emptyHtml = _hasLoadedChatListOnce
+        ? '<div class="vc-chat-list-empty">Start a conversation</div>'
+        : '<div class="vc-chat-list-empty">Loading chats…</div>';
+      var emptySig = _hasLoadedChatListOnce ? "empty" : "loading";
+      if (_renderedChatListSignature !== emptySig) {
+        listEl.innerHTML = emptyHtml;
+        _renderedChatListSignature = emptySig;
+      }
+      return;
     }
 
     items.sort(function (a, b) {
