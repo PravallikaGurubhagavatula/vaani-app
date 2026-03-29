@@ -516,7 +516,7 @@
       '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
-      '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
+      '<div class="vc-chat-list" id="vcChatList"></div>' +
       '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
 
     var profileBtn = document.getElementById("vcProfileBtn");
@@ -736,7 +736,7 @@
         });
         _hasLoadedChatListOnce = true;
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        if (isFirstSnapshot || signature !== prev || _forceRenderChatList) _renderChatList();
+        _renderChatList();   // ALWAYS render
         _saveChatListCache(currentUid, conversations);
 
         var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
@@ -808,12 +808,10 @@
   };
 });
     if (!items.length) {
-      if (_renderedChatListSignature !== "empty") {
-        listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-        _renderedChatListSignature = "empty";
-      }
-      return;
-    }
+  listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
+  _renderedChatListSignature = "empty";
+  return;
+}
 
     items.sort(function (a, b) {
       var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
@@ -825,7 +823,7 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    if (nextSig === _renderedChatListSignature && !_forceRenderChatList && _hasLoadedChatListOnce) return;
+    if (_hasLoadedChatListOnce && nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
