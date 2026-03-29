@@ -653,8 +653,12 @@
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
     if (!db || !currentUid) return;
-    if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
-    if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
+    // Always detach any existing listener before re-attaching so re-entering
+    // the chat screen never silently reuses a stale or dead listener.
+    if (_unsubscribeChatList) {
+      _unsubscribeChatList();
+      _unsubscribeChatList = null;
+    }
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
@@ -677,6 +681,7 @@
       _renderChatList();
     }
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
+    console.log("[CHAT] Listener attached");
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
@@ -934,6 +939,9 @@
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
+    _activeChatListListenerUid = null;
+    _hasLoadedChatListOnce = false;
+    _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
     _activeChatListListenerUid = null;
     _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
