@@ -841,6 +841,7 @@
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
 
+    listEl.innerHTML = "";
     var hasSkeleton = !!listEl.querySelector(".vc-skeleton");
     var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
@@ -915,9 +916,6 @@
     if (!items.length) {
       _renderedChatListSignature = "";
       _forceRenderChatList = false;
-
-      if (!_hasLoadedChatListOnce && hasSkeleton) return;
-
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
       _chatListRenderedOnce = true;
       return;
@@ -929,7 +927,7 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "", c.updatedAtMs || 0].join(":");
     }).join("|");
 
-    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature && !hasSkeleton) {
+    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature && !hasSkeleton && listEl.childElementCount > 0) {
       return;
     }
 
