@@ -840,98 +840,150 @@
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
+
     var hasSkeleton = !!listEl.querySelector(".vc-skeleton");
+    var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
-    var conversationsRaw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
-    var conversations = conversationsRaw.filter(function (conversation) { return conversation != null; });
+    function _getTimestampMs(value) {
+      if (!value) return 0;
+      if (typeof value.toMillis === "function") {
+        var millis = value.toMillis();
+        return Number.isFinite(millis) ? millis : 0;
+      }
+      if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+      if (value instanceof Date) {
+        var dateMillis = value.getTime();
+        return Number.isFinite(dateMillis) ? dateMillis : 0;
+      }
+      if (typeof value === "string") {
+        var parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+      return 0;
+    }
 
-    console.log("[DEBUG] conversations:", conversations.length);
-    console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
+    function _formatTime(value) {
+      if (!value) return "";
+      try {
+        if (typeof value.toDate === "function") {
+          var tsDate = value.toDate();
+          return tsDate instanceof Date && !Number.isNaN(tsDate.getTime())
+            ? tsDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+            : "";
+        }
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+          return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
+        if (typeof value === "string") {
+          var parsedDate = new Date(value);
+          return Number.isNaN(parsedDate.getTime())
+            ? ""
+            : parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        }
+      } catch (_err) {
+        return "";
+      }
+      return "";
+    }
 
-    var items = conversations.map(function (conversation) {
-      var safeConversation = conversation || {};
-      var profile = safeConversation.user && typeof safeConversation.user === "object" ? safeConversation.user : {};
-      return {
-        chatId: safeConversation.chatId || null,
-        otherUid: safeConversation.otherUid || null,
-        username: profile.username || "user",
-        displayName: profile.displayName || profile.username || "user",
+    var items = raw.reduce(function (acc, conversation) {
+      if (!conversation || typeof conversation !== "object") return acc;
+
+      var profile = conversation.user && typeof conversation.user === "object" ? conversation.user : {};
+      var username = (profile.username || "").trim();
+      var displayName = (profile.displayName || "").trim();
+      var normalizedLastMessage = typeof conversation.lastMessage === "string" && conversation.lastMessage.trim()
+        ? conversation.lastMessage
+        : "No messages yet";
+
+      acc.push({
+        chatId: conversation.chatId || null,
+        otherUid: conversation.otherUid || null,
+        username: username || "user",
+        displayName: displayName || username || "user",
         photoURL: profile.photoURL || "",
-        lastMessage: safeConversation.lastMessage || "No messages yet",
-        updatedAt: safeConversation.timestamp || null
-      };
-    });
+        lastMessage: normalizedLastMessage,
+        updatedAt: conversation.timestamp || null,
+        updatedAtMs: _getTimestampMs(conversation.timestamp || null)
+      });
+      return acc;
+    }, []);
 
-    // Show empty state only after the first live snapshot has loaded.
-    if (!items.length && _hasLoadedChatListOnce) {
+    if (!items.length) {
+      _renderedChatListSignature = "";
       _forceRenderChatList = false;
-      listEl.innerHTML = "";
+
+      if (!_hasLoadedChatListOnce && hasSkeleton) return;
+
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
       _chatListRenderedOnce = true;
       return;
     }
 
-    // If there are no items and we haven't loaded yet, keep skeleton visible
-    // (if present) and wait for the first snapshot.
-    if (!items.length) {
-      return;
-    }
-
-    items.sort(function (a, b) {
-      var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
-      var bT = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
-      return bT - aT;
-    });
+    items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
 
     var nextSig = items.map(function (c) {
-      return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
-        c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
+      return [c.chatId || "", c.otherUid || "", c.lastMessage || "", c.updatedAtMs || 0].join(":");
     }).join("|");
 
-    console.log("[DEBUG] signature:", nextSig);
-
-    // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
-    // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
-    //        instead of _hasLoadedChatListOnce (flipped before this function runs).
     if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature && !hasSkeleton) {
-      console.log("[DEBUG] skipping render — signature unchanged");
       return;
     }
 
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
-    listEl.innerHTML = "";
+    var fragment = document.createDocumentFragment();
     items.forEach(function (chat) {
       var item = document.createElement("button");
-      item.type = "button"; item.className = "vc-chat-list-item";
-      var timeText = "";
-      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
-        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      }
+      item.type = "button";
+      item.className = "vc-chat-list-item";
+
+      var timeText = _formatTime(chat.updatedAt);
       item.innerHTML =
         '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") + "</div>" +
+          '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
+          (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+        "</div>" +
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
       item.addEventListener("click", function () {
-        if (!chat.otherUid) { console.error("[Vaani] Missing otherUid for chat list item"); return; }
+        if (!chat.otherUid) {
+          console.error("[Vaani] Missing otherUid for chat list item");
+          return;
+        }
+
         var openRequestId = ++_chatListOpenRequestId;
-        var selectedUser = { uid: chat.otherUid, username: chat.username || "user", displayName: chat.displayName || chat.username || "user", photoURL: chat.photoURL || "" };
+        var selectedUser = {
+          uid: chat.otherUid,
+          username: chat.username || "user",
+          displayName: chat.displayName || chat.username || "user",
+          photoURL: chat.photoURL || ""
+        };
+
         Promise.resolve(chat.chatId || _getOrCreateChat(selectedUser.uid))
           .then(function (chatId) {
-            if (!chatId) { console.error("[Vaani] Invalid chatId for chat list item"); return; }
+            if (!chatId) {
+              console.error("[Vaani] Invalid chatId for chat list item");
+              return;
+            }
             if (openRequestId !== _chatListOpenRequestId) return;
             _setSelectedChatUser(selectedUser);
             _openChatUI(chatId, selectedUser);
           })
-          .catch(function (err) { console.error("[Vaani] Could not open chat list item:", err); });
+          .catch(function (err) {
+            console.error("[Vaani] Could not open chat list item:", err);
+          });
       });
-      listEl.appendChild(item);
+
+      fragment.appendChild(item);
     });
 
-    // Mark that we have successfully written to the DOM at least once.
+    listEl.innerHTML = "";
+    listEl.appendChild(fragment);
     _chatListRenderedOnce = true;
   }
 
