@@ -528,7 +528,6 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
-    _renderSkeletonChatList();
 
     // Attach listener first for fast initial render; run migrations in background.
     _createChatListListener();
@@ -826,7 +825,7 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    if (nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
+    if (nextSig === _renderedChatListSignature && !_forceRenderChatList && _hasLoadedChatListOnce) return;
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
