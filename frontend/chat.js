@@ -37,6 +37,7 @@
   var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
+  var CACHE_KEY_PREFIX = "vaani_chatlist_";
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
   var _activeChatId = null;
@@ -72,6 +73,54 @@
       return firebase.firestore.Timestamp.fromMillis(value);
     }
     return null;
+  }
+
+  function _saveChatListCache(uid, conversations) {
+    if (!uid) return;
+    try {
+      var payload = (Array.isArray(conversations) ? conversations : []).map(function (conversation) {
+        var profile = conversation && conversation.user ? conversation.user : {};
+        var timestamp = conversation ? (conversation.timestamp || conversation.updatedAt || null) : null;
+        return {
+          chatId: conversation ? conversation.chatId : null,
+          otherUid: conversation ? conversation.otherUid : null,
+          username: profile.username || "user",
+          displayName: profile.displayName || profile.username || "user",
+          photoURL: profile.photoURL || "",
+          lastMessage: conversation && conversation.lastMessage ? conversation.lastMessage : "",
+          updatedAtMs: timestamp && typeof timestamp.toMillis === "function" ? timestamp.toMillis() : 0
+        };
+      }).filter(function (item) { return item && item.chatId && item.otherUid; });
+      localStorage.setItem(CACHE_KEY_PREFIX + String(uid), JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function _loadChatListCache(uid) {
+    if (!uid) return null;
+    try {
+      var raw = localStorage.getItem(CACHE_KEY_PREFIX + String(uid));
+      if (!raw) return null;
+      var items = JSON.parse(raw);
+      if (!Array.isArray(items)) return null;
+      return items.map(function (item) {
+        return {
+          chatId: item.chatId,
+          otherUid: item.otherUid,
+          user: {
+            uid: item.otherUid,
+            username: item.username || "user",
+            displayName: item.displayName || item.username || "user",
+            photoURL: item.photoURL || ""
+          },
+          lastMessage: item.lastMessage || "",
+          timestamp: item.updatedAtMs
+            ? firebase.firestore.Timestamp.fromMillis(item.updatedAtMs)
+            : null
+        };
+      }).filter(function (item) { return item && item.chatId && item.otherUid; });
+    } catch (e) {
+      return null;
+    }
   }
 
   function _extractLegacyMessageUsers(data) {
@@ -479,6 +528,7 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
+    _renderSkeletonChatList();
 
     // Attach listener first for fast initial render; run migrations in background.
     _createChatListListener();
@@ -491,6 +541,22 @@
       console.log("[Vaani] _renderChat: background migrations finished.");
     });
     _setSelectedChatUser(null);
+  }
+
+  function _renderSkeletonChatList() {
+    var listEl = document.getElementById("vcChatList");
+    if (!listEl) return;
+    var skeletonItems = [1, 2, 3].map(function () {
+      return '<div class="vc-chat-list-item" style="pointer-events:none">' +
+        '<div class="vc-chat-list-top">' +
+        '<span class="vc-skeleton" style="width:120px;height:14px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
+        '<span class="vc-skeleton" style="width:36px;height:10px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
+        '</div>' +
+        '<div class="vc-chat-list-last">' +
+        '<span class="vc-skeleton" style="width:180px;height:10px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
+        "</div></div>";
+    }).join("");
+    listEl.innerHTML = skeletonItems;
   }
 
   function _syncViewWithSelection() {
@@ -586,6 +652,24 @@
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
+
+    var cached = _loadChatListCache(currentUid);
+    if (cached && cached.length) {
+      window.vaaniChat.conversations = cached;
+      window.vaaniChat._chatList = cached.map(function (conversation) {
+        return {
+          chatId: conversation.chatId,
+          otherUid: conversation.otherUid,
+          username: conversation.user && conversation.user.username ? conversation.user.username : "user",
+          displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : "user",
+          photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
+          lastMessage: conversation.lastMessage || "",
+          updatedAt: conversation.timestamp || null
+        };
+      });
+      _forceRenderChatList = true;
+      _renderChatList();
+    }
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
@@ -621,9 +705,15 @@
 
         var conversations = Object.keys(byOtherUid).map(function (uid) {
           var conv = byOtherUid[uid];
+          var cachedProfile = _userProfileCache[conv.otherUid] || null;
           return {
             id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
-            user: { uid: conv.otherUid, username: "user", displayName: "Loading...", photoURL: "" },
+            user: {
+              uid: conv.otherUid,
+              username: cachedProfile ? (cachedProfile.username || "user") : "...",
+              displayName: cachedProfile ? (cachedProfile.displayName || cachedProfile.username || "user") : "...",
+              photoURL: cachedProfile ? (cachedProfile.photoURL || "") : ""
+            },
             lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
           };
         });
@@ -645,31 +735,48 @@
             lastMessage: c.lastMessage, updatedAt: c.timestamp || null
           };
         });
-        if (!_hasLoadedChatListOnce) {
-           _hasLoadedChatListOnce = true;
-           _renderChatList(); // 🔥 critical fix: render immediately
-        }
+        _hasLoadedChatListOnce = true;
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        if (isFirstSnapshot || signature !== prev) _renderChatList();
+        if (isFirstSnapshot || signature !== prev || _forceRenderChatList) _renderChatList();
+        _saveChatListCache(currentUid, conversations);
 
-        Promise.all(Object.keys(byOtherUid).map(async function (uid) {
-          var conv = byOtherUid[uid];
-          var profile = await _getUserProfileCached(db, conv.otherUid);
-          return {
-            id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
-            user: { uid: conv.otherUid, username: profile.username || "user", displayName: profile.displayName || profile.username || "user", photoURL: profile.photoURL || "" },
-            lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
-          };
-        })).then(function (updatedConversations) {
-          updatedConversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
-          window.vaaniChat.conversations = updatedConversations;
-          window.vaaniChat._chatList = updatedConversations.map(function (c) {
+        var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
+        if (!missingUids.length) return;
+
+        Promise.all(missingUids.map(function (uid) {
+          return _getUserProfileCached(db, uid);
+        })).then(function () {
+          var hydratedConversations = Object.keys(byOtherUid).map(function (uid) {
+            var conv = byOtherUid[uid];
+            var profile = _userProfileCache[conv.otherUid] || {};
             return {
-              chatId: c.chatId, otherUid: c.otherUid,
-              username: c.user.username, displayName: c.user.displayName, photoURL: c.user.photoURL,
-              lastMessage: c.lastMessage, updatedAt: c.timestamp || null
+              id: conv.id,
+              chatId: conv.chatId,
+              otherUid: conv.otherUid,
+              user: {
+                uid: conv.otherUid,
+                username: profile.username || "user",
+                displayName: profile.displayName || profile.username || "user",
+                photoURL: profile.photoURL || ""
+              },
+              lastMessage: conv.lastMessage || "",
+              timestamp: conv.timestamp || null
             };
           });
+          hydratedConversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
+          window.vaaniChat.conversations = hydratedConversations;
+          window.vaaniChat._chatList = hydratedConversations.map(function (c) {
+            return {
+              chatId: c.chatId,
+              otherUid: c.otherUid,
+              username: c.user.username,
+              displayName: c.user.displayName,
+              photoURL: c.user.photoURL,
+              lastMessage: c.lastMessage,
+              updatedAt: c.timestamp || null
+            };
+          });
+          _saveChatListCache(currentUid, hydratedConversations);
           _forceRenderChatList = true;
           _renderChatList();
         }).catch(function (err) {
@@ -719,8 +826,7 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    // TEMP: disable signature blocking (causing UI freeze)
-    if (false && nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
+    if (nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
