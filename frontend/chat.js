@@ -1,30 +1,5 @@
 /* ================================================================
-   Vaani — chat.js  v4.3
-   Fixes applied on top of v4.2:
-     FIX-A: _renderChatList signature guard — _hasLoadedChatListOnce is
-             set to `true` in the snapshot handler BEFORE _renderChatList
-             is called, so the "first render" branch inside the guard was
-             unreachable. The guard now uses a dedicated
-             `_chatListRenderedOnce` flag that is flipped only INSIDE
-             _renderChatList after a successful render, making the first-
-             render path reachable again.
-     FIX-B: _renderChatList unused `db` / `currentUid` declarations
-             removed — they shadowed outer variables and caused a silent
-             async-function stall on environments where the Firestore
-             import is deferred (no crash, but the function would yield
-             the microtask queue unexpectedly on first call).
-     FIX-C: Signature guard logic rewritten for clarity: _forceRenderChatList
-             bypasses the guard entirely; the guard only skips when we have
-             already rendered the exact same data set at least once.
-     FIX-D: _createChatListListener snapshot handler — always sets
-             _forceRenderChatList = true before calling _renderChatList so
-             the live snapshot always wins over the cached-signature check.
-     FIX-E: _renderChatList converted from `async function` to a regular
-             synchronous function — the `async` keyword caused it to return
-             a Promise, which meant early-return paths and list-building
-             executed on separate microtask ticks, racing with subsequent
-             calls. Removing `async` makes execution fully synchronous and
-             predictable.
+   Vaani — chat.js
    ================================================================ */
 
 (function () {
@@ -44,11 +19,8 @@
   var _activeChatListListenerUid = null;
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
-  var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
-  // FIX-A: separate flag flipped only after a successful render
-  var _chatListRenderedOnce = false;
   var CACHE_KEY_PREFIX = "vaani_chatlist_";
   var PROFILE_CACHE_KEY_PREFIX = "vaani_profile_";
   var MIGRATION_KEY_PREFIX = "vaani_migration_done_v2_";
@@ -762,8 +734,6 @@
           };
         });
 
-        // FIX-A: set _hasLoadedChatListOnce here but keep _chatListRenderedOnce
-        // as a separate flag controlled inside _renderChatList.
         _hasLoadedChatListOnce = true;
 
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
@@ -824,25 +794,12 @@
       });
   }
 
-  // ── FIX-A/B/C/E: _renderChatList ────────────────────────────────────────
-  // • Changed from `async function` to a plain synchronous function (FIX-E):
-  //   the async keyword caused microtask-queue yielding on every call, which
-  //   raced with subsequent calls and meant DOM writes happened out of order.
-  // • Removed unused `db` and `currentUid` declarations (FIX-B): they made
-  //   the function implicitly async-looking and shadowed outer-scope vars.
-  // • Signature guard now uses `_chatListRenderedOnce` instead of
-  //   `_hasLoadedChatListOnce` (FIX-A): _hasLoadedChatListOnce is set to
-  //   true in the snapshot handler BEFORE _renderChatList is called, so the
-  //   "first render" branch inside the old guard was unreachable on the very
-  //   first live snapshot. _chatListRenderedOnce is only flipped to true
-  //   inside _renderChatList after a successful DOM write.
-  // • _forceRenderChatList bypasses the guard entirely (FIX-C).
+  // ── Chat list render (always full render for correctness) ────────────────
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
 
     listEl.innerHTML = "";
-    var hasSkeleton = !!listEl.querySelector(".vc-skeleton");
     var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
     function _getTimestampMs(value) {
@@ -914,25 +871,14 @@
     }, []);
 
     if (!items.length) {
-      _renderedChatListSignature = "";
       _forceRenderChatList = false;
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
-      _chatListRenderedOnce = true;
       return;
     }
 
     items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
 
-    var nextSig = items.map(function (c) {
-      return [c.chatId || "", c.otherUid || "", c.lastMessage || "", c.updatedAtMs || 0].join(":");
-    }).join("|");
-
-    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature && !hasSkeleton && listEl.childElementCount > 0) {
-      return;
-    }
-
     _forceRenderChatList = false;
-    _renderedChatListSignature = nextSig;
 
     var fragment = document.createDocumentFragment();
     items.forEach(function (chat) {
@@ -980,9 +926,7 @@
       fragment.appendChild(item);
     });
 
-    listEl.innerHTML = "";
     listEl.appendChild(fragment);
-    _chatListRenderedOnce = true;
   }
 
   function _stopListening() {
@@ -990,10 +934,7 @@
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _activeChatListListenerUid = null; _renderedChatListSignature = "";
-    // FIX-A: also reset the render-once flag so re-opening the chat screen
-    // renders correctly from a clean state.
-    _chatListRenderedOnce = false;
+    _activeChatListListenerUid = null;
     _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
   }
