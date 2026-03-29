@@ -844,14 +844,15 @@
   listEl.innerHTML = ""; // 🔥 clears skeleton immediately
 }
 
-    var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    var conversationsRaw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    var conversations = conversationsRaw.filter(function (conversation) { return conversation != null; });
 
     console.log("[DEBUG] conversations:", conversations.length);
     console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
     var items = conversations.map(function (conversation) {
       var safeConversation = conversation || {};
-      var profile = safeConversation.user || {};
+      var profile = safeConversation.user && typeof safeConversation.user === "object" ? safeConversation.user : {};
       return {
         chatId: safeConversation.chatId || null,
         otherUid: safeConversation.otherUid || null,
