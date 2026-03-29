@@ -840,16 +840,18 @@
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
+     if (_forceRenderChatList) {
+  listEl.innerHTML = ""; // 🔥 clears skeleton immediately
+}
 
     var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
     console.log("[DEBUG] conversations:", conversations.length);
     console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
-    console.log("[STEP 1] items length:", items.length);
-    console.log("[STEP 1] hasLoaded:", _hasLoadedChatListOnce);
-
     var items = conversations.map(function (conversation) {
+      console.log("[STEP 1] items length:", items.length);
+      console.log("[STEP 1] hasLoaded:", _hasLoadedChatListOnce);
       var profile = conversation.user || {};
       return {
         chatId: conversation.chatId || null,
