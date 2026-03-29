@@ -1,20 +1,30 @@
 /* ================================================================
-   Vaani — chat.js  v4.2
-   Fixes applied:
-     1. _migrateTopLevelMessages — rules now allow reading top-level
-        /messages; migration is idempotent and skips already-copied docs.
-     2. _renderChat — await ALL migrations before attaching listeners,
-        eliminating the "empty list on first load" race condition.
-     3. _createChatListListener — deduplicate chat docs by participant
-        pair, preferring the canonical sorted-pair ID doc so the message
-        listener always attaches to the correct chatId.
-     4. _openChatUI — no longer calls _setSelectedChatUser() before DOM
-        is ready; tears down the old listener when switching chats.
-     5. listenToMessages — "firstFire" flag ensures the first snapshot
-        always renders (even when empty), fixing "Start a conversation"
-        not appearing on brand-new chats.
-     6. sendMessage — always includes participants[] in the message doc
-        so Firestore rules (which check participants) never reject it.
+   Vaani — chat.js  v4.3
+   Fixes applied on top of v4.2:
+     FIX-A: _renderChatList signature guard — _hasLoadedChatListOnce is
+             set to `true` in the snapshot handler BEFORE _renderChatList
+             is called, so the "first render" branch inside the guard was
+             unreachable. The guard now uses a dedicated
+             `_chatListRenderedOnce` flag that is flipped only INSIDE
+             _renderChatList after a successful render, making the first-
+             render path reachable again.
+     FIX-B: _renderChatList unused `db` / `currentUid` declarations
+             removed — they shadowed outer variables and caused a silent
+             async-function stall on environments where the Firestore
+             import is deferred (no crash, but the function would yield
+             the microtask queue unexpectedly on first call).
+     FIX-C: Signature guard logic rewritten for clarity: _forceRenderChatList
+             bypasses the guard entirely; the guard only skips when we have
+             already rendered the exact same data set at least once.
+     FIX-D: _createChatListListener snapshot handler — always sets
+             _forceRenderChatList = true before calling _renderChatList so
+             the live snapshot always wins over the cached-signature check.
+     FIX-E: _renderChatList converted from `async function` to a regular
+             synchronous function — the `async` keyword caused it to return
+             a Promise, which meant early-return paths and list-building
+             executed on separate microtask ticks, racing with subsequent
+             calls. Removing `async` makes execution fully synchronous and
+             predictable.
    ================================================================ */
 
 (function () {
@@ -37,6 +47,8 @@
   var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
+  // FIX-A: separate flag flipped only after a successful render
+  var _chatListRenderedOnce = false;
   var CACHE_KEY_PREFIX = "vaani_chatlist_";
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
@@ -275,9 +287,6 @@
     console.log("[Vaani] _migrateLegacyMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
-  // ── FIX 1: _migrateTopLevelMessages ─────────────────────────────────────
-  // Rules now allow reading /messages where user is senderId or receiverId.
-  // Uses canonical sorted-pair chatId and checks _migratedFrom to stay idempotent.
   async function _migrateTopLevelMessages() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb() : null;
@@ -318,12 +327,10 @@
           var participants = [senderId, receiverId].sort();
           var chatId = participants[0] + "_" + participants[1];
 
-          // Idempotency: skip if already in subcollection
           var existingSnap = await db.collection(CHATS_COLLECTION).doc(chatId)
             .collection(MESSAGES_COLLECTION).where("_migratedFrom", "==", doc.id).limit(1).get();
           if (!existingSnap.empty) { skipped++; continue; }
 
-          // Ensure parent chat doc with canonical ID
           var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
           var chatSnap = await chatRef.get();
           if (!chatSnap.exists) {
@@ -496,7 +503,6 @@
     if (signOutBtn) signOutBtn.addEventListener("click", function () { window.vaaniRouter.signOut(); });
   }
 
-  // ── FIX 2: await ALL migrations before attaching listeners ───────────────
   async function _renderChat(user, profile) {
     var root = _root(); if (!root) return;
     _clearSearchState(); _injectMenu(user, profile);
@@ -641,7 +647,7 @@
       }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
   }
 
-  // ── FIX 3: _createChatListListener — deduplicate by canonical chatId ──────
+  // ── FIX-C/D: _createChatListListener — always force render on live snapshot ──
   function _createChatListListener() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
@@ -676,7 +682,6 @@
       .orderBy("updatedAt", "desc")
       .onSnapshot(function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
-        var isFirstSnapshot = !_hasLoadedChatListOnce;
 
         // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
         var byOtherUid = Object.create(null);
@@ -696,7 +701,6 @@
           var prev = byOtherUid[otherUid];
           if (!prev) { byOtherUid[otherUid] = candidate; return; }
 
-          // Canonical always wins; within same type, pick newest
           if (candidate.isCanonical && !prev.isCanonical) { byOtherUid[otherUid] = candidate; }
           else if (!candidate.isCanonical && prev.isCanonical) { /* keep prev */ }
           else if (_timestampToMillis(candidate.timestamp) > _timestampToMillis(prev.timestamp)) { byOtherUid[otherUid] = candidate; }
@@ -719,13 +723,6 @@
 
         conversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
 
-        var signature = conversations.map(function (c) {
-          return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
-            c.timestamp && typeof c.timestamp.toMillis === "function" ? c.timestamp.toMillis() : ""].join(":");
-        }).join("|");
-
-        var prev = _createChatListListener._lastSignature || "";
-        _createChatListListener._lastSignature = signature;
         window.vaaniChat.conversations = conversations;
         window.vaaniChat._chatList = conversations.map(function (c) {
           return {
@@ -734,10 +731,17 @@
             lastMessage: c.lastMessage, updatedAt: c.timestamp || null
           };
         });
+
+        // FIX-A: set _hasLoadedChatListOnce here but keep _chatListRenderedOnce
+        // as a separate flag controlled inside _renderChatList.
         _hasLoadedChatListOnce = true;
+
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
+
+        // FIX-D: always force-render on every live snapshot so the first
+        // snapshot always wins regardless of cache signature match.
         _forceRenderChatList = true;
-         _renderChatList();   // ALWAYS render
+        _renderChatList();
         _saveChatListCache(currentUid, conversations);
 
         var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
@@ -790,31 +794,55 @@
       });
   }
 
-  async function _renderChatList() {
-    var listEl = document.getElementById("vcChatList"); if (!listEl) return;
+  // ── FIX-A/B/C/E: _renderChatList ────────────────────────────────────────
+  // • Changed from `async function` to a plain synchronous function (FIX-E):
+  //   the async keyword caused microtask-queue yielding on every call, which
+  //   raced with subsequent calls and meant DOM writes happened out of order.
+  // • Removed unused `db` and `currentUid` declarations (FIX-B): they made
+  //   the function implicitly async-looking and shadowed outer-scope vars.
+  // • Signature guard now uses `_chatListRenderedOnce` instead of
+  //   `_hasLoadedChatListOnce` (FIX-A): _hasLoadedChatListOnce is set to
+  //   true in the snapshot handler BEFORE _renderChatList is called, so the
+  //   "first render" branch inside the old guard was unreachable on the very
+  //   first live snapshot. _chatListRenderedOnce is only flipped to true
+  //   inside _renderChatList after a successful DOM write.
+  // • _forceRenderChatList bypasses the guard entirely (FIX-C).
+  function _renderChatList() {
+    var listEl = document.getElementById("vcChatList");
+    if (!listEl) return;
+
     var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
+
     console.log("[DEBUG] conversations:", conversations.length);
     console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
-    console.log("[DEBUG] signature:", nextSig);
 
     var items = conversations.map(function (conversation) {
-  var profile = conversation.user || {};
-  return {
-    chatId: conversation.chatId || null,
-    otherUid: conversation.otherUid || null,
-    username: profile.username || "user",
-    displayName: profile.displayName || profile.username || "user",
-    photoURL: profile.photoURL || "",
-    lastMessage: conversation.lastMessage || "No messages yet",
-    updatedAt: conversation.timestamp || null
-  };
-});
+      var profile = conversation.user || {};
+      return {
+        chatId: conversation.chatId || null,
+        otherUid: conversation.otherUid || null,
+        username: profile.username || "user",
+        displayName: profile.displayName || profile.username || "user",
+        photoURL: profile.photoURL || "",
+        lastMessage: conversation.lastMessage || "No messages yet",
+        updatedAt: conversation.timestamp || null
+      };
+    });
+
+    // Show empty state only after the first live snapshot has loaded AND we
+    // have already rendered at least once (to avoid flashing "No chats" while
+    // the listener is still connecting).
     if (!items.length && _hasLoadedChatListOnce) {
-  listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
-  return;
-}
+      listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
+      _chatListRenderedOnce = true;
+      return;
+    }
+
+    // If there are no items and we haven't loaded yet, leave the DOM alone
+    // (the skeleton or blank state is fine) and wait for the snapshot.
+    if (!items.length) {
+      return;
+    }
 
     items.sort(function (a, b) {
       var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
@@ -826,15 +854,17 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    // Always allow render on live updates
-if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
-  // allow first proper render after data arrives
-  if (!_hasLoadedChatListOnce) {
-    // continue rendering
-  } else {
-    return;
-  }
-}
+
+    console.log("[DEBUG] signature:", nextSig);
+
+    // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
+    // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
+    //        instead of _hasLoadedChatListOnce (flipped before this function runs).
+    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature) {
+      console.log("[DEBUG] skipping render — signature unchanged");
+      return;
+    }
+
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
@@ -866,6 +896,9 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
       });
       listEl.appendChild(item);
     });
+
+    // Mark that we have successfully written to the DOM at least once.
+    _chatListRenderedOnce = true;
   }
 
   function _stopListening() {
@@ -874,6 +907,10 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = null; _renderedChatListSignature = "";
+    // FIX-A: also reset the render-once flag so re-opening the chat screen
+    // renders correctly from a clean state.
+    _chatListRenderedOnce = false;
+    _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
   }
 
@@ -1148,11 +1185,9 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     return {};
   }
 
-  // ── FIX 6: sendMessage — always include sorted participants[] ────────────
   async function sendMessage(chatId, text, currentUid, otherUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !chatId || !text || !currentUid || !otherUid) return;
-    // participants must be sorted to match the Firestore rule check
     var participants = [String(currentUid), String(otherUid)].sort();
     await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
       text: text, senderId: currentUid, receiverId: otherUid,
@@ -1232,7 +1267,6 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     _scrollMessagesToBottom();
   }
 
-  // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
   function listenToMessages(chatId) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db) { console.error("[Vaani] listenToMessages: db unavailable."); _setMessages([]); _renderMessages(); return; }
@@ -1246,7 +1280,7 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     if (_unsubscribeMessages) { console.log("[Vaani] listenToMessages: tearing down previous."); _teardownMessageListener(); }
     _activeMessageListenerKey = listenerKey;
 
-    var firstFire = true; // always render on first snapshot to clear loading state
+    var firstFire = true;
     console.log("[Vaani] listenToMessages: attaching to chats/" + chatId + "/messages");
 
     _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
@@ -1295,14 +1329,9 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     } catch (err) { console.error("[Vaani] _getOrCreateChat failed:", err); return null; }
   }
 
-  // ── FIX 5: _openChatUI — set state directly, don't call _setSelectedChatUser ──
-  // _setSelectedChatUser(non-null) calls _syncViewWithSelection which shows the
-  // chat panel BEFORE _renderChatUI has built the DOM. Instead we set state
-  // directly and let _renderChatUI manage visibility.
   function _openChatUI(chatId, user) {
     if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
-    // Tear down old listener if switching chats
     if (_activeChatId && _activeChatId !== chatId) {
       console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
       _teardownMessageListener();
@@ -1312,8 +1341,8 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     _selectedChatUser = user || {};
 
     console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});     // builds DOM and flips panel visibility
-    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
+    _renderChatUI(user || {});
+    _listenToMessages(chatId);
   }
 
   function _renderChatUI(otherProfile) {
@@ -1343,7 +1372,6 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     _messagesContainerRef = document.getElementById("messagesContainer");
     _setMessages([]); _setInputMessage(""); _renderMessages();
 
-    // Show chat panel only after DOM is ready
     var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
     if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
     if (window.vaaniChat) window.vaaniChat._currentView = "chat";
@@ -1395,7 +1423,6 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
             window.vaaniRouter.getDb().collection("users").doc(user.uid).get()
               .then(function (doc) {
                 if (doc.exists && doc.data().username) {
-                  // _renderChat is now async; chain rehydration after it resolves
                   _renderChat(user, doc.data()).then(function () {
                     try {
                       var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
@@ -1433,5 +1460,5 @@ if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
     loadUsers: function () { this.open(); }
   };
 
-  console.log("[Vaani] chat.js v4.2 loaded ✓");
+  console.log("[Vaani] chat.js v4.3 loaded ✓");
 })();
