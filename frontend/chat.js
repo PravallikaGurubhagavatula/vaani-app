@@ -846,6 +846,9 @@
     console.log("[DEBUG] conversations:", conversations.length);
     console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
+    console.log("[STEP 1] items length:", items.length);
+    console.log("[STEP 1] hasLoaded:", _hasLoadedChatListOnce);
+
     var items = conversations.map(function (conversation) {
       var profile = conversation.user || {};
       return {
