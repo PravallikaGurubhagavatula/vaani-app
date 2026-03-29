@@ -840,9 +840,10 @@
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
-     if (_forceRenderChatList) {
-  listEl.innerHTML = ""; // 🔥 clears skeleton immediately
-}
+    var hasSkeleton = !!listEl.querySelector(".vc-skeleton");
+    if (hasSkeleton) {
+      listEl.innerHTML = "";
+    }
 
     var conversationsRaw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
     var conversations = conversationsRaw.filter(function (conversation) { return conversation != null; });
@@ -868,14 +869,16 @@
     // have already rendered at least once (to avoid flashing "No chats" while
     // the listener is still connecting).
     if (!items.length && _hasLoadedChatListOnce) {
+      listEl.innerHTML = "";
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
       _chatListRenderedOnce = true;
       return;
     }
 
-    // If there are no items and we haven't loaded yet, leave the DOM alone
-    // (the skeleton or blank state is fine) and wait for the snapshot.
+    // If there are no items and we haven't loaded yet, keep the list blank
+    // and wait for the snapshot.
     if (!items.length) {
+      listEl.innerHTML = "";
       return;
     }
 
