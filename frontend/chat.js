@@ -50,6 +50,8 @@
   // FIX-A: separate flag flipped only after a successful render
   var _chatListRenderedOnce = false;
   var CACHE_KEY_PREFIX = "vaani_chatlist_";
+  var PROFILE_CACHE_KEY_PREFIX = "vaani_profile_";
+  var MIGRATION_KEY_PREFIX = "vaani_migration_done_v2_";
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
   var _activeChatId = null;
@@ -133,6 +135,32 @@
     } catch (e) {
       return null;
     }
+  }
+
+  function _saveProfileCache(uid, profile) {
+    if (!uid || !profile) return;
+    try {
+      localStorage.setItem(PROFILE_CACHE_KEY_PREFIX + String(uid), JSON.stringify({
+        username: profile.username || "",
+        displayName: profile.displayName || profile.username || "",
+        photoURL: profile.photoURL || ""
+      }));
+    } catch (e) {}
+  }
+
+  function _loadProfileCache(uid) {
+    if (!uid) return null;
+    try {
+      var raw = localStorage.getItem(PROFILE_CACHE_KEY_PREFIX + String(uid));
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.username) return null;
+      return {
+        username: parsed.username,
+        displayName: parsed.displayName || parsed.username,
+        photoURL: parsed.photoURL || ""
+      };
+    } catch (e) { return null; }
   }
 
   function _extractLegacyMessageUsers(data) {
@@ -224,8 +252,8 @@
       ? String(window._vaaniCurrentUser.uid) : "";
     if (!db || !currentUid) { console.warn("[Vaani] _migrateLegacyMessages: missing db/uid — abort."); return; }
 
-    var sessionKey = "vaani_migration_done_" + currentUid;
-    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateLegacyMessages: skipping (already ran)."); return; }
+    var migrationKey = MIGRATION_KEY_PREFIX + currentUid + "_legacy";
+    if (localStorage.getItem(migrationKey)) { console.log("[Vaani] _migrateLegacyMessages: skipping (already ran)."); return; }
     console.log("[Vaani] _migrateLegacyMessages: starting for uid:", currentUid);
 
     var migrated = 0, skipped = 0, errors = 0;
@@ -244,7 +272,7 @@
         });
       });
       console.log("[Vaani] _migrateLegacyMessages: found", docsToProcess.length, "candidate(s).");
-      if (!docsToProcess.length) { sessionStorage.setItem(sessionKey, "1"); return; }
+      if (!docsToProcess.length) { localStorage.setItem(migrationKey, "1"); return; }
 
       for (var i = 0; i < docsToProcess.length; i++) {
         var doc = docsToProcess[i]; var data = doc.data() || {};
@@ -283,7 +311,7 @@
       }
     } catch (fatalErr) { console.error("[Vaani] _migrateLegacyMessages: fatal:", fatalErr); return; }
 
-    sessionStorage.setItem(sessionKey, "1");
+    localStorage.setItem(migrationKey, "1");
     console.log("[Vaani] _migrateLegacyMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
@@ -294,8 +322,8 @@
       ? String(window._vaaniCurrentUser.uid) : "";
     if (!db || !currentUid) return;
 
-    var sessionKey = "vaani_toplevel_migration_" + currentUid;
-    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateTopLevelMessages: skipping (already ran)."); return; }
+    var migrationKey = MIGRATION_KEY_PREFIX + currentUid + "_toplevel";
+    if (localStorage.getItem(migrationKey)) { console.log("[Vaani] _migrateTopLevelMessages: skipping (already ran)."); return; }
     console.log("[Vaani] _migrateTopLevelMessages: starting for uid:", currentUid);
 
     var migrated = 0, skipped = 0, errors = 0;
@@ -349,7 +377,7 @@
       }
     } catch (fatalErr) { console.error("[Vaani] _migrateTopLevelMessages: fatal:", fatalErr); return; }
 
-    sessionStorage.setItem(sessionKey, "1");
+    localStorage.setItem(migrationKey, "1");
     console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
@@ -503,7 +531,7 @@
     if (signOutBtn) signOutBtn.addEventListener("click", function () { window.vaaniRouter.signOut(); });
   }
 
-  async function _renderChat(user, profile) {
+  function _renderChat(user, profile) {
     var root = _root(); if (!root) return;
     _clearSearchState(); _injectMenu(user, profile);
 
@@ -532,6 +560,7 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
+    _renderSkeletonChatList();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
 
@@ -680,6 +709,7 @@
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
       .orderBy("updatedAt", "desc")
+      .limit(20)
       .onSnapshot(function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
 
@@ -1412,41 +1442,63 @@
     _chatList: [],
     open: function () {
       var root = _root();
-      if (root && !root.children.length) {
-        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading…</p></div>';
-      }
       if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
         var auth = window.vaaniRouter.getAuth();
         if (auth) {
           var user = auth.currentUser;
-          if (user && window._vaaniCurrentUser) {
-            window.vaaniRouter.getDb().collection("users").doc(user.uid).get()
-              .then(function (doc) {
-                if (doc.exists && doc.data().username) {
-                  _renderChat(user, doc.data()).then(function () {
-                    try {
-                      var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-                      if (saved) {
-                        var state = JSON.parse(saved);
-                        if (state && state.chatId && state.otherUid) {
-                          window.vaaniRouter.getDb().collection("users").doc(state.otherUid).get()
-                            .then(function (profileDoc) {
-                              var profile = profileDoc.exists ? profileDoc.data() : {};
-                              profile.uid = state.otherUid;
-                              _openChatUI(state.chatId, profile);
-                            })
-                            .catch(function (err) {
-                              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-                              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-                            });
-                        }
-                      }
-                    } catch (e) {}
-                  });
-                } else { _renderProfile(user); }
-              })
-              .catch(function () { _renderProfile(user); });
+          if (!user || !window._vaaniCurrentUser) {
+            _renderLogin();
+            return;
           }
+
+          var db = window.vaaniRouter.getDb();
+          var cachedProfile = _loadProfileCache(user.uid);
+          var renderedFromCache = false;
+          if (cachedProfile) {
+            renderedFromCache = true;
+            _renderChat(user, cachedProfile);
+          } else if (root && !root.children.length) {
+            root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading profile…</p></div>';
+          }
+
+          var profilePromise = db.collection("users").doc(user.uid).get();
+          var activeChatPromise = Promise.resolve().then(function () {
+            try {
+              var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
+              return saved ? JSON.parse(saved) : null;
+            } catch (e) { return null; }
+          });
+
+          Promise.all([profilePromise, activeChatPromise]).then(function (results) {
+            var doc = results[0];
+            var state = results[1];
+            if (!doc.exists || !doc.data().username) {
+              _renderProfile(user);
+              return;
+            }
+
+            var freshProfile = doc.data();
+            _saveProfileCache(user.uid, freshProfile);
+
+            if (!renderedFromCache) {
+              _renderChat(user, freshProfile);
+            }
+
+            if (state && state.chatId && state.otherUid) {
+              db.collection("users").doc(state.otherUid).get()
+                .then(function (profileDoc) {
+                  var otherProfile = profileDoc.exists ? profileDoc.data() : {};
+                  otherProfile.uid = state.otherUid;
+                  _openChatUI(state.chatId, otherProfile);
+                })
+                .catch(function (err) {
+                  console.warn("[Vaani] rehydrate: profile fetch failed:", err);
+                  sessionStorage.removeItem("vaani_active_chat_" + user.uid);
+                });
+            }
+          }).catch(function () {
+            if (!renderedFromCache) _renderProfile(user);
+          });
         }
       }
     },
