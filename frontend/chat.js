@@ -816,18 +816,25 @@
     console.log("[DEBUG] conversations:", conversations.length);
     console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
-    var items = conversations.map(function (conversation) {
-      var profile = conversation.user || {};
-      return {
-        chatId: conversation.chatId || null,
-        otherUid: conversation.otherUid || null,
-        username: profile.username || "user",
-        displayName: profile.displayName || profile.username || "user",
-        photoURL: profile.photoURL || "",
-        lastMessage: conversation.lastMessage || "No messages yet",
-        updatedAt: conversation.timestamp || null
-      };
-    });
+    var items = conversations
+      .filter(function (c) {
+        return c && c.chatId && c.otherUid;
+      })
+      .map(function (conversation) {
+        var profile = conversation.user || {};
+        return {
+          chatId: conversation.chatId,
+          otherUid: conversation.otherUid,
+          username: profile.username || "user",
+          displayName: profile.displayName || profile.username || "user",
+          photoURL: profile.photoURL || "",
+          lastMessage: conversation.lastMessage || "No messages yet",
+          updatedAt: conversation.timestamp || null
+        };
+      });
+
+    console.log("RAW conversations:", conversations);
+    console.log("FILTERED items:", items);
 
     // Show empty state only after the first live snapshot has loaded AND we
     // have already rendered at least once (to avoid flashing "No chats" while
@@ -841,6 +848,7 @@
     // If there are no items and we haven't loaded yet, leave the DOM alone
     // (the skeleton or blank state is fine) and wait for the snapshot.
     if (!items.length) {
+      listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats...</div>';
       return;
     }
 
