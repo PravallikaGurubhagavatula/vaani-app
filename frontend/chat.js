@@ -898,7 +898,7 @@
     // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
     // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
     //        instead of _hasLoadedChatListOnce (flipped before this function runs).
-    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature) {
+    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature && !hasSkeleton) {
       console.log("[DEBUG] skipping render — signature unchanged");
       return;
     }
