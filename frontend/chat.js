@@ -736,7 +736,8 @@
         });
         _hasLoadedChatListOnce = true;
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        _renderChatList();   // ALWAYS render
+        _forceRenderChatList = true;
+         _renderChatList();   // ALWAYS render
         _saveChatListCache(currentUid, conversations);
 
         var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
@@ -794,6 +795,9 @@
     var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
+    console.log("[DEBUG] conversations:", conversations.length);
+    console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
+    console.log("[DEBUG] signature:", nextSig);
 
     var items = conversations.map(function (conversation) {
   var profile = conversation.user || {};
@@ -807,9 +811,8 @@
     updatedAt: conversation.timestamp || null
   };
 });
-    if (!items.length) {
+    if (!items.length && _hasLoadedChatListOnce) {
   listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
-  _renderedChatListSignature = "empty";
   return;
 }
 
@@ -823,7 +826,15 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-    if (_hasLoadedChatListOnce && nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
+    // Always allow render on live updates
+if (!_forceRenderChatList && nextSig === _renderedChatListSignature) {
+  // allow first proper render after data arrives
+  if (!_hasLoadedChatListOnce) {
+    // continue rendering
+  } else {
+    return;
+  }
+}
     _forceRenderChatList = false;
     _renderedChatListSignature = nextSig;
 
