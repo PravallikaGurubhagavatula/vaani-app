@@ -54,9 +54,6 @@ function renderUserProfile(user) {
     chat: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
     </svg>`,
-    profile: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-    </svg>`,
     mute: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
       <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
@@ -95,9 +92,12 @@ function renderUserProfile(user) {
 
   // ── Language tags ─────────────────────────────────────────────────────────
   const langs = Array.isArray(user.languages) ? user.languages : [];
-  const langTagsHTML = langs.length
+  const fluentLangs = Array.isArray(user.fluentLanguages) && user.fluentLanguages.length
+    ? user.fluentLanguages.filter(Boolean).slice(0, 3)
+    : langs.slice(0, 2);
+  const langTagsHTML = fluentLangs.length
     ? `<span class="vp-meta__item">${icons.lang}</span>
-       <ul class="vp-lang-list">${langs.map(l => `<li class="vp-lang-tag">${esc(l)}</li>`).join('')}</ul>`
+       <ul class="vp-lang-list">${fluentLangs.map(l => `<li class="vp-lang-tag">${esc(l)}</li>`).join('')}</ul>`
     : '';
 
   // ── External links ────────────────────────────────────────────────────────
@@ -161,7 +161,6 @@ function renderUserProfile(user) {
 
       <!-- Dropdown -->
       <div class="vp-dropdown" id="vp-dropdown" role="menu">
-        <button class="vp-dropdown__item" data-action="view-profile">${icons.profile} View Full Profile</button>
         <button class="vp-dropdown__item" data-action="mute">${icons.mute} Mute User</button>
         <div class="vp-dropdown__sep"></div>
         <button class="vp-dropdown__item danger" data-action="block">${icons.block} Block User</button>
@@ -216,6 +215,11 @@ function renderUserProfile(user) {
           <span class="vp-field__key">Joined</span>
           <span class="vp-field__val">${fmt_date(user.joinedDate)}</span>
         </div>
+        ${user.lastActive ? `
+        <div class="vp-field">
+          <span class="vp-field__key">Last Active</span>
+          <span class="vp-field__val">${esc(user.lastActive)}</span>
+        </div>` : ''}
       </div>
     </div>
 
