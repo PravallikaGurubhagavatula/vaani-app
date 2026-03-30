@@ -5,8 +5,6 @@
  * @param {Object} user
  * @param {string}  user.name
  * @param {string}  user.username
- * @param {string}  user.email
- * @param {string}  user.uid
  * @param {string[]} user.languages
  * @param {string}  user.avatarUrl
  * @param {string}  user.city
@@ -17,6 +15,7 @@
  * @param {string}  [user.links.instagram]
  * @param {string}  [user.links.linkedin]
  * @param {string}  [user.links.website]
+ * @param {string[]} [user.localExpertise]
  */
 function renderUserProfile(user) {
   const root = document.getElementById('profile-root');
@@ -121,6 +120,20 @@ function renderUserProfile(user) {
        </div>`
     : '';
 
+  // ── Local expertise card (optional) ───────────────────────────────────────
+  const localExpertise = Array.isArray(user.localExpertise)
+    ? user.localExpertise.filter(Boolean)
+    : [];
+
+  const localExpertiseCard = localExpertise.length
+    ? `<div class="glass-card vp-section">
+         <div class="vp-section__title">Local Expertise</div>
+         <ul class="vp-lang-list">
+           ${localExpertise.map(item => `<li class="vp-lang-tag">${esc(item)}</li>`).join('')}
+         </ul>
+       </div>`
+    : '';
+
   // ── Language field value ──────────────────────────────────────────────────
   const langFieldHTML = langs.length
     ? `<div class="vp-field__tags">${langs.map(l => `<span class="vp-lang-tag">${esc(l)}</span>`).join('')}</div>`
@@ -173,6 +186,9 @@ function renderUserProfile(user) {
     <!-- BIO CARD (optional) -->
     ${bioCard}
 
+    <!-- LOCAL EXPERTISE (optional) -->
+    ${localExpertiseCard}
+
     <!-- PERSONAL DETAILS -->
     <div class="glass-card vp-section">
       <div class="vp-section__title">Personal Details</div>
@@ -196,14 +212,6 @@ function renderUserProfile(user) {
     <div class="glass-card vp-section">
       <div class="vp-section__title">Account Details</div>
       <div class="vp-field-list">
-        <div class="vp-field">
-          <span class="vp-field__key">Email</span>
-          <span class="vp-field__val">${esc(user.email) || '—'}</span>
-        </div>
-        <div class="vp-field">
-          <span class="vp-field__key">User ID</span>
-          <span class="vp-field__val uid">${esc(user.uid) || '—'}</span>
-        </div>
         <div class="vp-field">
           <span class="vp-field__key">Joined</span>
           <span class="vp-field__val">${fmt_date(user.joinedDate)}</span>
