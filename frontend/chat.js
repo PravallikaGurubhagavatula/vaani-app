@@ -593,7 +593,10 @@
   function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
 
   function _scrollMessagesToBottom() {
-    if (!_messagesContainerRef) return;
+    if (!_messagesContainerRef) {
+  console.error("❌ RENDER FAILED: container missing");
+  return;
+}
     window.requestAnimationFrame(function () {
       if (_messagesContainerRef) _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
     });
@@ -1296,6 +1299,9 @@
   }
 
   function _renderMessages() {
+    console.log("RENDER: messages count =", _messages.length);
+    console.log("RENDER: container =", _messagesContainerRef);
+    _messagesContainerRef.innerHTML = "<div style='color:white'>TEST MESSAGE</div>";
     var container = _messagesContainerRef; if (!container) return;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     container.innerHTML = "";
