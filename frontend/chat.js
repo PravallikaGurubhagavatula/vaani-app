@@ -1379,20 +1379,103 @@
   }
 
   function _openChatUI(chatId, user) {
-    if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
+  if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
-    if (_activeChatId && _activeChatId !== chatId) {
-      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
-      _teardownMessageListener();
-    }
+  console.log("[Vaani] Opening chat UI:", chatId, user);
 
-    _activeChatId     = chatId;
-    _selectedChatUser = user || {};
-
-    console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});
-    _listenToMessages(chatId);
+  // Tear down any previous message listener before switching chats
+  if (_activeChatId && _activeChatId !== chatId) {
+    console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
+    _teardownMessageListener();
   }
+
+  _activeChatId     = chatId;
+  _selectedChatUser = user || {};
+
+  // Step 1: Render the chat UI shell (sets _messagesContainerRef)
+  _renderChatUI(user || {});
+
+  // Step 2: Confirm the container is actually in the DOM before attaching listener
+  _messagesContainerRef = document.getElementById("messagesContainer");
+  if (!_messagesContainerRef) {
+    console.error("[Vaani] _openChatUI: messagesContainer not found after render — aborting listener.");
+    return;
+  }
+
+  console.log("[Vaani] _openChatUI: messagesContainer confirmed, attaching listener for chatId:", chatId);
+
+  // Step 3: Attach Firestore listener (replaces _listenToMessages call)
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb() : null;
+  if (!db) { console.error("[Vaani] _openChatUI: db unavailable"); return; }
+
+  // Tear down any lingering listener one more time to be safe
+  _teardownMessageListener();
+
+  var listenerKey = "chat::" + chatId;
+  _activeMessageListenerKey = listenerKey;
+  _activeMessagesSignature  = "";
+  _optimisticMessages       = [];
+
+  _unsubscribeMessages = db
+    .collection(CHATS_COLLECTION)
+    .doc(chatId)
+    .collection(MESSAGES_COLLECTION)
+    .orderBy("timestamp", "asc")
+    .onSnapshot(
+      function (snapshot) {
+        console.log("[Vaani] Messages snapshot:", snapshot.size, "for chatId:", chatId);
+
+        // Guard: discard if we've already switched to a different chat
+        if (_activeMessageListenerKey !== listenerKey) {
+          console.warn("[Vaani] _openChatUI listener: stale snapshot discarded for", chatId);
+          return;
+        }
+
+        // Re-acquire the container reference each time in case the DOM was rebuilt
+        _messagesContainerRef = document.getElementById("messagesContainer");
+        if (!_messagesContainerRef) {
+          console.error("[Vaani] _openChatUI listener: messagesContainer gone from DOM");
+          return;
+        }
+
+        var messages = snapshot.docs.map(function (doc) {
+          return Object.assign({ id: doc.id }, doc.data() || {});
+        });
+
+        // Dedup signature check (skip on first fire to always paint initial state)
+        var sigParts = [];
+        snapshot.docs.forEach(function (doc) {
+          var d = doc.data() || {};
+          sigParts.push(
+            doc.id,
+            String(d.text || ""),
+            String(d.senderId || ""),
+            String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : "")
+          );
+        });
+        var nextSig = sigParts.join("|");
+        if (nextSig !== "" && nextSig === _activeMessagesSignature) {
+          console.log("[Vaani] _openChatUI listener: unchanged, skipping render.");
+          return;
+        }
+        _activeMessagesSignature = nextSig;
+        _optimisticMessages      = [];   // confirmed messages arrived — clear optimistic
+
+        _setMessages(messages);
+        _renderMessages();
+      },
+      function (err) {
+        console.error("[Vaani] _openChatUI listener error for chatId:", chatId, err);
+        if (_activeMessageListenerKey === listenerKey) {
+          _activeMessagesSignature = "";
+          _optimisticMessages      = [];
+          _setMessages([]);
+          _renderMessages();
+        }
+      }
+    );
+}
 
   function _renderChatUI(otherProfile) {
     var chatScreen = document.getElementById("vcChatScreen");
