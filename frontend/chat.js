@@ -900,33 +900,49 @@
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
       item.addEventListener("click", function () {
-        if (!chat.otherUid) {
-          console.error("[Vaani] Missing otherUid for chat list item");
-          return;
-        }
+  if (!chat.otherUid) {
+    console.error("[Vaani] Missing otherUid for chat list item");
+    return;
+  }
 
-        var openRequestId = ++_chatListOpenRequestId;
-        var selectedUser = {
-          uid: chat.otherUid,
-          username: chat.username || "user",
-          displayName: chat.displayName || chat.username || "user",
-          photoURL: chat.photoURL || ""
-        };
+  var openRequestId = ++_chatListOpenRequestId;
+  var selectedUser = {
+    uid: chat.otherUid,
+    username: chat.username || "user",
+    displayName: chat.displayName || chat.username || "user",
+    photoURL: chat.photoURL || ""
+  };
 
-        Promise.resolve(chat.chatId || _getOrCreateChat(selectedUser.uid))
-          .then(function (chatId) {
-            if (!chatId) {
-              console.error("[Vaani] Invalid chatId for chat list item");
-              return;
-            }
-            if (openRequestId !== _chatListOpenRequestId) return;
-            _setSelectedChatUser(selectedUser);
-            _openChatUI(chatId, selectedUser);
-          })
-          .catch(function (err) {
-            console.error("[Vaani] Could not open chat list item:", err);
-          });
-      });
+  console.log("[Vaani] Chat clicked:", chat);
+
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+    ? String(window._vaaniCurrentUser.uid) : null;
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb() : null;
+
+  if (!currentUid || !db) {
+    console.error("[Vaani] Chat click: missing currentUid or db");
+    return;
+  }
+
+  var sortedPair = [currentUid, String(chat.otherUid)].sort();
+  var chatId = sortedPair[0] + "_" + sortedPair[1];
+
+  console.log("[Vaani] Generated chatId:", chatId);
+
+  db.collection(CHATS_COLLECTION).doc(chatId).set({
+    participants: sortedPair,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+    .then(function () {
+      if (openRequestId !== _chatListOpenRequestId) return;
+      _setSelectedChatUser(selectedUser);
+      _openChatUI(chatId, selectedUser);
+    })
+    .catch(function (err) {
+      console.error("[Vaani] Could not open chat list item:", err);
+    });
+});
 
       fragment.appendChild(item);
     });
