@@ -1299,10 +1299,13 @@
   }
 
   function _renderMessages() {
-    console.log("RENDER: messages count =", _messages.length);
-    console.log("RENDER: container =", _messagesContainerRef);
-    _messagesContainerRef.innerHTML = "<div style='color:white'>TEST MESSAGE</div>";
-    var container = _messagesContainerRef; if (!container) return;
+    console.log("RENDER START", _messages.length);
+    var container = _messagesContainerRef;
+    if (!container || !container.isConnected) {
+      container = document.getElementById("messagesContainer");
+      _messagesContainerRef = container || null;
+    }
+    if (!container) return;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     container.innerHTML = "";
     var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
