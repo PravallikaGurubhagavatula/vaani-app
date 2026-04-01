@@ -935,10 +935,9 @@
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   }, { merge: true })
     .then(function () {
-      if (openRequestId !== _chatListOpenRequestId) return;
-      _setSelectedChatUser(selectedUser);
-      _openChatUI(chatId, selectedUser);
-    })
+  if (openRequestId !== _chatListOpenRequestId) return;
+  _openChatUI(chatId, selectedUser);    // ← _openChatUI handles everything
+})
     .catch(function (err) {
       console.error("[Vaani] Could not open chat list item:", err);
     });
@@ -1379,43 +1378,83 @@
   }
 
   function _openChatUI(chatId, user) {
+  console.log("STEP 1: openChatUI called", chatId);
   if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
+  console.log("[Vaani] _openChatUI called:", chatId, user);
 
-  console.log("[Vaani] Opening chat UI:", chatId, user);
-
-  // Tear down any previous message listener before switching chats
   if (_activeChatId && _activeChatId !== chatId) {
-    console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
     _teardownMessageListener();
   }
 
-  _activeChatId     = chatId;
+  _activeChatId = chatId;
+
+// ALWAYS ensure UI is visible first
+if (_selectedChatUser !== user) {
   _selectedChatUser = user || {};
+  _syncViewWithSelection();   // ✅ VERY IMPORTANT
+}
 
-  // Step 1: Render the chat UI shell (sets _messagesContainerRef)
-  _renderChatUI(user || {});
+// Then render UI
+_renderChatUI(user || {});
+console.log("STEP 2: UI rendered");
 
-  // Step 2: Confirm the container is actually in the DOM before attaching listener
+  // Use requestAnimationFrame to guarantee DOM is painted before attaching listener
+  window.requestAnimationFrame(function () {
+    _messagesContainerRef = document.getElementById("messagesContainer");
+    console.log("STEP 3: DOM ready?", !!_messagesContainerRef);
+    if (!_messagesContainerRef) {
+      console.error("[Vaani] _openChatUI: messagesContainer not in DOM after rAF — retrying");
+      // Retry once after another frame
+      window.requestAnimationFrame(function() {
+        // Wait for DOM to be ready before attaching listener
+window.requestAnimationFrame(function () {
   _messagesContainerRef = document.getElementById("messagesContainer");
+
   if (!_messagesContainerRef) {
-    console.error("[Vaani] _openChatUI: messagesContainer not found after render — aborting listener.");
+    console.error("[Vaani] messagesContainer not found after render — retrying");
+
+    // Retry once more (very safe fallback)
+    window.requestAnimationFrame(function () {
+      _messagesContainerRef = document.getElementById("messagesContainer");
+
+      if (!_messagesContainerRef) {
+        console.error("[Vaani] messagesContainer STILL missing — abort");
+        return;
+      }
+
+      _attachMessageListener(chatId);
+    });
+
     return;
   }
 
-  console.log("[Vaani] _openChatUI: messagesContainer confirmed, attaching listener for chatId:", chatId);
+  _attachMessageListener(chatId);
+});
+        _attachMessageListener(chatId);
+      });
+      return;
+    }
+    _attachMessageListener(chatId);
+  });
+}
 
-  // Step 3: Attach Firestore listener (replaces _listenToMessages call)
+function _attachMessageListener(chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
     ? window.vaaniRouter.getDb() : null;
-  if (!db) { console.error("[Vaani] _openChatUI: db unavailable"); return; }
 
-  // Tear down any lingering listener one more time to be safe
+  if (!db) {
+    console.error("[Vaani] DB not available");
+    return;
+  }
+
   _teardownMessageListener();
 
   var listenerKey = "chat::" + chatId;
   _activeMessageListenerKey = listenerKey;
   _activeMessagesSignature  = "";
   _optimisticMessages       = [];
+
+  console.log("[Vaani] Attaching message listener for:", chatId);
 
   _unsubscribeMessages = db
     .collection(CHATS_COLLECTION)
@@ -1424,18 +1463,16 @@
     .orderBy("timestamp", "asc")
     .onSnapshot(
       function (snapshot) {
-        console.log("[Vaani] Messages snapshot:", snapshot.size, "for chatId:", chatId);
+        console.log("STEP 4: snapshot fired", snapshot.size);
+        console.log("[Vaani] Messages received:", snapshot.size);
 
-        // Guard: discard if we've already switched to a different chat
-        if (_activeMessageListenerKey !== listenerKey) {
-          console.warn("[Vaani] _openChatUI listener: stale snapshot discarded for", chatId);
-          return;
-        }
+        if (_activeMessageListenerKey !== listenerKey) return;
 
-        // Re-acquire the container reference each time in case the DOM was rebuilt
+        // Always re-get DOM
         _messagesContainerRef = document.getElementById("messagesContainer");
+
         if (!_messagesContainerRef) {
-          console.error("[Vaani] _openChatUI listener: messagesContainer gone from DOM");
+          console.error("[Vaani] messagesContainer missing during snapshot");
           return;
         }
 
@@ -1443,40 +1480,15 @@
           return Object.assign({ id: doc.id }, doc.data() || {});
         });
 
-        // Dedup signature check (skip on first fire to always paint initial state)
-        var sigParts = [];
-        snapshot.docs.forEach(function (doc) {
-          var d = doc.data() || {};
-          sigParts.push(
-            doc.id,
-            String(d.text || ""),
-            String(d.senderId || ""),
-            String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : "")
-          );
-        });
-        var nextSig = sigParts.join("|");
-        if (nextSig !== "" && nextSig === _activeMessagesSignature) {
-          console.log("[Vaani] _openChatUI listener: unchanged, skipping render.");
-          return;
-        }
-        _activeMessagesSignature = nextSig;
-        _optimisticMessages      = [];   // confirmed messages arrived — clear optimistic
-
         _setMessages(messages);
         _renderMessages();
       },
       function (err) {
-        console.error("[Vaani] _openChatUI listener error for chatId:", chatId, err);
-        if (_activeMessageListenerKey === listenerKey) {
-          _activeMessagesSignature = "";
-          _optimisticMessages      = [];
-          _setMessages([]);
-          _renderMessages();
-        }
+        console.error("[Vaani] Listener error:", err);
       }
     );
 }
-
+   
   function _renderChatUI(otherProfile) {
     var chatScreen = document.getElementById("vcChatScreen");
     if (!chatScreen) { console.error("[Vaani] _renderChatUI: vcChatScreen not found"); return; }
