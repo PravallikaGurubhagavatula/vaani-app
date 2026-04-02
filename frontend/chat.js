@@ -893,49 +893,38 @@
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
       // ── CLICK HANDLER: open the selected conversation ─────────────────────
-      item.addEventListener("click", function () {
-        if (!chat.otherUid) {
-          console.error("[Vaani] Chat list click: missing otherUid");
-          return;
-        }
+      item.addEventListener("click", async function () {
+  if (!chat.otherUid) {
+    console.error("[Vaani] Chat list click: missing otherUid");
+    return;
+  }
 
-        var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-          ? String(window._vaaniCurrentUser.uid) : null;
-        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-          ? window.vaaniRouter.getDb() : null;
+  var openRequestId = ++_chatListOpenRequestId;
 
-        if (!currentUid || !db) {
-          console.error("[Vaani] Chat list click: missing currentUid or db");
-          return;
-        }
+  try {
+    var selectedUser = {
+      uid: chat.otherUid,
+      username: chat.username || "user",
+      displayName: chat.displayName || chat.username || "user",
+      photoURL: chat.photoURL || ""
+    };
 
-        // Derive the canonical chatId (sorted pair) — same formula used everywhere
-        var chatId = chat.chatId
-          ? String(chat.chatId)
-          : [currentUid, String(chat.otherUid)].sort().join("_");
+    var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
 
-        var selectedUser = {
-          uid:         chat.otherUid,
-          username:    chat.username    || "user",
-          displayName: chat.displayName || chat.username || "user",
-          photoURL:    chat.photoURL    || ""
-        };
+    if (!chatId) {
+      console.error("[Vaani] Invalid chatId");
+      return;
+    }
 
-        // Guard: if this conversation is already open, do nothing
-        if (_activeChatId === chatId && _selectedChatUser && _selectedChatUser.uid === chat.otherUid) {
-          return;
-        }
+    if (openRequestId !== _chatListOpenRequestId) return;
 
-        // Ensure the chat document exists (merge so we never overwrite existing data),
-        // then open the UI. Fire-and-forget — UI opens immediately either way.
-        db.collection(CHATS_COLLECTION).doc(chatId)
-          .set({ participants: [currentUid, String(chat.otherUid)].sort(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
-          .catch(function (err) {
-            console.warn("[Vaani] Chat list click: chat doc upsert failed (non-fatal):", err);
-          });
+    _setSelectedChatUser(selectedUser);
+    _openChatUI(chatId, selectedUser);
 
-        _openChatUI(chatId, selectedUser);
-      });
+  } catch (err) {
+    console.error("[Vaani] Could not open chat:", err);
+  }
+});
       // ─────────────────────────────────────────────────────────────────────
 
       fragment.appendChild(item);
