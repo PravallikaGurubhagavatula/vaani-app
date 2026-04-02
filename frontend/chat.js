@@ -1,1308 +1,2186 @@
 /* ================================================================
-   Vaani — chat.js  v4.2
-   Fixes applied:
-     1. _migrateTopLevelMessages — rules now allow reading top-level
-        /messages; migration is idempotent and skips already-copied docs.
-     2. _renderChat — await ALL migrations before attaching listeners,
-        eliminating the "empty list on first load" race condition.
-     3. _createChatListListener — deduplicate chat docs by participant
-        pair, preferring the canonical sorted-pair ID doc so the message
-        listener always attaches to the correct chatId.
-     4. _openChatUI — no longer calls _setSelectedChatUser() before DOM
-        is ready; tears down the old listener when switching chats.
-     5. listenToMessages — "firstFire" flag ensures the first snapshot
-        always renders (even when empty), fixing "Start a conversation"
-        not appearing on brand-new chats.
-     6. sendMessage — always includes participants[] in the message doc
-        so Firestore rules (which check participants) never reject it.
-   ================================================================ */
+   Vaani — app.js  v5.7
+   ----------------------------------------------------------------
+   Changes from v5.6:
+   1.  window.finalTranslate DEFINED — was called everywhere but
+       never declared. Now the single entry-point for all translation.
+   2.  normalizeInput() integrated — normalizer.js is loaded before
+       this file; every user-typed / spoken input is normalised
+       before hitting the translation API.
+   3.  LANG_CODE_MAP added — maps LANG_CONFIG keys → normalizer codes.
+   4.  Conversation mode normalisation — startConvListening now
+       normalises both speakers' transcripts.
+   5.  Text mode normalisation — translateTypedText + retranslateSpeech
+       both normalise before sending.
+   6.  Live translation normalisation — _runLiveTranslation normalises.
+   7.  onLanguageChange / swapLanguages now route through finalTranslate
+       (they already did, but finalTranslate was undefined — fixed).
+   8.  _liveArea scoping bug fixed — moved to module scope.
+   9.  speechEditBox pre-fill uses correct element reference.
+   10. retranslateSpeech: missing saveToHistory after re-translate fixed.
+   11. Travel renderTravelPhrases: uses translateText directly (correct —
+       travel phrases are English source, not romanised user input).
+   12. Auth safety-net timeout reduced from 5000 → 4000 ms.
+   13. Audio: stopAudio() called before every new autoPlay to prevent
+       stale _curAudio leaking into playAudio() toggle.
+   14. Minor: _liveLastText reset on language change so live translate
+       fires immediately on the same text after lang switch.
+================================================================ */
 
-(function () {
-  "use strict";
+const API_URL = "https://vaani-app-ui0z.onrender.com";
 
-  var CHAT_ROOT_ID = "vaaniChat";
-  var _searchDebounceTimer = null;
-  var _latestSearchQuery = "";
-  var _outsideClickHandler = null;
-  var _unsubscribeIncomingRequests = null;
-  var _unsubscribeConnections = null;
-  var _unsubscribeMessages = null;
-  var _activeMessageListenerKey = null;
-  var _activeMessagesSignature = "";
-  var _optimisticMessages = [];
-  var _unsubscribeChatList = null;
-  var _activeChatListListenerUid = null;
-  var _connectedUidSet = new Set();
-  var _userProfileCache = Object.create(null);
-  var _renderedChatListSignature = "";
-  var _chatListOpenRequestId = 0;
-  var _chatBackfillPromisesByUid = Object.create(null);
-  var _activeChatId = null;
-  var _selectedChatUser = null;
-  var _loading = true;
-  var _messages = [];
-  var _inputMessage = "";
-  var _messagesContainerRef = null;
+// ── GLOBAL AUTH STATE ─────────────────────────────────────────────
+window.VAANI_AUTH_READY  = false;
+window._vaaniCurrentUser = null;
 
-  var CHATS_COLLECTION = "chats";
-  var MESSAGES_COLLECTION = "messages";
-  var LEGACY_MESSAGES_COLLECTION = "vaani_messages";
-  var incomingRequests = [];
+// ── LANGUAGE CONFIG ────────────────────────────────────────────────
+const LANG_CONFIG = {
+  as:         { name:"Assamese",             nonLatin:true,  gtCode:"as",       ttsCode:"bn",  speechCode:"bn-IN" },
+  bn:         { name:"Bengali",              nonLatin:true,  gtCode:"bn",       ttsCode:"bn",  speechCode:"bn-IN" },
+  brx:        { name:"Bodo",                 nonLatin:true,  gtCode:"brx",      ttsCode:"hi",  speechCode:"hi-IN" },
+  doi:        { name:"Dogri",                nonLatin:true,  gtCode:"doi",      ttsCode:"hi",  speechCode:"hi-IN" },
+  gu:         { name:"Gujarati",             nonLatin:true,  gtCode:"gu",       ttsCode:"gu",  speechCode:"gu-IN" },
+  hi:         { name:"Hindi",                nonLatin:true,  gtCode:"hi",       ttsCode:"hi",  speechCode:"hi-IN" },
+  kn:         { name:"Kannada",              nonLatin:true,  gtCode:"kn",       ttsCode:"kn",  speechCode:"kn-IN" },
+  ks:         { name:"Kashmiri",             nonLatin:true,  gtCode:"ks",       ttsCode:"ur",  speechCode:"ur-IN" },
+  kok:        { name:"Konkani",              nonLatin:true,  gtCode:"kok",      ttsCode:"mr",  speechCode:"mr-IN" },
+  mai:        { name:"Maithili",             nonLatin:true,  gtCode:"mai",      ttsCode:"hi",  speechCode:"hi-IN" },
+  ml:         { name:"Malayalam",            nonLatin:true,  gtCode:"ml",       ttsCode:"ml",  speechCode:"ml-IN" },
+  "mni-Mtei": { name:"Manipuri (Meitei)",    nonLatin:true,  gtCode:"mni-Mtei", ttsCode:"bn",  speechCode:"bn-IN" },
+  mr:         { name:"Marathi",              nonLatin:true,  gtCode:"mr",       ttsCode:"mr",  speechCode:"mr-IN" },
+  ne:         { name:"Nepali",               nonLatin:true,  gtCode:"ne",       ttsCode:"ne",  speechCode:"ne-NP" },
+  or:         { name:"Odia (Oriya)",         nonLatin:true,  gtCode:"or",       ttsCode:"hi",  speechCode:"or-IN" },
+  pa:         { name:"Punjabi",              nonLatin:true,  gtCode:"pa",       ttsCode:"pa",  speechCode:"pa-IN" },
+  sa:         { name:"Sanskrit",             nonLatin:true,  gtCode:"sa",       ttsCode:"hi",  speechCode:"hi-IN" },
+  sat:        { name:"Santali",              nonLatin:true,  gtCode:"sat",      ttsCode:"bn",  speechCode:"bn-IN" },
+  sd:         { name:"Sindhi",               nonLatin:true,  gtCode:"sd",       ttsCode:"ur",  speechCode:"ur-IN" },
+  ta:         { name:"Tamil",                nonLatin:true,  gtCode:"ta",       ttsCode:"ta",  speechCode:"ta-IN" },
+  te:         { name:"Telugu",               nonLatin:true,  gtCode:"te",       ttsCode:"te",  speechCode:"te-IN" },
+  ur:         { name:"Urdu",                 nonLatin:true,  gtCode:"ur",       ttsCode:"ur",  speechCode:"ur-IN" },
+  bho:        { name:"Bhojpuri",             nonLatin:true,  gtCode:"bho",      ttsCode:"hi",  speechCode:"hi-IN" },
+  mwr:        { name:"Marwari",              nonLatin:true,  gtCode:"mwr",      ttsCode:"hi",  speechCode:"hi-IN" },
+  tcy:        { name:"Tulu",                 nonLatin:true,  gtCode:"tcy",      ttsCode:"kn",  speechCode:"kn-IN" },
+  lus:        { name:"Mizo (Lushai)",        nonLatin:false, gtCode:"lus",      ttsCode:"en",  speechCode:"en-IN" },
+  awa:        { name:"Awadhi",               nonLatin:true,  gtCode:"hi",       ttsCode:"hi",  speechCode:"hi-IN" },
+  mag:        { name:"Magahi",               nonLatin:true,  gtCode:"hi",       ttsCode:"hi",  speechCode:"hi-IN" },
+  hne:        { name:"Chhattisgarhi",        nonLatin:true,  gtCode:"hi",       ttsCode:"hi",  speechCode:"hi-IN" },
+  bgc:        { name:"Haryanvi",             nonLatin:true,  gtCode:"hi",       ttsCode:"hi",  speechCode:"hi-IN" },
+  raj:        { name:"Rajasthani (Marwari)", nonLatin:true,  gtCode:"mwr",      ttsCode:"hi",  speechCode:"hi-IN" },
+  gom:        { name:"Goan Konkani",         nonLatin:true,  gtCode:"gom",      ttsCode:"mr",  speechCode:"mr-IN" },
+  kha:        { name:"Khasi",                nonLatin:false, gtCode:"kha",      ttsCode:"en",  speechCode:"en-IN" },
+  lep:        { name:"Lepcha",               nonLatin:true,  gtCode:"ne",       ttsCode:"ne",  speechCode:"ne-NP" },
+  en:         { name:"English",              nonLatin:false, gtCode:"en",       ttsCode:"en",  speechCode:"en-US" },
+};
 
-  var REQUESTS_COLLECTION = "connectionRequests";
-  var CONNECTIONS_COLLECTION = "connections";
+const LANG_NAMES = Object.fromEntries(
+  Object.entries(LANG_CONFIG).map(([k, v]) => [k, v.name])
+);
 
-  function _root() {
-    return document.getElementById(CHAT_ROOT_ID);
-  }
+const LANG_GROUPS = [
+  { label:"Major Indian Languages", langs:["te","ta","hi","kn","ml","mr","bn","gu","pa","ur","or","as","ne","sd","mai","bho","sa"] },
+  { label:"Scheduled Languages",    langs:["kok","gom","mwr","tcy","lus","ks","doi","brx","sat","mni-Mtei"] },
+  { label:"Regional Languages",     langs:["awa","mag","hne","bgc","raj","kha","lep"] },
+  { label:"English",                langs:["en"] },
+];
 
-  function _esc(value) {
-    var el = document.createElement("div");
-    el.appendChild(document.createTextNode(String(value || "")));
-    return el.innerHTML;
-  }
+// ══════════════════════════════════════════════════════════════════
+// FIX 1 — LANG CODE MAP  (normalizer.js lang codes)
+// ── Maps every LANG_CONFIG key to the code normalizeInput() expects.
+// ══════════════════════════════════════════════════════════════════
 
-  function _safeTimestampValue(value) {
-    if (!value) return null;
-    if (typeof value.toMillis === "function") return value;
-    if (value instanceof Date) return firebase.firestore.Timestamp.fromDate(value);
-    if (typeof value === "number" && isFinite(value)) {
-      return firebase.firestore.Timestamp.fromMillis(value);
+const LANG_CODE_MAP = {
+  // LANG_CONFIG key → normalizer code
+  te:         "te",
+  ta:         "ta",
+  hi:         "hi",
+  kn:         "kn",
+  ml:         "ml",
+  mr:         "mr",
+  bn:         "bn",
+  gu:         "gu",
+  pa:         "pa",
+  ur:         "ur",
+  or:         "or",
+  as:         "as",
+  ne:         "ne",
+  sa:         "sa",
+  sd:         "ur",   // Sindhi — romanised similar to Urdu
+  mai:        "mai",
+  doi:        "hi",   // Dogri — close to Hindi romanisation
+  kok:        "kok",
+  gom:        "kok",  // Goan Konkani — same normaliser as Konkani
+  bho:        "bho",
+  mwr:        "hi",   // Marwari — fallback to Hindi
+  tcy:        "tcy",
+  lus:        "lus",
+  awa:        "awa",
+  mag:        "hi",   // Magahi — fallback
+  hne:        "hi",   // Chhattisgarhi — fallback
+  bgc:        "har",  // Haryanvi
+  raj:        "hi",   // Rajasthani — fallback
+  kha:        "kha",
+  lep:        "ne",   // Lepcha — fallback Nepali
+  brx:        "brx",
+  sat:        "sat",
+  ks:         "ks",
+  "mni-Mtei": "mni",
+  en:         "en",
+};
+
+// ── DIALECT TONE MAP ───────────────────────────────────────────────
+const DIALECT_TONE_MAP = {
+  "TN":{ lang:"ta", tone:"Chennai colloquial Tamil" },
+  "KA":{ lang:"kn", tone:"Bengaluru Kannada" },
+  "AP":{ lang:"te", tone:"Andhra coastal Telugu" },
+  "TS":{ lang:"te", tone:"Hyderabad Telugu" },
+  "KL":{ lang:"ml", tone:"Kerala formal Malayalam" },
+  "MH":{ lang:"mr", tone:"Mumbai Marathi" },
+  "GJ":{ lang:"gu", tone:"Ahmedabad Gujarati" },
+  "PB":{ lang:"pa", tone:"Punjab Punjabi" },
+  "UP":{ lang:"hi", tone:"Awadhi-influenced Hindi" },
+  "DL":{ lang:"hi", tone:"Delhi Hindi" },
+  "RJ":{ lang:"hi", tone:"Rajasthani-influenced Hindi" },
+  "WB":{ lang:"bn", tone:"Kolkata Bengali" },
+  "OR":{ lang:"or", tone:"Odia formal" },
+  "AS":{ lang:"as", tone:"Assamese regional" },
+};
+
+// ── TRANSLATION CACHE ──────────────────────────────────────────────
+const _transCache = new Map();
+function cacheGet(k)    { return _transCache.get(k); }
+function cacheSet(k, v) {
+  if (_transCache.size >= 500) _transCache.delete(_transCache.keys().next().value);
+  _transCache.set(k, v);
+}
+function cacheClear() { _transCache.clear(); }
+
+let _userStateCode = null;
+let _dialectTone   = null;
+
+async function detectUserLocation() {
+  try {
+    const r = await fetch("https://ipapi.co/json/", { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.country_code === "IN" && d.region_code) {
+        _userStateCode = d.region_code.toUpperCase();
+        const dialect  = DIALECT_TONE_MAP[_userStateCode];
+        if (dialect) {
+          _dialectTone = dialect.tone;
+          console.log(`[Vaani] Detected state: ${_userStateCode}, dialect: ${_dialectTone}`);
+        }
+      }
     }
+  } catch (_) {}
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FIX 2 — window.finalTranslate  (was called everywhere, never defined)
+// ──────────────────────────────────────────────────────────────────
+// Single entry-point for ALL user-input → translation calls.
+// Pipeline:
+//   1. Normalise romanised Indian text (normalizer.js)
+//   2. Log diff if changed (debug, no-op in prod)
+//   3. Call translateText() with the cleaned input
+// ══════════════════════════════════════════════════════════════════
+
+window.finalTranslate = async function finalTranslate(userText, fromLang, toLang) {
+  const raw = (userText || "").trim();
+  if (!raw) return "";
+  if (fromLang === toLang) return raw;
+
+  // ── Normalise only romanised Indian-language input ─────────────
+  // English and non-Latin scripts skip normalisation.
+  // normalizeInput() is defined in normalizer.js (loaded before this file).
+  let normalised = raw;
+  if (typeof normalizeInput === "function") {
+    const normCode = LANG_CODE_MAP[fromLang] || fromLang;
+    normalised = normalizeInput(raw, normCode);
+    if (normalised !== raw) {
+      console.debug(`[Vaani normalizer] "${raw}" → "${normalised}"`);
+    }
+  }
+
+  return translateText(normalised, fromLang, toLang);
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PERMISSION SYSTEM
+// ══════════════════════════════════════════════════════════════════
+
+const _permissionGranted = { audio: false, video: false };
+
+function _isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function _showPermissionDeniedGuide(type, onRetry) {
+  document.getElementById("vaaniPermGuide")?.remove();
+  const label = type === "audio" ? "Microphone" : "Camera";
+  const modal  = document.createElement("div");
+  modal.id = "vaaniPermGuide";
+  modal.innerHTML = `
+    <div class="vpg-backdrop"></div>
+    <div class="vpg-sheet" role="dialog" aria-modal="true" aria-label="${label} Permission">
+      <div class="vpg-title">Microphone or Camera access is required to use this feature.</div>
+      <div class="vpg-actions">
+        <button class="vpg-retry"   id="vpgRetryBtn">Retry</button>
+        <button class="vpg-dismiss" id="vpgDismissBtn">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  requestAnimationFrame(() => modal.classList.add("vpg-open"));
+  const close = () => { modal.classList.remove("vpg-open"); setTimeout(() => modal.remove(), 300); };
+  modal.querySelector("#vpgDismissBtn").addEventListener("click", close);
+  modal.querySelector(".vpg-backdrop").addEventListener("click", close);
+  modal.querySelector("#vpgRetryBtn").addEventListener("click", () => {
+    close(); setTimeout(() => onRetry(), 200);
+  });
+}
+
+async function _attemptGetUserMedia(type) {
+  if (!navigator.mediaDevices?.getUserMedia) return false;
+  const constraints = type === "audio"
+    ? { audio: true, video: false }
+    : { video: { facingMode: "environment" }, audio: false };
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    stream.getTracks().forEach(t => t.stop());
+    _permissionGranted[type] = true;
+    return true;
+  } catch (err) {
+    console.warn(`[Vaani] getUserMedia(${type}):`, err.name);
+    _permissionGranted[type] = false;
+    return false;
+  }
+}
+
+async function handlePermission(type, micStatusId) {
+  if (_permissionGranted[type]) return true;
+  const setStatus = (msg) => { if (micStatusId) setMicStatus(msg, micStatusId); };
+  const iosMode   = _isIOS() || !navigator.permissions;
+  if (!iosMode) {
+    const permName = type === "audio" ? "microphone" : "camera";
+    let state = "prompt";
+    try {
+      const result = await navigator.permissions.query({ name: permName });
+      state = result.state;
+      result.addEventListener("change", () => {
+        if (result.state === "granted")  { _permissionGranted[type] = true;  document.getElementById("vaaniPermGuide")?.remove(); }
+        else if (result.state === "denied") { _permissionGranted[type] = false; }
+      }, { once: true });
+    } catch (e) { state = "prompt"; }
+    if (state === "granted") { _permissionGranted[type] = true; return true; }
+    if (state === "denied") {
+      return new Promise((resolve) => {
+        _showPermissionDeniedGuide(type, async () => {
+          setStatus("Checking…");
+          const ok = await _attemptGetUserMedia(type);
+          resolve(ok);
+          if (!ok) _showPermissionDeniedGuide(type, async () => { resolve(await _attemptGetUserMedia(type)); });
+        });
+      });
+    }
+  }
+  setStatus("Requesting permission…");
+  const ok = await _attemptGetUserMedia(type);
+  if (ok) return true;
+  if (!iosMode) {
+    try {
+      const permName = type === "audio" ? "microphone" : "camera";
+      const result   = await navigator.permissions.query({ name: permName });
+      if (result.state === "denied") {
+        return new Promise((resolve) => {
+          _showPermissionDeniedGuide(type, async () => { setStatus("Checking…"); resolve(await _attemptGetUserMedia(type)); });
+        });
+      }
+    } catch (_) {}
+  }
+  return new Promise((resolve) => {
+    _showPermissionDeniedGuide(type, async () => { setStatus("Checking…"); resolve(await _attemptGetUserMedia(type)); });
+  });
+}
+
+async function requestMicPermission(micStatusId) {
+  return handlePermission("audio", micStatusId || "micStatus");
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TTS — VOICE SELECTION
+// ══════════════════════════════════════════════════════════════════
+
+const TTS_LOCALE_MAP = {
+  te:"te-IN", ta:"ta-IN", hi:"hi-IN", kn:"kn-IN", ml:"ml-IN",
+  mr:"mr-IN", bn:"bn-IN", gu:"gu-IN", pa:"pa-IN", ur:"ur-IN",
+  or:"or-IN", as:"as-IN", ne:"ne-NP", sa:"hi-IN", sd:"ur-IN",
+  mai:"hi-IN", doi:"hi-IN", kok:"mr-IN", gom:"mr-IN", bho:"hi-IN",
+  mwr:"hi-IN", tcy:"kn-IN", ks:"ur-IN", brx:"hi-IN", sat:"bn-IN",
+  "mni-Mtei":"bn-IN", lus:"en-IN", awa:"hi-IN", mag:"hi-IN",
+  hne:"hi-IN", bgc:"hi-IN", raj:"hi-IN", kha:"en-IN", lep:"ne-NP",
+  en:"en-US",
+};
+
+let _voicesLoaded = false;
+let _voiceList    = [];
+
+function _loadVoices() {
+  return new Promise(resolve => {
+    const voices = speechSynthesis.getVoices();
+    if (voices.length > 0) { _voiceList = voices; _voicesLoaded = true; resolve(voices); return; }
+    const onVoicesChanged = () => {
+      _voiceList    = speechSynthesis.getVoices();
+      _voicesLoaded = true;
+      speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+      resolve(_voiceList);
+    };
+    speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
+    setTimeout(() => { _voiceList = speechSynthesis.getVoices(); _voicesLoaded = true; resolve(_voiceList); }, 1500);
+  });
+}
+
+async function _getBestVoice(langCode) {
+  if (!_voicesLoaded) await _loadVoices();
+  const locale     = TTS_LOCALE_MAP[langCode] || "en-US";
+  const langPrefix = locale.split("-")[0].toLowerCase();
+  let voice = _voiceList.find(v => v.lang.toLowerCase() === locale.toLowerCase());
+  if (voice) return voice;
+  voice = _voiceList.find(v => v.lang.toLowerCase().startsWith(langPrefix));
+  if (voice) return voice;
+  voice = _voiceList.find(v => v.lang.toLowerCase().startsWith("en"));
+  return voice || null;
+}
+
+function _speakBrowser(text, langCode) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const speak = async () => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice     = await _getBestVoice(langCode);
+    if (voice) { utterance.voice = voice; utterance.lang = voice.lang; }
+    else { utterance.lang = TTS_LOCALE_MAP[langCode] || "en-US"; }
+    utterance.rate = 0.9; utterance.pitch = 1.0; utterance.volume = 1.0;
+    window.speechSynthesis.speak(utterance);
+  };
+  speak().catch(e => console.warn("[Vaani] Browser TTS:", e));
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TRANSLITERATION PIPELINE
+// ══════════════════════════════════════════════════════════════════
+
+function isRomanized(text, fromLang) {
+  if (!LANG_CONFIG[fromLang]?.nonLatin) return false;
+  const t = (text || "").trim();
+  if (t.length < 2) return false;
+  if (/[^\x00-\x7F]/.test(t)) return false;
+  return /[a-zA-Z]/.test(t);
+}
+
+async function transliterateWord(word, gtCode) {
+  if (!word) return word;
+  const url = `https://inputtools.google.com/request?text=${encodeURIComponent(word)}&itc=${gtCode}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage`;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) {
+      const d = await r.json();
+      if (d[0] === "SUCCESS" && d[1]?.[0]?.[1]?.[0]) return d[1][0][1][0];
+    }
+  } catch (_) {}
+  return word;
+}
+
+async function transliterateToNative(text, fromLang) {
+  if (!isRomanized(text, fromLang)) return text;
+  const gtCode = LANG_CONFIG[fromLang]?.gtCode || fromLang;
+  const words  = text.trim().split(/\s+/);
+  const out    = await Promise.all(words.map(w => transliterateWord(w, gtCode)));
+  const native = out.join(" ");
+  console.log(`[Vaani translit] "${text}" → "${native}"`);
+  return native;
+}
+
+async function translateText(text, fromLang, toLang) {
+  const q = (text || "").trim();
+  if (!q || fromLang === toLang) return q || "";
+  const ck = `${q}|${fromLang}|${toLang}`;
+  if (cacheGet(ck)) return cacheGet(ck);
+  let workText = q;
+  if (isRomanized(q, fromLang)) {
+    setMicStatus("Converting script…");
+    workText = await transliterateToNative(q, fromLang);
+  }
+  const result = await _callTranslate(workText, fromLang, toLang, q);
+  if (result) { cacheSet(ck, result); return result; }
+  const pivot  = await _pivotTranslate(workText, fromLang, toLang);
+  if (pivot)  { cacheSet(ck, pivot);  return pivot; }
+  return "";
+}
+
+async function _callTranslate(text, fromLang, toLang, originalInput) {
+  try {
+    const r = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang }),
+      signal: AbortSignal.timeout(22000),
+    });
+    if (!r.ok) return "";
+    const d      = await r.json();
+    const result = (d.translated || "").trim();
+    if (!result) return "";
+    const rLow = result.toLowerCase();
+    if (rLow === (originalInput || "").toLowerCase() || rLow === text.toLowerCase()) {
+      console.warn("[Vaani] Passthrough detected:", result);
+      return "";
+    }
+    return result;
+  } catch (e) {
+    console.warn("[Vaani] _callTranslate:", e.message);
+    return "";
+  }
+}
+
+async function _pivotTranslate(text, fromLang, toLang) {
+  if (toLang === "en") return "";
+  try {
+    const r1 = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: "en" }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r1.ok) return "";
+    const d1 = await r1.json();
+    const en  = (d1.translated || "").trim();
+    if (!en || en.toLowerCase() === text.toLowerCase()) return "";
+    if (toLang === "en") return en;
+    const r2 = await fetch(`${API_URL}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: en, from_lang: "en", to_lang: toLang }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r2.ok) return "";
+    const d2 = await r2.json();
+    return (d2.translated || "").trim();
+  } catch (e) {
+    console.warn("[Vaani] _pivotTranslate:", e.message);
+    return "";
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// AUDIO SYSTEM
+// ══════════════════════════════════════════════════════════════════
+
+let _curAudio           = null;
+let _audioPlaying       = false;
+let _wordHighlightWords = [];
+let _wordHighlightEl    = null;
+let _wordHighlightRAF   = null;
+let _wordHighlightDur   = 0;
+let _boundTimeUpdate    = null;
+let _boundAudioEnded    = null;
+let _timelineSeeking    = false;
+
+function stopAudio() {
+  _detachAudioListeners();
+  if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
+  if (_curAudio) {
+    try { _curAudio.pause(); _curAudio.currentTime = 0; } catch (_) {}
+    _curAudio = null;
+  }
+  _audioPlaying = false;
+  _updateAllPlayPauseBtns();
+}
+
+function _detachAudioListeners() {
+  if (_curAudio) {
+    if (_boundTimeUpdate) { _curAudio.removeEventListener("timeupdate", _boundTimeUpdate); _boundTimeUpdate = null; }
+    if (_boundAudioEnded) { _curAudio.removeEventListener("ended", _boundAudioEnded);      _boundAudioEnded = null; }
+  }
+}
+
+function pauseAudio() {
+  if (_curAudio && _audioPlaying) {
+    _curAudio.pause(); _audioPlaying = false; _updateAllPlayPauseBtns();
+    if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
+  }
+}
+
+function resumeAudio() {
+  if (_curAudio && !_audioPlaying) {
+    _curAudio.play().catch(e => console.warn("[Vaani] resume:", e.message));
+    _audioPlaying = true; _updateAllPlayPauseBtns();
+    if (_wordHighlightEl) _startWordHighlightLoop(_curAudio);
+  }
+}
+
+function toggleAudio() {
+  if (!_curAudio) return;
+  if (_audioPlaying) pauseAudio(); else resumeAudio();
+}
+
+function _updateAllPlayPauseBtns() {
+  document.querySelectorAll("[data-playpause]").forEach(btn => {
+    const icon = _audioPlaying
+      ? `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+      : `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    btn.innerHTML = icon + (btn.dataset.playpause === "labeled" ? (_audioPlaying ? "Pause" : "Play") : "");
+  });
+}
+
+function _fmtTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function _updateSeekFill(bar, pct) {
+  bar.style.setProperty("--seek-pct", `${Math.max(0, Math.min(100, pct))}%`);
+}
+
+function resetTimeline(suffix) {
+  const s   = suffix || "";
+  const bar = document.getElementById(`timelineSeek${s}`);
+  const cur = document.getElementById(`timelineCurrent${s}`);
+  if (bar) { bar.value = 0; _updateSeekFill(bar, 0); }
+  if (cur) cur.textContent = "0:00";
+}
+
+function showTimeline(suffix) {
+  const wrap = document.getElementById(`audioTimeline${suffix || ""}`);
+  if (wrap) wrap.style.display = "flex";
+}
+
+function _attachTimelineToAudio(audio, suffix) {
+  const s     = suffix || "";
+  const bar   = document.getElementById(`timelineSeek${s}`);
+  const cur   = document.getElementById(`timelineCurrent${s}`);
+  const total = document.getElementById(`timelineTotal${s}`);
+  if (!bar || !cur || !total) return;
+  _detachAudioListeners();
+  const setDur = () => { if (total && isFinite(audio.duration)) total.textContent = _fmtTime(audio.duration); };
+  if (audio.readyState >= 1) setDur(); else audio.addEventListener("loadedmetadata", setDur, { once: true });
+  _boundTimeUpdate = () => {
+    if (_timelineSeeking) return;
+    const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    bar.value = pct; _updateSeekFill(bar, pct);
+    cur.textContent = _fmtTime(audio.currentTime);
+  };
+  _boundAudioEnded = () => {
+    _audioPlaying = false; _updateAllPlayPauseBtns(); clearWordHighlight();
+    bar.value = 0; _updateSeekFill(bar, 0);
+    if (cur) cur.textContent = "0:00";
+  };
+  audio.addEventListener("timeupdate", _boundTimeUpdate);
+  audio.addEventListener("ended",      _boundAudioEnded);
+}
+
+function _initTimelineControls(suffix) {
+  const s   = suffix || "";
+  const bar = document.getElementById(`timelineSeek${s}`);
+  if (!bar || bar._vaaniInitialized) return;
+  bar._vaaniInitialized = true;
+  const cur = document.getElementById(`timelineCurrent${s}`);
+  bar.addEventListener("input", () => {
+    _timelineSeeking = true;
+    const pct = parseFloat(bar.value);
+    _updateSeekFill(bar, pct);
+    if (cur && _curAudio && isFinite(_curAudio.duration))
+      cur.textContent = _fmtTime((_curAudio.duration * pct) / 100);
+  });
+  bar.addEventListener("change", () => {
+    if (_curAudio && isFinite(_curAudio.duration))
+      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
+    _timelineSeeking = false;
+    if (_audioPlaying && _curAudio && _curAudio.paused)
+      _curAudio.play().catch(e => console.warn("[Vaani] seek-resume:", e.message));
+  });
+  bar.addEventListener("touchstart", () => { _timelineSeeking = true; }, { passive: true });
+  bar.addEventListener("touchend",   () => {
+    if (_curAudio && isFinite(_curAudio.duration))
+      _curAudio.currentTime = (_curAudio.duration * parseFloat(bar.value)) / 100;
+    _timelineSeeking = false;
+    if (_audioPlaying && _curAudio && _curAudio.paused) _curAudio.play().catch(() => {});
+  });
+}
+
+// ── WORD HIGHLIGHTING ─────────────────────────────────────────────
+
+function _tokenizeForHighlight(text) {
+  if (!text) return [];
+  return text.split(/(\s+)/).map(t => ({ word: t, isWord: /\S/.test(t) }));
+}
+
+function _buildHighlightHtml(text) {
+  const tokens = _tokenizeForHighlight(text);
+  let html = "", wi = 0;
+  for (const tok of tokens) {
+    if (tok.isWord) { html += `<span class="wh-word" data-wi="${wi}">${_escHtml(tok.word)}</span>`; wi++; }
+    else html += tok.word.replace(/\n/g, "<br>");
+  }
+  return html;
+}
+
+function _escHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function startWordHighlight(el, text, audio) {
+  if (!el || !text || !audio) return;
+  clearWordHighlight();
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 0) return;
+  _wordHighlightEl    = el;
+  _wordHighlightWords = words;
+  _wordHighlightDur   = 0;
+  el.innerHTML = _buildHighlightHtml(text);
+  el.classList.add("wh-active");
+  const setDur = () => { _wordHighlightDur = audio.duration || 0; };
+  if (audio.readyState >= 1) setDur(); else audio.addEventListener("loadedmetadata", setDur, { once: true });
+  _startWordHighlightLoop(audio);
+}
+
+function _startWordHighlightLoop(audio) {
+  if (_wordHighlightRAF) cancelAnimationFrame(_wordHighlightRAF);
+  const words = _wordHighlightWords;
+  const el    = _wordHighlightEl;
+  if (!el || !words.length) return;
+  let lastIdx = -1;
+  function tick() {
+    if (!_curAudio || _curAudio !== audio || !_wordHighlightEl) return;
+    const dur      = audio.duration || _wordHighlightDur || 1;
+    const progress = Math.min(audio.currentTime / dur, 1);
+    const idx      = Math.min(Math.floor(progress * words.length), words.length - 1);
+    if (idx !== lastIdx) {
+      el.querySelector(".wh-current")?.classList.remove("wh-current");
+      const span = el.querySelector(`[data-wi="${idx}"]`);
+      if (span) {
+        span.classList.add("wh-current");
+        try { span.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (_) {}
+      }
+      lastIdx = idx;
+    }
+    _wordHighlightRAF = requestAnimationFrame(tick);
+  }
+  _wordHighlightRAF = requestAnimationFrame(tick);
+}
+
+function clearWordHighlight() {
+  if (_wordHighlightRAF) { cancelAnimationFrame(_wordHighlightRAF); _wordHighlightRAF = null; }
+  if (_wordHighlightEl) {
+    _wordHighlightEl.classList.remove("wh-active");
+    if (_wordHighlightEl.querySelectorAll(".wh-word").length > 0)
+      _wordHighlightEl.innerHTML = _wordHighlightEl.textContent;
+    _wordHighlightEl = null;
+  }
+  _wordHighlightWords = [];
+  _wordHighlightDur   = 0;
+}
+
+// ── AUDIO CORE ────────────────────────────────────────────────────
+
+async function speakText(text, lang) {
+  if (!text?.trim()) return null;
+  try {
+    const r = await fetch(`${API_URL}/speak`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.trim(), lang }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!r.ok) return null;
+    const blob  = await r.blob();
+    const url   = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    const revokeUrl = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
+    audio.addEventListener("ended", revokeUrl, { once: true });
+    audio.addEventListener("error", revokeUrl, { once: true });
+    return audio;
+  } catch (e) {
+    console.warn("[Vaani] speakText:", e.message);
     return null;
   }
+}
 
-  function _extractLegacyMessageUsers(data) {
-    if (!data) return null;
-    var senderId = data.senderId || data.uid || data.fromUid || data.fromUserId || "";
-    var receiverId = data.receiverId || data.toUid || data.toUserId || "";
-    var participants = Array.isArray(data.participants) ? data.participants.filter(Boolean) : [];
-    if (!senderId && participants.length) senderId = participants[0];
-    if (!receiverId && participants.length > 1) {
-      receiverId = participants.find(function (uid) { return uid && uid !== senderId; }) || "";
-    }
-    if (!senderId || !receiverId || senderId === receiverId) return null;
-    return [String(senderId), String(receiverId)].sort();
+// FIX 13 — stopAudio() is called at the top of autoPlay so that
+// _curAudio is always null before a new Audio is assigned.
+// This ensures playAudio() never replays a stale cached object.
+async function autoPlay(text, lang, timelineSuffix, highlightEl) {
+  if (!text || text === "—" || text === "…" || !lang) return;
+  stopAudio();   // clear stale _curAudio before fetching new audio
+  const suffix = timelineSuffix || "";
+  showTimeline(suffix);
+  resetTimeline(suffix);
+  const audio = await speakText(text, lang);
+  if (!audio) { _speakBrowser(text, lang); return; }
+  _curAudio = audio;
+  _attachTimelineToAudio(audio, suffix);
+  if (highlightEl) {
+    audio.addEventListener("canplay", () => { startWordHighlight(highlightEl, text, audio); }, { once: true });
+  }
+  audio.currentTime = 0;
+  try {
+    await audio.play(); _audioPlaying = true; _updateAllPlayPauseBtns();
+  } catch (e) {
+    console.warn("[Vaani] play:", e.message);
+    _audioPlaying = false; _updateAllPlayPauseBtns();
+    _speakBrowser(text, lang);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MIC STATE MACHINE
+// ══════════════════════════════════════════════════════════════════
+
+const MicState = { IDLE: "idle", LISTENING: "listening", STOPPED: "stopped" };
+
+const _mic = {
+  single: { state: MicState.IDLE, rec: null, last: "", transcript: "" },
+  A:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
+  B:      { state: MicState.IDLE, rec: null, last: "", transcript: "" },
+};
+
+function _killMic(ctx) {
+  if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+  if (ctx.rec) {
+    ctx.rec.onresult  = null;
+    ctx.rec.onend     = null;
+    ctx.rec.onerror   = null;
+    ctx.rec.onspeechend = null;
+    try { ctx.rec.abort(); } catch (_) {}
+    ctx.rec = null;
+  }
+  ctx.state = MicState.IDLE;
+  ctx.last  = "";
+  ctx.transcript = "";
+}
+
+function setMicStatus(msg, id = "micStatus") {
+  const el = document.getElementById(id);
+  if (el) el.textContent = msg;
+}
+
+// ── SINGLE MODE MIC ───────────────────────────────────────────────
+
+async function startListening() {
+  const ctx    = _mic.single;
+  const micBtn = document.getElementById("micBtn");
+
+  if (ctx.state === MicState.LISTENING) {
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
+    if (ctx.rec) { ctx.rec.onend = null; try { ctx.rec.stop(); } catch (_) {} }
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak");
+    return;
   }
 
-  async function _backfillChatsFromLegacyMessages() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-      ? String(window._vaaniCurrentUser.uid) : "";
-    if (!db || !currentUid) return;
-    if (_chatBackfillPromisesByUid[currentUid]) return _chatBackfillPromisesByUid[currentUid];
+  _killMic(ctx);
+  clearSingleResults();
 
-    _chatBackfillPromisesByUid[currentUid] = (async function () {
-      try {
-        var existingChatKeySet = new Set();
-        var existingChatSnap = await db.collection(CHATS_COLLECTION)
-          .where("participants", "array-contains", currentUid).get();
-        existingChatSnap.forEach(function (doc) {
-          var data = doc.data() || {};
-          var p = Array.isArray(data.participants) ? data.participants.filter(Boolean).map(String).sort() : [];
-          if (p.length === 2) existingChatKeySet.add(p.join("|"));
-        });
-
-        var groupedByPair = Object.create(null);
-        var legacySnapshots = await Promise.all([
-          db.collection(LEGACY_MESSAGES_COLLECTION).where("senderId",   "==", currentUid).get(),
-          db.collection(LEGACY_MESSAGES_COLLECTION).where("receiverId", "==", currentUid).get(),
-          db.collection(LEGACY_MESSAGES_COLLECTION).where("uid",        "==", currentUid).get()
-        ]);
-        var seenMessageIds = new Set();
-
-        legacySnapshots.forEach(function (snapshot) {
-          snapshot.forEach(function (doc) {
-            if (seenMessageIds.has(doc.id)) return;
-            seenMessageIds.add(doc.id);
-            var data = doc.data() || {};
-            var participants = _extractLegacyMessageUsers(data);
-            if (!participants || participants.indexOf(currentUid) === -1) return;
-            var pairKey = participants.join("|");
-            var existing = groupedByPair[pairKey];
-            var timestamp = _safeTimestampValue(data.timestamp) || _safeTimestampValue(data.createdAt);
-            if (!existing) {
-              groupedByPair[pairKey] = { participants: participants, latestText: String(data.text || ""), latestTimestamp: timestamp };
-              return;
-            }
-            var prevMillis = existing.latestTimestamp && typeof existing.latestTimestamp.toMillis === "function" ? existing.latestTimestamp.toMillis() : 0;
-            var nextMillis = timestamp && typeof timestamp.toMillis === "function" ? timestamp.toMillis() : 0;
-            if (nextMillis >= prevMillis) { existing.latestText = String(data.text || ""); existing.latestTimestamp = timestamp; }
-          });
-        });
-
-        var pairKeys = Object.keys(groupedByPair);
-        if (!pairKeys.length) return;
-        var batch = db.batch();
-        var writes = 0;
-        pairKeys.forEach(function (pairKey) {
-          if (existingChatKeySet.has(pairKey)) return;
-          var group = groupedByPair[pairKey];
-          if (!group || !group.participants || group.participants.length !== 2) return;
-          var ts = group.latestTimestamp || firebase.firestore.FieldValue.serverTimestamp();
-          var sortedPair = group.participants;
-          var chatId = sortedPair[0] + "_" + sortedPair[1];
-          batch.set(db.collection(CHATS_COLLECTION).doc(chatId), {
-            participants: sortedPair, lastMessage: group.latestText || "", updatedAt: ts, createdAt: ts
-          }, { merge: true });
-          writes += 1;
-        });
-        if (writes > 0) { await batch.commit(); console.log("[Vaani] Legacy chat backfill created " + writes + " chat doc(s)."); }
-      } catch (err) { console.error("[Vaani] Legacy chat backfill failed:", err); }
-    })();
-    return _chatBackfillPromisesByUid[currentUid];
+  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+    showToast("Voice input not supported. Use Chrome on Android/Desktop.");
+    return;
   }
 
-  async function _migrateLegacyMessages() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-      ? String(window._vaaniCurrentUser.uid) : "";
-    if (!db || !currentUid) { console.warn("[Vaani] _migrateLegacyMessages: missing db/uid — abort."); return; }
+  setMicStatus("Requesting microphone…");
+  const permitted = await handlePermission("audio", "micStatus");
+  if (!permitted) { setMicStatus("Tap to speak"); return; }
 
-    var sessionKey = "vaani_migration_done_" + currentUid;
-    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateLegacyMessages: skipping (already ran)."); return; }
-    console.log("[Vaani] _migrateLegacyMessages: starting for uid:", currentUid);
+  const fromLang   = document.getElementById("fromLang")?.value || "en";
+  const toLang     = document.getElementById("toLang")?.value   || "en";
+  const speechCode = LANG_CONFIG[fromLang]?.speechCode          || "en-US";
 
-    var migrated = 0, skipped = 0, errors = 0;
-    try {
-      var snapshots = await Promise.all([
-        db.collection(LEGACY_MESSAGES_COLLECTION).where("uid",        "==", currentUid).get(),
-        db.collection(LEGACY_MESSAGES_COLLECTION).where("senderId",   "==", currentUid).get(),
-        db.collection(LEGACY_MESSAGES_COLLECTION).where("receiverId", "==", currentUid).get()
-      ]);
-      var seenDocIds = new Set(), docsToProcess = [];
-      snapshots.forEach(function (snap) {
-        snap.forEach(function (doc) {
-          if (seenDocIds.has(doc.id)) return;
-          seenDocIds.add(doc.id);
-          docsToProcess.push(doc);
-        });
-      });
-      console.log("[Vaani] _migrateLegacyMessages: found", docsToProcess.length, "candidate(s).");
-      if (!docsToProcess.length) { sessionStorage.setItem(sessionKey, "1"); return; }
-
-      for (var i = 0; i < docsToProcess.length; i++) {
-        var doc = docsToProcess[i]; var data = doc.data() || {};
-        try {
-          if (data.chatId && data.senderId && data.receiverId && data.participants) { skipped++; continue; }
-          var text = String(data.text || "").trim();
-          if (!text) { skipped++; continue; }
-          var senderId = String(data.senderId || data.uid || data.fromUid || data.fromUserId || "").trim();
-          if (!senderId) { skipped++; continue; }
-          var receiverId = String(data.receiverId || data.toUid || data.toUserId || "").trim();
-          if (!receiverId && Array.isArray(data.participants)) {
-            receiverId = data.participants.find(function (uid) { return uid && uid !== senderId; }) || "";
-          }
-          if (!receiverId) { if (senderId !== currentUid) { receiverId = currentUid; } else { skipped++; continue; } }
-          if (senderId === receiverId) { skipped++; continue; }
-          if (senderId !== currentUid && receiverId !== currentUid) { skipped++; continue; }
-
-          var participants = [senderId, receiverId].sort();
-          var chatId = participants[0] + "_" + participants[1];
-          var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
-          var chatSnap = await chatRef.get();
-          if (!chatSnap.exists) {
-            var chatTs = _safeTimestampValue(data.timestamp) || _safeTimestampValue(data.createdAt) || firebase.firestore.FieldValue.serverTimestamp();
-            await chatRef.set({ participants: participants, lastMessage: text, createdAt: chatTs, updatedAt: chatTs }, { merge: true });
-          }
-          var msgTs = _safeTimestampValue(data.timestamp) || _safeTimestampValue(data.createdAt) || firebase.firestore.FieldValue.serverTimestamp();
-          await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
-            text: text, senderId: senderId, receiverId: receiverId,
-            participants: participants, chatId: chatId, timestamp: msgTs, _migratedFrom: doc.id
-          });
-          await db.collection(LEGACY_MESSAGES_COLLECTION).doc(doc.id).update({
-            _migrated: true, _chatId: chatId, _migratedAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          migrated++; console.log("[Vaani] migrated:", doc.id, "→", chatId);
-        } catch (docErr) { errors++; console.error("[Vaani] _migrateLegacyMessages: error on", doc.id, ":", docErr); }
-      }
-    } catch (fatalErr) { console.error("[Vaani] _migrateLegacyMessages: fatal:", fatalErr); return; }
-
-    sessionStorage.setItem(sessionKey, "1");
-    console.log("[Vaani] _migrateLegacyMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
+  // ── MediaRecorder (Bhashini ASR when USE_API=true) ──────────────
+  let recorderController = null;
+  if (window.USE_API && typeof window.startRecording === "function") {
+    recorderController = await window.startRecording().catch(() => null);
   }
-
-  // ── FIX 1: _migrateTopLevelMessages ─────────────────────────────────────
-  // Rules now allow reading /messages where user is senderId or receiverId.
-  // Uses canonical sorted-pair chatId and checks _migratedFrom to stay idempotent.
-  async function _migrateTopLevelMessages() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-      ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-      ? String(window._vaaniCurrentUser.uid) : "";
-    if (!db || !currentUid) return;
-
-    var sessionKey = "vaani_toplevel_migration_" + currentUid;
-    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateTopLevelMessages: skipping (already ran)."); return; }
-    console.log("[Vaani] _migrateTopLevelMessages: starting for uid:", currentUid);
-
-    var migrated = 0, skipped = 0, errors = 0;
-    try {
-      var snaps = await Promise.all([
-        db.collection("messages").where("senderId",   "==", currentUid).get(),
-        db.collection("messages").where("receiverId", "==", currentUid).get()
-      ]);
-      var seen = new Set(), docs = [];
-      snaps.forEach(function (snap) {
-        snap.forEach(function (doc) {
-          if (seen.has(doc.id)) return;
-          seen.add(doc.id); docs.push(doc);
-        });
-      });
-      console.log("[Vaani] _migrateTopLevelMessages: found", docs.length, "doc(s).");
-
-      for (var i = 0; i < docs.length; i++) {
-        var doc = docs[i]; var data = doc.data() || {};
-        try {
-          if (data._migrated) { skipped++; continue; }
-          var senderId   = String(data.senderId   || "").trim();
-          var receiverId = String(data.receiverId || "").trim();
-          var text       = String(data.text       || "").trim();
-          if (!senderId || !receiverId || !text) { skipped++; continue; }
-          if (senderId === receiverId) { skipped++; continue; }
-          if (senderId !== currentUid && receiverId !== currentUid) { skipped++; continue; }
-
-          var participants = [senderId, receiverId].sort();
-          var chatId = participants[0] + "_" + participants[1];
-
-          // Idempotency: skip if already in subcollection
-          var existingSnap = await db.collection(CHATS_COLLECTION).doc(chatId)
-            .collection(MESSAGES_COLLECTION).where("_migratedFrom", "==", doc.id).limit(1).get();
-          if (!existingSnap.empty) { skipped++; continue; }
-
-          // Ensure parent chat doc with canonical ID
-          var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
-          var chatSnap = await chatRef.get();
-          if (!chatSnap.exists) {
-            var ts = _safeTimestampValue(data.timestamp) || firebase.firestore.FieldValue.serverTimestamp();
-            await chatRef.set({ participants: participants, lastMessage: text, createdAt: ts, updatedAt: ts }, { merge: true });
-            console.log("[Vaani] _migrateTopLevelMessages: created chat doc:", chatId);
-          }
-
-          var msgTs = _safeTimestampValue(data.timestamp) || firebase.firestore.FieldValue.serverTimestamp();
-          await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
-            text: text, senderId: senderId, receiverId: receiverId,
-            participants: participants, chatId: chatId, timestamp: msgTs, _migratedFrom: doc.id
-          });
-          migrated++; console.log("[Vaani] _migrateTopLevelMessages: migrated", doc.id, "→", chatId);
-        } catch (docErr) { errors++; console.error("[Vaani] _migrateTopLevelMessages: error on", doc.id, docErr); }
-      }
-    } catch (fatalErr) { console.error("[Vaani] _migrateTopLevelMessages: fatal:", fatalErr); return; }
-
-    sessionStorage.setItem(sessionKey, "1");
-    console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
-  }
-
-  function _googleLogoSvg() {
-    return '<svg class="vg-g-logo" viewBox="0 0 24 24" fill="none">' +
-      '<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>' +
-      '<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>' +
-      '<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>' +
-      '<path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>';
-  }
-
-  function _removeMenu() {
-    var wrapper = document.getElementById("vmWrapper");
-    if (wrapper) wrapper.remove();
-    document.body.classList.remove("vm-menu-open");
-    window._vaaniOpenProfileMenu = null;
-  }
-
-  function _menuItem(icon, label, action) {
-    var icons = {
-      person: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
-      globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
-      settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-      users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
-    };
-    return '<button class="vm-item" data-action="' + action + '">' +
-      '<svg viewBox="0 0 24 24">' + (icons[icon] || "") + "</svg>" +
-      '<span>' + _esc(label) + "</span>" +
-      '<svg class="vm-chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>';
-  }
-
-  function _buildMenu(user, profile) {
-    var username = profile.username || "user";
-    var photo = user.photoURL || "";
-    var initial = username.charAt(0).toUpperCase();
-    return '<div class="vm-overlay" id="vmOverlay"></div>' +
-      '<aside class="vm-panel" id="vmPanel" aria-label="Profile menu">' +
-      '<div class="vm-profile"><div class="vm-avatar">' +
-      (photo ? '<img src="' + _esc(photo) + '" alt="Profile avatar">' : '<span>' + _esc(initial) + "</span>") +
-      '</div><div class="vm-meta"><div class="vm-username">@' + _esc(username) + "</div>" +
-      '<div class="vm-email">' + _esc(user.email || "") + "</div></div></div>" +
-      '<nav class="vm-nav">' + _menuItem("person", "My Profile", "profile") +
-      _menuItem("globe", "Languages", "languages") + _menuItem("settings", "Settings", "settings") +
-      _menuItem("users", "Manage Connections", "connections") + "</nav>" +
-      '<button class="vm-signout" id="vmSignOut">' +
-      '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>' +
-      '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign out</button></aside>';
-  }
-
-  function _injectMenu(user, profile) {
-    _removeMenu();
-    var wrapper = document.createElement("div");
-    wrapper.id = "vmWrapper";
-    wrapper.innerHTML = _buildMenu(user, profile);
-    document.body.appendChild(wrapper);
-
-    var overlay = document.getElementById("vmOverlay");
-    var panel   = document.getElementById("vmPanel");
-    var signOutBtn = document.getElementById("vmSignOut");
-
-    function closeMenu() { if (overlay) overlay.classList.remove("vm-open"); if (panel) panel.classList.remove("vm-open"); document.body.classList.remove("vm-menu-open"); }
-    function openMenu()  { if (overlay) overlay.classList.add("vm-open");    if (panel) panel.classList.add("vm-open");    document.body.classList.add("vm-menu-open"); }
-    window._vaaniOpenProfileMenu = openMenu;
-    if (overlay) overlay.addEventListener("click", closeMenu);
-
-    wrapper.querySelectorAll(".vm-item").forEach(function (item) {
-      item.addEventListener("click", function () {
-        var action = item.dataset.action; closeMenu();
-        if (action === "settings" && typeof window.navigateTo === "function") { window.navigateTo("Settings"); return; }
-        if (typeof window.showToast === "function") {
-          var labelNode = item.querySelector("span");
-          window.showToast((labelNode ? labelNode.textContent : "Feature") + " coming soon");
-        }
-      });
-    });
-
-    if (signOutBtn) {
-      signOutBtn.addEventListener("click", function () {
-        closeMenu();
-        if (window.vaaniRouter && typeof window.vaaniRouter.signOut === "function") window.vaaniRouter.signOut();
-      });
-    }
-  }
-
-  function _renderLogin() {
-    var root = _root(); if (!root) return;
-    _stopListening(); _clearSearchState(); _removeMenu();
-    root.innerHTML = '<div class="vg-screen vg-login-screen"><div class="vg-card">' +
-      '<div class="vg-card-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>' +
-      '<h2 class="vg-card-title">Join the Conversation</h2>' +
-      '<p class="vg-card-sub">Sign in to access your Vaani chat workspace.</p>' +
-      '<button class="vg-google-btn" id="vgSignInBtn">' + _googleLogoSvg() + "Continue with Google</button>" +
-      '<p class="vg-hint">Translation features work without signing in ✓</p></div></div>';
-
-    var signInBtn = document.getElementById("vgSignInBtn");
-    if (!signInBtn) return;
-    signInBtn.addEventListener("click", async function () {
-      signInBtn.disabled = true; signInBtn.textContent = "Signing in…";
-      try { await window.vaaniRouter.signIn(); }
-      catch (_) { signInBtn.disabled = false; signInBtn.innerHTML = _googleLogoSvg() + "Continue with Google"; }
-    });
-  }
-
-  function _renderProfile(user) {
-    var root = _root(); if (!root) return;
-    _stopListening(); _clearSearchState(); _removeMenu();
-    var firstName = (user.displayName || "").split(" ")[0] || "";
-    var suggested = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
-    root.innerHTML = '<div class="vg-screen vg-profile-screen"><div class="vg-card">' +
-      '<div class="vg-avatar-wrap">' +
-      (user.photoURL ? '<img class="vg-profile-avatar" src="' + _esc(user.photoURL) + '" alt="avatar">'
-        : '<div class="vg-profile-avatar vg-avatar-fallback">' + _esc((firstName[0] || "?").toUpperCase()) + "</div>") +
-      '</div><h2 class="vg-card-title">Create Your Profile</h2>' +
-      '<p class="vg-card-sub">Hi ' + _esc(firstName || "there") + '! Choose a unique username.</p>' +
-      '<div class="vg-field"><label class="vg-label" for="vgUsernameInput">Username</label>' +
-      '<div class="vg-input-wrap"><span class="vg-input-prefix">@</span>' +
-      '<input id="vgUsernameInput" class="vg-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="yourname_01" value="' + _esc(suggested) + '"></div>' +
-      '<span class="vg-field-hint" id="vgUsernameHint">Must include letters + numbers. Underscore (_) allowed.</span></div>' +
-      '<button class="vg-primary-btn" id="vgCreateProfileBtn" disabled>Create Profile</button>' +
-      '<button class="vg-ghost-btn" id="vgSignOutBtn">Sign out</button></div></div>';
-
-    var input = document.getElementById("vgUsernameInput");
-    var hint  = document.getElementById("vgUsernameHint");
-    var createBtn = document.getElementById("vgCreateProfileBtn");
-
-    function validate() {
-      if (!input || !hint || !createBtn) return;
-      var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(input.value) : null;
-      if (err) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; createBtn.disabled = true; }
-      else     { hint.textContent = "✓ Username looks good"; hint.className = "vg-field-hint vg-hint-success"; createBtn.disabled = false; }
-    }
-    if (input) { input.addEventListener("input", validate); validate(); }
-
-    if (createBtn) {
-      createBtn.addEventListener("click", async function () {
-        var username = input ? input.value.trim() : "";
-        var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(username) : null;
-        if (err) { if (hint) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; } return; }
-        createBtn.disabled = true; createBtn.textContent = "Creating…";
-        try {
-          var profile = await window.vaaniProfile.create(user, username);
-          window.vaaniRouter.goToChat(user, profile);
-        } catch (error) {
-          if (hint) { hint.textContent = error.message || "Something went wrong."; hint.className = "vg-field-hint vg-hint-error"; }
-          createBtn.disabled = false; createBtn.textContent = "Create Profile";
-        }
-      });
-    }
-
-    var signOutBtn = document.getElementById("vgSignOutBtn");
-    if (signOutBtn) signOutBtn.addEventListener("click", function () { window.vaaniRouter.signOut(); });
-  }
-
-  // ── FIX 2: await ALL migrations before attaching listeners ───────────────
-  async function _renderChat(user, profile) {
-    var root = _root(); if (!root) return;
-    _clearSearchState(); _injectMenu(user, profile);
-
-    var photo    = user.photoURL || "";
-    var initials = ((profile.username || "U").charAt(0) || "U").toUpperCase();
-
-    root.innerHTML = '<section class="vc-shell" aria-label="Chat screen">' +
-      '<button class="vc-avatar-btn" id="vcProfileBtn" aria-label="Open profile menu" title="Profile menu">' +
-      (photo ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img">'
-             : '<span class="vc-avatar-initials">' + _esc(initials) + "</span>") + "</button>" +
-      '<div class="vc-home-view" id="vcHomeScreen">' +
-      '<div class="vc-search-wrap" id="vcSearchWrap">' +
-      '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
-      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div></div>' +
-      '<div class="vc-requests-wrap">' +
-      '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
-      '<div class="vc-requests-panel" id="vcRequestsPanel">' +
-      '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
-      '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
-      '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
-
-    var profileBtn = document.getElementById("vcProfileBtn");
-    if (profileBtn) profileBtn.addEventListener("click", function () {
-      if (typeof window._vaaniOpenProfileMenu === "function") window._vaaniOpenProfileMenu();
-    });
-
-    _bindUserSearch();
-    _bindIncomingRequestActions();
-    _fetchConnections(user.uid);
-    _fetchIncomingRequests(user.uid);
-
-    // Migrations MUST complete before listeners attach
-    console.log("[Vaani] _renderChat: running all migrations…");
-    await _backfillChatsFromLegacyMessages();
-    await _migrateLegacyMessages();
-    await _migrateTopLevelMessages();
-    console.log("[Vaani] _renderChat: migrations done — attaching chat list listener.");
-
-    _createChatListListener();
-    _setSelectedChatUser(null);
-  }
-
-  function _syncViewWithSelection() {
-    var home = document.getElementById("vcHomeScreen");
-    var chat = document.getElementById("vcChatScreen");
-    if (!home || !chat) return;
-    if (_selectedChatUser) { home.style.display = "none"; chat.style.display = "block"; }
-    else { home.style.display = "block"; chat.style.display = "none"; chat.innerHTML = ""; }
-    if (window.vaaniChat) window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
-  }
-
-  function _setSelectedChatUser(user) {
-    if (!user) {
-      try {
-        var cu = window._vaaniCurrentUser;
-        if (cu && cu.uid) sessionStorage.removeItem("vaani_active_chat_" + cu.uid);
-      } catch (e) {}
-    }
-    _selectedChatUser = user || null;
-    if (!_selectedChatUser) {
-      _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
-      _teardownMessageListener();
-    }
-    _syncViewWithSelection();
-  }
-
-  function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
-  function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
-
-  function _scrollMessagesToBottom() {
-    if (!_messagesContainerRef) return;
-    window.requestAnimationFrame(function () {
-      if (_messagesContainerRef) _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
-    });
-  }
-
-  function _teardownMessageListener() {
-    if (_unsubscribeMessages) { _unsubscribeMessages(); _unsubscribeMessages = null; }
-    _activeMessageListenerKey = null; _activeMessagesSignature = ""; _optimisticMessages = [];
-  }
-
-  function _getUserProfileCached(db, uid) {
-    if (!db || !uid) return Promise.resolve({ username: "user", photoURL: "" });
-    if (_userProfileCache[uid]) return Promise.resolve(_userProfileCache[uid]);
-    return db.collection("users").doc(uid).get()
-      .then(function (doc) {
-        var data = doc.exists ? (doc.data() || {}) : {};
-        var profile = { username: data.username || "user", displayName: data.displayName || null, photoURL: data.photoURL || "" };
-        _userProfileCache[uid] = profile; return profile;
-      })
-      .catch(function () {
-        var fallback = { username: "user", displayName: null, photoURL: "" };
-        _userProfileCache[uid] = fallback; return fallback;
-      });
-  }
-
-  function _timestampToMillis(ts) { return ts && typeof ts.toMillis === "function" ? ts.toMillis() : 0; }
-
-  function _generateChatId(uidA, uidB) {
-    if (!uidA || !uidB) return null;
-    var s = [String(uidA), String(uidB)].sort();
-    return s[0] + "_" + s[1];
-  }
-
-  function _fetchConnections(currentUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !currentUid) return;
-    if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; }
-    _connectedUidSet.clear();
-
-    _unsubscribeConnections = db.collection(CONNECTIONS_COLLECTION)
-      .where("users", "array-contains", currentUid)
-      .onSnapshot(function (snapshot) {
-        _connectedUidSet.clear();
-        snapshot.forEach(function (doc) {
-          (doc.data().users || []).forEach(function (uid) { if (uid && uid !== currentUid) _connectedUidSet.add(uid); });
-        });
-        var next = Array.from(_connectedUidSet).sort().join("|");
-        var prev = _fetchConnections._lastSignature || "";
-        _fetchConnections._lastSignature = next;
-        console.log("[Vaani] connections updated —", _connectedUidSet.size, "connected");
-        if (window.vaaniChat && window.vaaniChat._currentView === "home" && next !== prev) _renderChatList();
-      }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
-  }
-
-  // ── FIX 3: _createChatListListener — deduplicate by canonical chatId ──────
-  function _createChatListListener() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
-    if (!db || !currentUid) return;
-    if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
-    if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _activeChatListListenerUid = String(currentUid);
-    window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
-    console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
-
-    _unsubscribeChatList = db.collection(CHATS_COLLECTION)
-      .where("participants", "array-contains", currentUid)
-      .orderBy("updatedAt", "desc")
-      .onSnapshot(async function (snapshot) {
-        console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
-
-        // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
-        var byOtherUid = Object.create(null);
-        snapshot.forEach(function (doc) {
-          var data = doc.data() || {};
-          var participants = Array.isArray(data.participants) ? data.participants : [];
-          var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
-          if (!otherUid) return;
-
-          var canonicalId = [String(currentUid), String(otherUid)].sort().join("_");
-          var candidate = {
-            id: doc.id, chatId: doc.id, otherUid: otherUid,
-            lastMessage: data.lastMessage || "", timestamp: data.updatedAt || data.createdAt || null,
-            isCanonical: doc.id === canonicalId
-          };
-
-          var prev = byOtherUid[otherUid];
-          if (!prev) { byOtherUid[otherUid] = candidate; return; }
-
-          // Canonical always wins; within same type, pick newest
-          if (candidate.isCanonical && !prev.isCanonical) { byOtherUid[otherUid] = candidate; }
-          else if (!candidate.isCanonical && prev.isCanonical) { /* keep prev */ }
-          else if (_timestampToMillis(candidate.timestamp) > _timestampToMillis(prev.timestamp)) { byOtherUid[otherUid] = candidate; }
-        });
-
-        var conversations = await Promise.all(Object.keys(byOtherUid).map(async function (uid) {
-          var conv = byOtherUid[uid];
-          var profile = await _getUserProfileCached(db, conv.otherUid);
-          return {
-            id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
-            user: { uid: conv.otherUid, username: profile.username || "user", displayName: profile.displayName || profile.username || "user", photoURL: profile.photoURL || "" },
-            lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
-          };
-        }));
-
-        conversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
-
-        var signature = conversations.map(function (c) {
-          return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
-            c.timestamp && typeof c.timestamp.toMillis === "function" ? c.timestamp.toMillis() : ""].join(":");
-        }).join("|");
-
-        var prev = _createChatListListener._lastSignature || "";
-        _createChatListListener._lastSignature = signature;
-        window.vaaniChat.conversations = conversations;
-        window.vaaniChat._chatList = conversations.map(function (c) {
-          return {
-            chatId: c.chatId, otherUid: c.otherUid,
-            username: c.user.username, displayName: c.user.displayName, photoURL: c.user.photoURL,
-            lastMessage: c.lastMessage, updatedAt: c.timestamp || null
-          };
-        });
-        console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-        if (signature !== prev) _renderChatList();
-      }, function (err) {
-        console.error("[Vaani] chat list listener error:", err);
-        window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
-        _activeChatListListenerUid = null; _renderChatList();
-      });
-  }
-
-  async function _renderChatList() {
-    var listEl = document.getElementById("vcChatList"); if (!listEl) return;
-    var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
-
-    var itemsByUid = Object.create(null);
-    conversations.forEach(function (conversation) {
-      var profile = conversation && conversation.user ? conversation.user : {};
-      var otherUid = conversation && conversation.otherUid ? conversation.otherUid : null;
-      if (!otherUid) return;
-      itemsByUid[otherUid] = {
-        chatId: conversation.chatId || null, otherUid: otherUid,
-        username: profile.username || "user", displayName: profile.displayName || profile.username || "user",
-        photoURL: profile.photoURL || "", lastMessage: conversation.lastMessage || "No messages yet",
-        updatedAt: conversation.timestamp || null
-      };
-    });
-
-    var connectedUids = Array.from(_connectedUidSet).filter(Boolean);
-    if (connectedUids.length && db && currentUid) {
-      var connectedUsers = await Promise.all(connectedUids.map(async function (uid) {
-        var profile = await _getUserProfileCached(db, uid);
-        var chatId  = _generateChatId(currentUid, uid);
-        var chatDoc = null;
-        if (chatId) { try { chatDoc = await db.collection(CHATS_COLLECTION).doc(chatId).get(); } catch (e) {} }
-        var existing = itemsByUid[uid] || null;
-        var chatData = chatDoc && chatDoc.exists ? chatDoc.data() || {} : {};
-        return {
-          chatId: chatDoc && chatDoc.exists ? chatId : (existing && existing.chatId ? existing.chatId : null),
-          otherUid: uid,
-          username: profile.username || "user",
-          displayName: profile.displayName || profile.username || "user",
-          photoURL: profile.photoURL || "",
-          lastMessage: chatData.lastMessage || (existing && existing.lastMessage) || "Start chatting",
-          updatedAt: chatData.updatedAt || chatData.createdAt || (existing ? existing.updatedAt : null) || null
-        };
-      }));
-      connectedUsers.forEach(function (entry) { itemsByUid[entry.otherUid] = entry; });
-    }
-
-    var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
-    if (!items.length) {
-      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-      _renderedChatListSignature = "empty"; return;
-    }
-
-    items.sort(function (a, b) {
-      var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
-      var bT = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
-      return bT - aT;
-    });
-
-    var nextSig = items.map(function (c) {
-      return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
-        c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
-    }).join("|");
-    if (nextSig === _renderedChatListSignature) return;
-    _renderedChatListSignature = nextSig;
-
-    listEl.innerHTML = "";
-    items.forEach(function (chat) {
-      var item = document.createElement("button");
-      item.type = "button"; item.className = "vc-chat-list-item";
-      var timeText = "";
-      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
-        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      }
-      item.innerHTML =
-        '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") + "</div>" +
-        '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
-
-      item.addEventListener("click", async function () {
-        if (!chat.otherUid) { console.error("[Vaani] Missing otherUid for chat list item"); return; }
-        var openRequestId = ++_chatListOpenRequestId;
-        try {
-          var selectedUser = { uid: chat.otherUid, username: chat.username || "user", displayName: chat.displayName || chat.username || "user", photoURL: chat.photoURL || "" };
-          var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
-          if (!chatId) { console.error("[Vaani] Invalid chatId for chat list item"); return; }
-          if (openRequestId !== _chatListOpenRequestId) return;
-          _setSelectedChatUser(selectedUser);
-          _openChatUI(chatId, selectedUser);
-        } catch (err) { console.error("[Vaani] Could not open chat list item:", err); }
-      });
-      listEl.appendChild(item);
-    });
-  }
-
-  function _stopListening() {
-    if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
-    if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
-    _teardownMessageListener();
-    if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _activeChatListListenerUid = null; _renderedChatListSignature = "";
-    _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
-  }
-
-  function _clearSearchState() {
-    if (_searchDebounceTimer) { clearTimeout(_searchDebounceTimer); _searchDebounceTimer = null; }
-    _latestSearchQuery = "";
-    if (_outsideClickHandler) { document.removeEventListener("mousedown", _outsideClickHandler); _outsideClickHandler = null; }
-  }
-
-  function _isSearchItemDisabled(state, isSelf) { return isSelf || state === "requested" || state === "self"; }
-
-  function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
-    if (!dropdown) return; dropdown.innerHTML = "";
-    if (!list || !list.length) { dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>'; dropdown.classList.add("vc-open"); return; }
-    var visibleCount = 0;
-    list.forEach(function (data) {
-      var uid = data && data.uid ? data.uid : ""; if (!uid) return;
-      var username = data.username || ""; if (!username) return;
-      var name = data.name || username, photo = data.photoURL || "", initial = (username.charAt(0) || "U").toUpperCase();
-      var state = stateByUid && uid ? stateByUid[uid] || "none" : "none", isSelf = uid === currentUid;
-      var label, disabled;
-      switch (state) {
-        case "self": label = "(You)"; disabled = true; break;
-        case "connected": label = "Message"; disabled = false; break;
-        case "requested": label = "Requested"; disabled = true; break;
-        case "incoming": label = "Accept"; disabled = false; break;
-        default: label = "Connect"; disabled = false; break;
-      }
-      var itemEl = document.createElement("button");
-      itemEl.className = "vc-search-item"; itemEl.type = "button";
-      itemEl.setAttribute("data-uid", uid); itemEl.setAttribute("data-state", state);
-      if (disabled) itemEl.disabled = true;
-      itemEl.innerHTML = '<span class="vc-search-avatar">' +
-        (photo ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
-               : '<span class="vc-search-initial">' + _esc(initial) + "</span>") + "</span>" +
-        '<span class="vc-search-meta"><span class="vc-search-username">@' + _esc(username) + "</span>" +
-        '<span class="vc-search-name">' + _esc(name) + "</span></span>" +
-        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>";
-      dropdown.appendChild(itemEl); visibleCount++;
-    });
-    if (!visibleCount) dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
-    dropdown.classList.add("vc-open");
-  }
-
-  function _setSearchItemState(dropdown, uid, state) {
-    if (!dropdown || !uid) return;
-    var itemEl   = dropdown.querySelector('.vc-search-item[data-uid="'   + uid + '"]');
-    var actionEl = dropdown.querySelector('.vc-search-action[data-uid="' + uid + '"]');
-    if (!actionEl || !itemEl) return;
-    var labelMap = { self: "(You)", connected: "Message", requested: "Requested", incoming: "Accept", none: "Connect" };
-    actionEl.textContent = labelMap[state] || "Connect";
-    actionEl.setAttribute("data-state", state || "none"); itemEl.setAttribute("data-state", state || "none");
-    var isSelf = window._vaaniCurrentUser && window._vaaniCurrentUser.uid === uid;
-    itemEl.disabled = _isSearchItemDisabled(state, isSelf);
-  }
-
-  async function _isConnected(db, currentUid, targetUid) {
-    if (_connectedUidSet.has(targetUid)) return true;
-    var snap = await db.collection(CONNECTIONS_COLLECTION).where("users", "array-contains", currentUid).limit(50).get();
-    var found = false;
-    snap.forEach(function (doc) { if ((doc.data().users || []).indexOf(targetUid) !== -1) found = true; });
-    return found;
-  }
-
-  async function _buildSearchItemStates(db, currentUid, users) {
-    var stateByUid = {};
-    if (!db || !currentUid || !users || !users.length) return stateByUid;
-    var targetUids = users.map(function (i) { return i.uid || ""; }).filter(Boolean);
-    if (!targetUids.length) return stateByUid;
-    targetUids.forEach(function (uid) { stateByUid[uid] = uid === currentUid ? "self" : "none"; });
-
-    var results = await Promise.all([
-      db.collection(REQUESTS_COLLECTION).where("fromUid", "==", currentUid).where("status", "==", "pending").limit(200).get(),
-      db.collection(REQUESTS_COLLECTION).where("toUid",   "==", currentUid).where("status", "==", "pending").limit(200).get()
-    ]).catch(function (err) { console.error("[Vaani] _buildSearchItemStates error:", err); return [null, null]; });
-
-    var requestedSet = new Set(), incomingSet = new Set();
-    if (results[0]) results[0].forEach(function (doc) { if (doc.data().toUid)   requestedSet.add(doc.data().toUid);   });
-    if (results[1]) results[1].forEach(function (doc) { if (doc.data().fromUid) incomingSet.add(doc.data().fromUid); });
-
-    targetUids.forEach(function (uid) {
-      if (uid === currentUid)         { stateByUid[uid] = "self";      return; }
-      if (_connectedUidSet.has(uid))  { stateByUid[uid] = "connected"; return; }
-      if (requestedSet.has(uid))      { stateByUid[uid] = "requested"; return; }
-      if (incomingSet.has(uid))       { stateByUid[uid] = "incoming";  return; }
-      stateByUid[uid] = "none";
-    });
-    return stateByUid;
-  }
-
-  async function _sendConnectionRequest(db, fromUid, toUid) {
-    await db.collection(REQUESTS_COLLECTION).add({ fromUid: fromUid, toUid: toUid, status: "pending", createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-  }
-
-  async function _hasPendingConnectionRequest(db, fromUid, toUid) {
-    var existing = await db.collection(REQUESTS_COLLECTION).where("fromUid", "==", fromUid).where("toUid", "==", toUid).where("status", "==", "pending").limit(1).get();
-    return !existing.empty;
-  }
-
-  async function _createConnection(db, uidA, uidB) {
-    if (await _isConnected(db, uidA, uidB)) return;
-    await db.collection(CONNECTIONS_COLLECTION).add({ users: [uidA, uidB], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-  }
-
-  async function _acceptConnectionRequest(db, requestId, currentUid, fromUid) {
-    if (!db || !requestId || !currentUid || !fromUid) { console.error("[Vaani] acceptConnectionRequest: missing params"); return; }
-    try {
-      if (await _isConnected(db, currentUid, fromUid)) {
-        console.warn("[Vaani] acceptConnectionRequest: already connected");
-        await db.collection(REQUESTS_COLLECTION).doc(requestId).delete(); return;
-      }
-      await db.collection(CONNECTIONS_COLLECTION).add({ users: [currentUid, fromUid], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
-      if (typeof window.showToast === "function") window.showToast("Connection accepted");
-    } catch (err) { console.error("[Vaani] acceptConnectionRequest failed:", err); throw err; }
-  }
-
-  async function _rejectConnectionRequest(db, requestId) {
-    if (!db || !requestId) { console.error("[Vaani] rejectConnectionRequest: missing params"); return; }
-    try {
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
-      if (typeof window.showToast === "function") window.showToast("Request rejected");
-    } catch (err) { console.error("[Vaani] rejectConnectionRequest failed:", err); throw err; }
-  }
-
-  function _renderIncomingRequests(requests) {
-    var listEl = document.getElementById("vcRequestsList"), badgeEl = document.getElementById("vcRequestsBadge");
-    if (!listEl || !badgeEl) return;
-    var count = requests.length;
-    badgeEl.textContent = String(count); badgeEl.classList.toggle("vc-visible", count > 0);
-    if (!count) { listEl.innerHTML = '<div class="vc-requests-empty">No pending requests</div>'; return; }
-    listEl.innerHTML = requests.map(function (r) {
-      return '<div class="vc-request-item"><div class="vc-request-copy">@' + _esc(r.fromUsername || "user") + "</div>" +
-        '<div class="vc-request-copy">' + _esc(r.fromName || "") + "</div>" +
-        '<div class="vc-request-actions">' +
-        '<button type="button" class="vc-mini-btn vc-accept-btn" data-request-id="' + _esc(r.id) + '" data-from-uid="' + _esc(r.fromUid) + '" data-to-uid="' + _esc(r.toUid) + '">Accept</button>' +
-        '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(r.id) + '">Reject</button></div></div>';
-    }).join("");
-  }
-
-  async function _fetchIncomingRequests(currentUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !currentUid) return;
-    if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
-
-    _unsubscribeIncomingRequests = db.collection(REQUESTS_COLLECTION)
-      .where("toUid", "==", currentUid).where("status", "==", "pending").orderBy("createdAt", "desc")
-      .onSnapshot(async function (snapshot) {
-        var pending = [];
-        for (var i = 0; i < snapshot.docs.length; i++) {
-          var doc = snapshot.docs[i]; var data = doc.data() || {};
-          if (!data.fromUid) continue;
-          try {
-            var fromProfile = await db.collection("users").doc(data.fromUid).get();
-            var fromData = fromProfile.exists ? fromProfile.data() : {};
-            pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: fromData.username || "user", fromName: fromData.name || "" });
-          } catch (err) {
-            console.error("[Vaani] Failed to load incoming request profile:", err);
-            pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: "user", fromName: "" });
-          }
-        }
-        incomingRequests = pending; _renderIncomingRequests(incomingRequests);
-      }, function (err) { console.error("[Vaani] incoming requests listener error:", err); incomingRequests = []; _renderIncomingRequests([]); });
-  }
-
-  function _bindIncomingRequestActions() {
-    var listEl = document.getElementById("vcRequestsList"), toggleBtn = document.getElementById("vcRequestsToggle"), panel = document.getElementById("vcRequestsPanel");
-    if (!listEl || !toggleBtn || !panel) return;
-    toggleBtn.addEventListener("click", function () { panel.classList.toggle("vc-open"); });
-    listEl.addEventListener("click", async function (event) {
-      var acceptBtn = event.target.closest(".vc-accept-btn"), rejectBtn = event.target.closest(".vc-reject-btn");
-      if (!acceptBtn && !rejectBtn) return;
-      var actionBtn = acceptBtn || rejectBtn;
-      var requestId = actionBtn.getAttribute("data-request-id") || "", fromUid = actionBtn.getAttribute("data-from-uid") || "";
-      if (!requestId) { console.error("[Vaani] request click: missing requestId"); return; }
-      if (acceptBtn && !fromUid) { console.error("[Vaani] request click: missing fromUid"); return; }
-      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : "";
-      if (!currentUid) { console.error("[Vaani] request click: no current user"); return; }
-      var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-      if (!db) { console.error("[Vaani] request click: db unavailable"); return; }
-      actionBtn.disabled = true;
-      try {
-        if (acceptBtn) await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
-        else           await _rejectConnectionRequest(db, requestId);
-      } catch (err) {
-        console.error("[Vaani] request action failed:", err);
-        actionBtn.disabled = false;
-        if (typeof window.showToast === "function") window.showToast("Action failed — please try again");
-      }
-    });
-  }
-
-  async function _fetchUsersByPrefix(query, dropdown) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !dropdown) return;
-    try {
-      var snapshot = await db.collection("users").orderBy("username").startAt(query).endAt(query + "\uf8ff").limit(10).get();
-      if (query !== _latestSearchQuery) return;
-      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : "";
-      var list = [];
-      snapshot.forEach(function (doc) {
-        var data = doc.data(); if (!data || !data.username) return;
-        list.push({ uid: doc.id, username: data.username, name: data.name || "", photoURL: data.photoURL || "" });
-      });
-      if (query !== _latestSearchQuery) return;
-      var stateByUid = await _buildSearchItemStates(db, currentUid, list);
-      if (query !== _latestSearchQuery) return;
-      _renderSearchResults(dropdown, list, stateByUid, currentUid);
-    } catch (err) {
-      console.error("[Vaani] search error:", err);
-      if (query !== _latestSearchQuery) return;
-      dropdown.innerHTML = '<div class="vc-search-empty">Search failed. Try again.</div>';
-      dropdown.classList.add("vc-open");
-    }
-  }
-
-  function _bindUserSearch() {
-    var searchWrap     = document.getElementById("vcSearchWrap");
-    var searchInput    = document.getElementById("vcUserSearchInput");
-    var searchDropdown = document.getElementById("vcSearchDropdown");
-    if (!searchWrap || !searchInput || !searchDropdown) return;
-
-    function closeDropdown() { searchDropdown.classList.remove("vc-open"); }
-
-    searchInput.addEventListener("input", function () {
-      var query = (searchInput.value || "").trim().toLowerCase();
-      clearTimeout(_searchDebounceTimer);
-      if (!query) { _latestSearchQuery = ""; searchDropdown.innerHTML = ""; closeDropdown(); return; }
-      _latestSearchQuery = query;
-      _searchDebounceTimer = setTimeout(function () { _fetchUsersByPrefix(query, searchDropdown); }, 300);
-    });
-
-    async function handleMessageClick(user) {
-      try {
-        var currentUser = window._vaaniCurrentUser || null;
-        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-        if (!currentUser || !user || !currentUser.uid || !user.uid || !db) { console.error("[Vaani] handleMessageClick: invalid params"); return; }
-        var sortedPair = [String(currentUser.uid), String(user.uid)].sort();
-        var chatId = sortedPair[0] + "_" + sortedPair[1];
-        console.log("[Vaani] handleMessageClick: chatId =", chatId);
-        await db.collection(CHATS_COLLECTION).doc(chatId).set({
-          participants: sortedPair, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        _activeChatId = chatId; _openChatUI(chatId, user);
-      } catch (error) {
-        console.error("[Vaani] handleMessageClick error:", error);
-        if (typeof window.showToast === "function") window.showToast("Could not open chat — please try again");
+  ctx._recorder = recorderController;
+
+  // ── Web Speech API (fallback transcript) ────────────────────────
+  const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+
+  rec.lang            = speechCode;
+  rec.continuous      = false;
+  rec.interimResults  = false;
+  rec.maxAlternatives = 3;
+
+  ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
+  micBtn?.classList.add("listening");
+  setMicStatus("Listening… (tap again to stop)");
+
+  rec.onresult = (e) => {
+    let finalText = "";
+    let bestConf  = -1;
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (!e.results[i].isFinal) continue;
+      for (let j = 0; j < e.results[i].length; j++) {
+        const alt  = e.results[i][j];
+        const conf = (typeof alt.confidence === "number" && alt.confidence > 0)
+                     ? alt.confidence : (j === 0 ? 1 : 0);
+        if (conf > bestConf) { bestConf = conf; finalText = alt.transcript; }
       }
     }
-
-    searchDropdown.addEventListener("click", async function (event) {
-      var btn = event.target.closest(".vc-search-item"); if (!btn) return;
-      var targetUid  = btn.getAttribute("data-uid") || "";
-      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : "";
-      if (!currentUid || !targetUid || currentUid === targetUid) return;
-      var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-      if (!db) return;
-      btn.disabled = true;
-      try {
-        var profile = await _fetchOtherProfile(db, targetUid); profile.uid = targetUid;
-        closeDropdown(); await handleMessageClick(profile);
-      } finally { btn.disabled = false; }
-    });
-
-    _outsideClickHandler = function (event) { if (!searchWrap.contains(event.target)) closeDropdown(); };
-    document.addEventListener("mousedown", _outsideClickHandler);
-  }
-
-  async function _fetchOtherProfile(db, uid) {
-    try { var doc = await db.collection("users").doc(uid).get(); if (doc.exists) return doc.data() || {}; }
-    catch (err) { console.error("[Vaani] Failed to load user by uid:", err); }
-    return {};
-  }
-
-  // ── FIX 6: sendMessage — always include sorted participants[] ────────────
-  async function sendMessage(chatId, text, currentUid, otherUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !chatId || !text || !currentUid || !otherUid) return;
-    // participants must be sorted to match the Firestore rule check
-    var participants = [String(currentUid), String(otherUid)].sort();
-    await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
-      text: text, senderId: currentUid, receiverId: otherUid,
-      participants: participants, chatId: chatId,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    await db.collection(CHATS_COLLECTION).doc(chatId).update({
-      lastMessage: text, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-  }
-
-  async function _sendMessage() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
-    var inputEl = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
-
-    if (!db)                                { console.error("[Vaani] _sendMessage: db unavailable");      return; }
-    if (!currentUser || !currentUser.uid)   { console.error("[Vaani] _sendMessage: no current user");    return; }
-    if (!selectedUser || !selectedUser.uid) { console.error("[Vaani] _sendMessage: no selected user");   return; }
-    if (!inputEl)                           { console.error("[Vaani] _sendMessage: input not found");    return; }
-    if (sendBtn && sendBtn.disabled)        return;
-
-    var inputMessage = (inputEl.value || "").trim(); if (!inputMessage) return;
-    var currentUid = String(currentUser.uid), otherUid = String(selectedUser.uid);
-
-    if (!_activeChatId) {
-      console.log("[Vaani] _sendMessage: no activeChatId — calling _getOrCreateChat");
-      try { _activeChatId = await _getOrCreateChat(otherUid); }
-      catch (err) { console.error("[Vaani] _sendMessage: _getOrCreateChat threw:", err); return; }
-      if (!_activeChatId) { console.error("[Vaani] _sendMessage: chatId still null — abort"); return; }
-      if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
+    if (finalText.trim()) {
+      ctx.transcript = finalText.trim();
+      showOriginalText(ctx.transcript);
     }
-
-    _activeChatId = String(_activeChatId || "");
-    if (!_activeChatId) { console.error("[Vaani] _sendMessage: empty chatId — abort"); return; }
-
-    console.log("[Vaani] _sendMessage: chatId =", _activeChatId, "| text =", inputMessage);
-
-    var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-    _optimisticMessages.push({ _optimisticId: tempId, text: inputMessage, senderId: currentUid, timestamp: new Date() });
-    _renderMessages();
-
-    inputEl.disabled = true; if (sendBtn) sendBtn.disabled = true;
-    inputEl.value = ""; _setInputMessage("");
-
-    try {
-      await sendMessage(_activeChatId, inputMessage, currentUid, otherUid);
-      console.log("[Vaani] _sendMessage: write succeeded");
-    } catch (err) {
-      _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
-      _setInputMessage(inputMessage); inputEl.value = inputMessage; _renderMessages();
-      console.error("[Vaani] _sendMessage: write failed:", err);
-      if (typeof window.showToast === "function") window.showToast("Message failed to send — please try again");
-    } finally {
-      inputEl.disabled = false; _setInputMessage(inputEl.value || "");
-      if (sendBtn) sendBtn.disabled = !_inputMessage.trim(); inputEl.focus();
-    }
-  }
-
-  function _renderMessages() {
-    var container = _messagesContainerRef; if (!container) return;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
-    container.innerHTML = "";
-    var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
-    if (!messages.length) {
-      var emptyState = document.createElement("div");
-      emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
-      container.appendChild(emptyState); _scrollMessagesToBottom(); return;
-    }
-    messages.forEach(function (msg) {
-      var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
-      var isOwn = senderId === currentUid;
-      var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
-      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
-      row.appendChild(bubble); container.appendChild(row);
-    });
-    _scrollMessagesToBottom();
-  }
-
-  // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
-  function listenToMessages(chatId) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db) { console.error("[Vaani] listenToMessages: db unavailable."); _setMessages([]); _renderMessages(); return; }
-    if (!chatId) { console.error("[Vaani] listenToMessages: chatId is null."); _setMessages([]); _renderMessages(); return; }
-    chatId = String(chatId);
-
-    var listenerKey = "chat::" + chatId;
-    if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) {
-      console.log("[Vaani] listenToMessages: already active for", chatId); return;
-    }
-    if (_unsubscribeMessages) { console.log("[Vaani] listenToMessages: tearing down previous."); _teardownMessageListener(); }
-    _activeMessageListenerKey = listenerKey;
-
-    var firstFire = true; // always render on first snapshot to clear loading state
-    console.log("[Vaani] listenToMessages: attaching to chats/" + chatId + "/messages");
-
-    _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
-      .orderBy("timestamp", "asc")
-      .onSnapshot(function (snapshot) {
-        if (_activeMessageListenerKey !== listenerKey) {
-          console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId); return;
-        }
-        var messages = snapshot.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data() || {}); });
-        var sigParts = [];
-        snapshot.docs.forEach(function (doc) {
-          var d = doc.data() || {};
-          sigParts.push(doc.id, String(d.text || ""), String(d.senderId || ""),
-            String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
-        });
-        var nextSig = sigParts.join("|");
-        if (!firstFire && nextSig === _activeMessagesSignature) {
-          console.log("[Vaani] listenToMessages: unchanged, skipping render."); return;
-        }
-        firstFire = false; _activeMessagesSignature = nextSig; _optimisticMessages = [];
-        _setMessages(messages); _renderMessages();
-        console.log("[Vaani] listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
-      }, function (err) {
-        console.error("[Vaani] listenToMessages: error for chatId:", chatId, err);
-        if (_activeMessageListenerKey === listenerKey) {
-          _activeMessagesSignature = ""; _optimisticMessages = []; _setMessages([]); _renderMessages();
-        }
-      });
-  }
-
-  function _listenToMessages(chatId) { return listenToMessages(chatId); }
-
-  async function _getOrCreateChat(otherUid) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
-    if (!db || !currentUid || !otherUid) { console.error("[Vaani] _getOrCreateChat: missing params."); return null; }
-    otherUid = String(otherUid);
-    var sortedPair = [currentUid, otherUid].sort();
-    var chatId = sortedPair[0] + "_" + sortedPair[1];
-    var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
-    try {
-      var snap = await chatRef.get();
-      if (snap.exists) { console.log("[Vaani] _getOrCreateChat: existing chatId =", chatId); return chatId; }
-      await chatRef.set({ participants: sortedPair, lastMessage: "", createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      console.log("[Vaani] _getOrCreateChat: created chatId =", chatId); return chatId;
-    } catch (err) { console.error("[Vaani] _getOrCreateChat failed:", err); return null; }
-  }
-
-  // ── FIX 5: _openChatUI — set state directly, don't call _setSelectedChatUser ──
-  // _setSelectedChatUser(non-null) calls _syncViewWithSelection which shows the
-  // chat panel BEFORE _renderChatUI has built the DOM. Instead we set state
-  // directly and let _renderChatUI manage visibility.
-  function _openChatUI(chatId, user) {
-    if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
-
-    // Tear down old listener if switching chats
-    if (_activeChatId && _activeChatId !== chatId) {
-      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
-      _teardownMessageListener();
-    }
-
-    _activeChatId     = chatId;
-    _selectedChatUser = user || {};
-
-    console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});     // builds DOM and flips panel visibility
-    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
-  }
-
-  function _renderChatUI(otherProfile) {
-    var chatScreen = document.getElementById("vcChatScreen");
-    if (!chatScreen) { console.error("[Vaani] _renderChatUI: vcChatScreen not found"); return; }
-    otherProfile = otherProfile || {};
-    var username = otherProfile.username || "user", photo = otherProfile.photoURL || "";
-    var initial  = (username.charAt(0) || "U").toUpperCase();
-    var avatarHTML = photo ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
-                           : '<span class="vc-chat-initial">' + _esc(initial) + "</span>";
-    var sendIconSVG = '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
-    var backIconSVG = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>';
-
-    chatScreen.innerHTML =
-      '<div class="vc-chat-view">' +
-        '<div class="vc-chat-header">' +
-          '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
-          '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
-          '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
-          '<div class="vc-chat-hsub">Connected</div></div></div>' +
-        '<div class="vc-chat-messages" id="messagesContainer"></div>' +
-        '<div class="vc-chat-input-bar">' +
-          '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
-          '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
-        "</div></div>";
-
-    _messagesContainerRef = document.getElementById("messagesContainer");
-    _setMessages([]); _setInputMessage(""); _renderMessages();
-
-    // Show chat panel only after DOM is ready
-    var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
-    if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
-    if (window.vaaniChat) window.vaaniChat._currentView = "chat";
-    _scrollMessagesToBottom();
-
-    var backBtn = document.getElementById("backBtn");
-    if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
-
-    var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
-    function _toggleSendState() {
-      if (!messageInput || !sendBtn) return;
-      sendBtn.disabled = !messageInput.value.trim(); _setInputMessage(messageInput.value);
-    }
-    if (messageInput) {
-      messageInput.addEventListener("input", _toggleSendState);
-      messageInput.addEventListener("keydown", function (event) {
-        if (event.key !== "Enter" || event.shiftKey) return;
-        event.preventDefault(); if (messageInput.value.trim()) _sendMessage();
-      });
-      messageInput.value = ""; messageInput.focus();
-    }
-    if (sendBtn) { sendBtn.addEventListener("click", function () { if (messageInput && messageInput.value.trim()) _sendMessage(); }); sendBtn.disabled = true; }
-    _toggleSendState();
-
-    try {
-      var cu = window._vaaniCurrentUser;
-      if (cu && cu.uid && _activeChatId && _selectedChatUser) {
-        sessionStorage.setItem("vaani_active_chat_" + cu.uid, JSON.stringify({ chatId: _activeChatId, otherUid: _selectedChatUser.uid }));
-      }
-    } catch (e) {}
-
-    console.log("[Vaani] Chat UI ready — chatId:", _activeChatId, "| with:", username);
-  }
-
-  // ── Public API ────────────────────────────────────────────────────────────
-  window.vaaniChat = {
-    _currentView: "home",
-    _chatList: [],
-    open: function () {
-      var root = _root();
-      if (root && !root.children.length) {
-        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading…</p></div>';
-      }
-      if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
-        var auth = window.vaaniRouter.getAuth();
-        if (auth) {
-          var user = auth.currentUser;
-          if (user && window._vaaniCurrentUser) {
-            window.vaaniRouter.getDb().collection("users").doc(user.uid).get()
-              .then(function (doc) {
-                if (doc.exists && doc.data().username) {
-                  // _renderChat is now async; chain rehydration after it resolves
-                  _renderChat(user, doc.data()).then(function () {
-                    try {
-                      var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-                      if (saved) {
-                        var state = JSON.parse(saved);
-                        if (state && state.chatId && state.otherUid) {
-                          window.vaaniRouter.getDb().collection("users").doc(state.otherUid).get()
-                            .then(function (profileDoc) {
-                              var profile = profileDoc.exists ? profileDoc.data() : {};
-                              profile.uid = state.otherUid;
-                              _openChatUI(state.chatId, profile);
-                            })
-                            .catch(function (err) {
-                              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-                              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-                            });
-                        }
-                      }
-                    } catch (e) {}
-                  });
-                } else { _renderProfile(user); }
-              })
-              .catch(function () { _renderProfile(user); });
-          }
-        }
-      }
-    },
-
-    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
-
-    _renderLogin:  _renderLogin,
-    _renderProfile: _renderProfile,
-    _renderChat:   _renderChat,
-    _createChatListListener: _createChatListListener,
-    loadUsers: function () { this.open(); }
   };
 
-  console.log("[Vaani] chat.js v4.2 loaded ✓");
-})();
+  rec.onspeechend = () => {
+    if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch (_) {} }
+  };
+
+  rec.onend = async () => {
+    micBtn?.classList.remove("listening");
+    if (ctx.state === MicState.IDLE) return;
+
+    // Stop MediaRecorder
+    let audioBlob = null;
+    if (ctx._recorder) {
+      try { audioBlob = await ctx._recorder.stop(); } catch (_) {}
+      ctx._recorder = null;
+    }
+
+    // Determine final transcript — try Bhashini ASR first
+    let transcript = ctx.transcript.trim();
+    if (window.USE_API && typeof window.speechToText === "function" && audioBlob) {
+      setMicStatus("Processing speech…");
+      try {
+        const apiTranscript = await window.speechToText(audioBlob, fromLang);
+        if (apiTranscript && apiTranscript.trim()) {
+          transcript = apiTranscript.trim();
+          console.log("[Vaani] Using Bhashini ASR transcript:", transcript);
+        }
+      } catch (err) {
+        console.warn("[Vaani] speechToText threw:", err.message, "— using Web Speech fallback");
+      }
+    }
+
+    if (!transcript) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("No speech detected. Tap to try again.");
+      return;
+    }
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("Tap to speak again");
+      return;
+    }
+
+    ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
+
+    showOriginalText(transcript);
+    _showSpeechEditBtn(transcript);
+    setTranslating();
+    setMicStatus("Translating…");
+
+    // FIX 2 — route through finalTranslate (normalises + translates)
+    const translated = await window.finalTranslate(transcript, fromLang, toLang);
+    showFinalTranslation(transcript, translated);
+    setMicStatus("Tap ✏️ to correct · tap mic to record again");
+
+    if (translated) {
+      saveToHistory(transcript, translated, fromLang, toLang);
+      const transEl = document.getElementById("translatedText");
+      await autoPlay(translated, toLang, "", transEl);
+    }
+    ctx.state = MicState.IDLE;
+  };
+
+  rec.onerror = (e) => {
+    const prevState = ctx.state;
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    if      (e.error === "no-speech")    { setMicStatus("No speech detected. Tap to try again."); }
+    else if (e.error === "not-allowed")  {
+      _permissionGranted.audio = false;
+      setMicStatus("Microphone blocked.");
+      _showPermissionDeniedGuide("audio", async () => {
+        const ok = await _attemptGetUserMedia("audio");
+        if (ok) setMicStatus("Permission granted! Tap to speak.");
+      });
+    }
+    else if (e.error === "aborted") { if (prevState === MicState.LISTENING) setMicStatus("Tap to speak"); }
+    else { showToast("Mic error: " + e.error); setMicStatus("Tap to speak"); }
+  };
+
+  try { rec.start(); }
+  catch (e) {
+    if (ctx._recorder) { ctx._recorder.stop().catch(() => {}); ctx._recorder = null; }
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak");
+    console.warn("[Vaani] rec.start:", e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CONVERSATION MODE
+// ══════════════════════════════════════════════════════════════════
+
+const _convLastTranscript = { A: "", B: "" };
+const _convLastFromLang   = { A: "", B: "" };
+const _convLastToLang     = { A: "", B: "" };
+let _convTranslatingA = false;
+let _convTranslatingB = false;
+
+async function startConvListening(speaker) {
+  const ctx      = _mic[speaker];
+  const otherSpk = speaker === "A" ? "B" : "A";
+  const fromSel  = `convLang${speaker}`;
+  const toSel    = speaker === "A" ? "convLangB" : "convLangA";
+  const micBtnId = `micBtn${speaker}`;
+  const statId   = `micStatus${speaker}`;
+
+  const fromLang   = document.getElementById(fromSel)?.value || "en";
+  const toLang     = document.getElementById(toSel)?.value   || "en";
+  const speechCode = LANG_CONFIG[fromLang]?.speechCode       || "en-US";
+  const micBtn     = document.getElementById(micBtnId);
+
+  if (ctx.state === MicState.LISTENING) {
+    if (ctx.rec) { ctx.rec.onend = null; try { ctx.rec.stop(); } catch (_) {} }
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak", statId);
+    return;
+  }
+
+  // Stop the other speaker's mic
+  _killMic(_mic[otherSpk]);
+  document.getElementById(`micBtn${otherSpk}`)?.classList.remove("listening");
+  setMicStatus("Tap to speak", `micStatus${otherSpk}`);
+  _killMic(ctx);
+
+  if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+    showToast("Voice not supported. Use Chrome.");
+    return;
+  }
+
+  setMicStatus("Requesting microphone…", statId);
+  const permitted = await handlePermission("audio", statId);
+  if (!permitted) { setMicStatus("Tap to speak", statId); return; }
+
+  const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = speechCode; rec.continuous = false; rec.interimResults = false; rec.maxAlternatives = 1;
+  ctx.rec = rec; ctx.state = MicState.LISTENING; ctx.transcript = "";
+  micBtn?.classList.add("listening");
+  setMicStatus("Listening… (tap again to stop)", statId);
+
+  const origEl  = document.getElementById(`originalText${speaker}`);
+  const transEl = document.getElementById(`translatedText${speaker}`);
+  const playBtn = document.getElementById(`playBtn${speaker}`);
+
+  rec.onresult = (e) => {
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+    let finalText = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+    }
+    if (finalText.trim()) {
+      ctx.transcript = finalText.trim();
+      if (origEl) origEl.textContent = ctx.transcript;
+    }
+  };
+
+  rec.onspeechend = () => {
+    if (ctx.rec && ctx.state === MicState.LISTENING) { try { ctx.rec.stop(); } catch (_) {} }
+  };
+
+  rec.onend = async () => {
+    micBtn?.classList.remove("listening");
+    if (ctx._silenceTimer) { clearTimeout(ctx._silenceTimer); ctx._silenceTimer = null; }
+    if (ctx.state === MicState.IDLE) return;
+
+    const transcript = ctx.transcript.trim();
+    if (!transcript) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("Tap to speak", statId);
+      return;
+    }
+    if (transcript === ctx.last) {
+      ctx.state = MicState.IDLE; ctx.rec = null;
+      setMicStatus("Tap to speak again", statId);
+      return;
+    }
+
+    ctx.last = transcript; ctx.state = MicState.STOPPED; ctx.rec = null;
+    setMicStatus("Translating…", statId);
+    if (transEl) transEl.textContent = "…";
+
+    _convLastTranscript[speaker] = transcript;
+    _convLastFromLang[speaker]   = fromLang;
+    _convLastToLang[speaker]     = toLang;
+
+    // FIX 2 & 4 — route through finalTranslate (normalises + translates)
+    const translated = await window.finalTranslate(transcript, fromLang, toLang);
+    if (transEl) transEl.textContent = translated || "—";
+    if (playBtn) playBtn.style.display = translated ? "flex" : "none";
+    setMicStatus("Tap to speak again", statId);
+    if (translated) await autoPlay(translated, toLang, "", transEl);
+    ctx.state = MicState.IDLE;
+  };
+
+  rec.onerror = (e) => {
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak", statId);
+    if (e.error === "not-allowed") {
+      _permissionGranted.audio = false;
+      _showPermissionDeniedGuide("audio", async () => {
+        const ok = await _attemptGetUserMedia("audio");
+        if (ok) setMicStatus("Permission granted! Tap to speak.", statId);
+      });
+    } else if (e.error === "no-speech") {
+      setMicStatus("No speech detected. Tap to try again.", statId);
+    } else if (e.error !== "aborted") {
+      showToast("Mic: " + e.error);
+    }
+  };
+
+  try { rec.start(); }
+  catch (e) {
+    _killMic(ctx);
+    micBtn?.classList.remove("listening");
+    setMicStatus("Tap to speak", statId);
+    console.warn("[Vaani] conv rec.start:", e.message);
+  }
+}
+
+async function onConvLangChange(speaker) {
+  const selectId   = `convLang${speaker}`;
+  const newLang    = document.getElementById(selectId)?.value || "en";
+  localStorage.setItem(`vaani_lang_${selectId}`, newLang);
+
+  const sourceSpeak = speaker === "B" ? "A" : "B";
+  const transcript  = _convLastTranscript[sourceSpeak];
+  const origFrom    = _convLastFromLang[sourceSpeak];
+  if (!transcript || !origFrom) return;
+  if (_convLastToLang[sourceSpeak] === newLang) return;
+  if (sourceSpeak === "A" && _convTranslatingA) return;
+  if (sourceSpeak === "B" && _convTranslatingB) return;
+
+  if (sourceSpeak === "A") _convTranslatingA = true; else _convTranslatingB = true;
+
+  const transEl = document.getElementById(`translatedText${sourceSpeak}`);
+  const playBtn = document.getElementById(`playBtn${sourceSpeak}`);
+  if (transEl) transEl.textContent = "…";
+
+  try {
+    // FIX 2 — route through finalTranslate
+    const translated = await window.finalTranslate(transcript, origFrom, newLang);
+    if (transEl) transEl.textContent = translated || "—";
+    if (playBtn) playBtn.style.display = translated ? "flex" : "none";
+    _convLastToLang[sourceSpeak] = newLang;
+    if (translated) await autoPlay(translated, newLang, "", transEl);
+  } finally {
+    if (sourceSpeak === "A") _convTranslatingA = false; else _convTranslatingB = false;
+  }
+}
+
+// ── SINGLE RESULT DISPLAY ─────────────────────────────────────────
+
+function clearSingleResults() {
+  const s = document.getElementById("resultsSection");
+  if (s) s.style.display = "none";
+  const o = document.getElementById("originalText");
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (o) o.textContent = "—";
+  if (t) t.textContent = "—";
+  if (a) a.style.display = "none";
+  resetTimeline("");
+  const saveBtn = document.getElementById("saveBtn");
+  if (saveBtn) { saveBtn.classList.remove("active"); saveBtn.innerHTML = _starSvg() + "Save"; }
+  _hideSpeechEditBtn();
+}
+
+function showOriginalText(text) {
+  const s = document.getElementById("resultsSection");
+  if (s) s.style.display = "block";
+  const o = document.getElementById("originalText");
+  if (o) o.textContent = text;
+}
+
+function setTranslating() {
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent = "…";
+  if (a) a.style.display = "none";
+}
+
+function showFinalTranslation(original, translated) {
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent = translated || "—";
+  if (a) a.style.display = translated ? "flex" : "none";
+  showTimeline("");
+  _updateSingleStarBtn();
+}
+
+// ── SPEECH EDIT UI ───────────────────────────────────────────────
+
+function _showSpeechEditBtn(transcript) {
+  const btn = document.getElementById("editSpeechBtn");
+  const box = document.getElementById("speechEditBox");
+  const inp = document.getElementById("speechEditInput");
+  if (btn) btn.style.display = "flex";
+  if (box) box.style.display = "none";    // collapsed by default
+  // FIX 9 — use inp reference, not a re-query
+  if (inp) inp.value = transcript || "";
+}
+
+function _hideSpeechEditBtn() {
+  const btn = document.getElementById("editSpeechBtn");
+  const box = document.getElementById("speechEditBox");
+  if (btn) btn.style.display = "none";
+  if (box) box.style.display = "none";
+}
+
+function toggleSpeechEdit() {
+  const box = document.getElementById("speechEditBox");
+  const inp = document.getElementById("speechEditInput");
+  if (!box) return;
+  const isOpen = box.style.display !== "none";
+  box.style.display = isOpen ? "none" : "block";
+  if (!isOpen && inp) {
+    const orig = document.getElementById("originalText")?.textContent;
+    if (orig && orig !== "—") inp.value = orig;
+    setTimeout(() => inp.focus(), 50);
+  }
+}
+
+// FIX 5 & 10 — retranslateSpeech now normalises + saves to history
+async function retranslateSpeech() {
+  const inp    = document.getElementById("speechEditInput");
+  const edited = inp?.value?.trim();
+  if (!edited) { showToast("Please enter some text"); return; }
+
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+
+  const origEl = document.getElementById("originalText");
+  if (origEl) origEl.textContent = edited;
+
+  const box = document.getElementById("speechEditBox");
+  if (box) box.style.display = "none";
+
+  setTranslating();
+  setMicStatus("Translating edited text…");
+
+  // FIX 2 & 10 — finalTranslate normalises; also save to history (was missing)
+  const translated = await window.finalTranslate(edited, fromLang, toLang);
+  showFinalTranslation(edited, translated);
+  setMicStatus("Tap edit to correct · tap mic to record again");
+
+  if (translated) {
+    saveToHistory(edited, translated, fromLang, toLang);
+    const transEl = document.getElementById("translatedText");
+    await autoPlay(translated, toLang, "", transEl);
+  }
+}
+
+// ── TEXT MODE ─────────────────────────────────────────────────────
+
+// FIX 5 — translateTypedText routes through finalTranslate
+async function translateTypedText() {
+  const area = document.getElementById("textInputArea");
+  const raw  = area?.value?.trim();
+  if (!raw) { showToast("Please enter some text"); return; }
+
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+  const btn      = document.getElementById("translateTextBtn");
+
+  clearTimeout(_liveTimer);
+  _liveLastText = raw;   // mark committed so live-translate skips it
+  _liveClearHint();
+
+  if (btn) { btn.disabled = true; btn.textContent = "Translating…"; }
+  showOriginalText(raw);
+  setTranslating();
+
+  // FIX 2 — normalise + translate via finalTranslate
+  const translated = await window.finalTranslate(raw, fromLang, toLang);
+  showFinalTranslation(raw, translated);
+  if (btn) { btn.disabled = false; btn.textContent = "Translate"; }
+
+  if (translated) {
+    saveToHistory(raw, translated, fromLang, toLang);
+    const transEl = document.getElementById("translatedText");
+    await autoPlay(translated, toLang, "", transEl);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LIVE TRANSLATION  (debounced, text mode only)
+// ══════════════════════════════════════════════════════════════════
+
+const _LIVE_DEBOUNCE_MS = 500;
+let   _liveTimer        = null;
+let   _liveLastText     = "";
+let   _liveRequestId    = 0;
+
+// FIX 8 — _liveArea at module scope (was re-declared inside closure)
+const _liveArea = document.getElementById
+  ? null   // lazily resolved at first use; see _getLiveArea()
+  : null;
+
+function _getLiveArea() {
+  return document.getElementById("textInputArea");
+}
+
+function _liveSetPending() {
+  const hint = document.getElementById("liveHint");
+  if (hint) { hint.textContent = "Translating…"; hint.classList.add("live-hint--active"); }
+}
+
+function _liveClearHint() {
+  const hint = document.getElementById("liveHint");
+  if (hint) { hint.textContent = ""; hint.classList.remove("live-hint--active"); }
+  const area = _getLiveArea();
+  if (area) area.classList.remove("live-typing");
+}
+
+// FIX 13 — stopAudio() clears stale _curAudio before showing new result
+function _liveShowResult(raw, translated) {
+  if (!translated || !translated.trim()) return;
+  stopAudio();
+  resetTimeline("");
+  showOriginalText(raw);
+  const t = document.getElementById("translatedText");
+  const a = document.getElementById("actionBtns");
+  if (t) t.textContent = translated;
+  if (a) a.style.display = "flex";
+  _updateSingleStarBtn();
+  _liveClearHint();
+}
+
+// FIX 6 — _runLiveTranslation routes through finalTranslate (normalises)
+async function _runLiveTranslation(text, fromLang, toLang) {
+  const myId = ++_liveRequestId;
+  try {
+    const translated = await window.finalTranslate(text, fromLang, toLang);
+    if (myId !== _liveRequestId) return;   // stale — discard
+    if (translated && translated.trim()) {
+      _liveShowResult(text, translated);
+      _liveLastText = text;
+    }
+  } catch (err) {
+    if (myId === _liveRequestId) console.warn("[Vaani LiveTranslation]", err?.message);
+  }
+}
+
+function handleLiveTranslation() {
+  if (_mic.single.state === MicState.LISTENING) return;
+  if (_mic.A.state       === MicState.LISTENING) return;
+  if (_mic.B.state       === MicState.LISTENING) return;
+
+  const textSec = document.getElementById("textInput");
+  if (!textSec || textSec.style.display === "none") return;
+
+  const area = _getLiveArea();
+  const raw  = (area?.value || "").trim();
+
+  if (!raw || raw.length < 2) { clearTimeout(_liveTimer); _liveClearHint(); return; }
+  if (raw === _liveLastText)  return;
+
+  _liveSetPending();
+  if (area) area.classList.add("live-typing");
+  _liveRequestId++;
+  clearTimeout(_liveTimer);
+
+  _liveTimer = setTimeout(async () => {
+    const area2 = _getLiveArea();
+    if (area2) area2.classList.remove("live-typing");
+    const text = (area2?.value || "").trim();
+    if (!text || text.length < 2) { _liveClearHint(); return; }
+    const fromLang = document.getElementById("fromLang")?.value || "en";
+    const toLang   = document.getElementById("toLang")?.value   || "en";
+    await _runLiveTranslation(text, fromLang, toLang);
+  }, _LIVE_DEBOUNCE_MS);
+}
+
+// ══════════════════════════════════════════════════════════════════
+
+// FIX 7 & 14 — onLanguageChange resets _liveLastText so live-translate
+// fires immediately on same text after a language switch.
+async function onLanguageChange() {
+  const fromLang = document.getElementById("fromLang")?.value || "en";
+  const toLang   = document.getElementById("toLang")?.value   || "en";
+  localStorage.setItem("vaani_lang_fromLang", fromLang);
+  localStorage.setItem("vaani_lang_toLang",   toLang);
+
+  // FIX 14 — reset so live-translate re-fires for same text in new lang
+  _liveLastText = "";
+
+  const transEl = document.getElementById("translatedText");
+  const actEl   = document.getElementById("actionBtns");
+  if (transEl) transEl.textContent = "—";
+  if (actEl)   actEl.style.display = "none";
+
+  const origText = (document.getElementById("originalText")?.textContent || "").trim();
+  if (origText && origText !== "—" && origText !== "…") {
+    if (transEl) transEl.textContent = "…";
+    // FIX 2 — route through finalTranslate
+    const translated = await window.finalTranslate(origText, fromLang, toLang);
+    if (transEl) transEl.textContent = translated || "—";
+    if (actEl)   actEl.style.display = translated ? "flex" : "none";
+    if (translated) await autoPlay(translated, toLang, "", transEl);
+  }
+}
+
+async function swapLanguages() {
+  const fromEl = document.getElementById("fromLang");
+  const toEl   = document.getElementById("toLang");
+  if (!fromEl || !toEl) return;
+
+  const prevFrom  = fromEl.value;
+  const prevTo    = toEl.value;
+  const origText  = (document.getElementById("originalText")?.textContent  || "").trim();
+  const transText = (document.getElementById("translatedText")?.textContent || "").trim();
+
+  fromEl.value = prevTo;
+  toEl.value   = prevFrom;
+  localStorage.setItem("vaani_lang_fromLang", prevTo);
+  localStorage.setItem("vaani_lang_toLang",   prevFrom);
+
+  // FIX 14 — reset live so it re-fires after swap
+  _liveLastText = "";
+
+  const newSource = (transText && transText !== "—" && transText !== "…") ? transText : origText;
+  if (!newSource || newSource === "—") return;
+
+  showOriginalText(newSource);
+  setTranslating();
+  // FIX 2 — route through finalTranslate
+  const translated = await window.finalTranslate(newSource, prevTo, prevFrom);
+  showFinalTranslation(newSource, translated);
+  if (translated) {
+    const transEl = document.getElementById("translatedText");
+    await autoPlay(translated, prevFrom, "", transEl);
+  }
+}
+
+function switchInputMode(mode) {
+  const vSec = document.getElementById("voiceInput");
+  const tSec = document.getElementById("textInput");
+  const vBtn = document.getElementById("voiceModeBtn");
+  const tBtn = document.getElementById("textModeBtn");
+  if (mode === "voice") {
+    if (vSec) vSec.style.display = "block"; if (tSec) tSec.style.display = "none";
+    vBtn?.classList.add("active"); tBtn?.classList.remove("active");
+  } else {
+    if (vSec) vSec.style.display = "none"; if (tSec) tSec.style.display = "block";
+    tBtn?.classList.add("active"); vBtn?.classList.remove("active");
+  }
+}
+
+async function playAudio() {
+  if (_curAudio) { toggleAudio(); return; }
+  const t  = document.getElementById("translatedText")?.textContent;
+  const l  = document.getElementById("toLang")?.value;
+  const el = document.getElementById("translatedText");
+  if (t && t !== "—" && t !== "…") await autoPlay(t, l, "", el);
+}
+
+async function playFavorite(text, lang) {
+  if (!text || text === "—") return;
+  if (_curAudio) { toggleAudio(); return; }
+  await autoPlay(text, lang);
+}
+
+async function playAudioA() {
+  if (_curAudio) { toggleAudio(); return; }
+  const t  = document.getElementById("translatedTextA")?.textContent;
+  const l  = document.getElementById("convLangB")?.value;
+  const el = document.getElementById("translatedTextA");
+  if (t && t !== "—") await autoPlay(t, l, "", el);
+}
+
+async function playAudioB() {
+  if (_curAudio) { toggleAudio(); return; }
+  const t  = document.getElementById("translatedTextB")?.textContent;
+  const l  = document.getElementById("convLangA")?.value;
+  const el = document.getElementById("translatedTextB");
+  if (t && t !== "—") await autoPlay(t, l, "", el);
+}
+
+async function playPhrase(text, lang) {
+  if (text) await autoPlay(text, lang);
+}
+
+function copyTranslation() {
+  const t = document.getElementById("translatedText")?.textContent;
+  if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+}
+
+function copyText(id) {
+  const el = document.getElementById(id);
+  const t  = el?.tagName === "TEXTAREA" ? el.value : el?.textContent;
+  if (t && t !== "—") navigator.clipboard.writeText(t).then(() => showToast("Copied!")).catch(() => {});
+}
+
+function buildLangOptions(sel) {
+  let html = "";
+  LANG_GROUPS.forEach(g => {
+    const opts = g.langs
+      .filter(c => LANG_CONFIG[c])
+      .map(c => `<option value="${c}"${c === sel ? " selected" : ""}>${LANG_CONFIG[c].name}</option>`)
+      .join("");
+    if (opts) html += `<optgroup label="${g.label}">${opts}</optgroup>`;
+  });
+  return html;
+}
+
+function initLanguageSelects() {
+  const defaults = {
+    fromLang:      "te", toLang:      "ta",
+    travelFromLang:"te", travelToLang:"hi",
+    convLangA:     "te", convLangB:   "ta",
+  };
+  Object.entries(defaults).forEach(([id, def]) => {
+    const el    = document.getElementById(id);
+    if (!el) return;
+    const saved = localStorage.getItem(`vaani_lang_${id}`);
+    const val   = (saved && LANG_CONFIG[saved]) ? saved : def;
+    el.innerHTML = buildLangOptions(val);
+    el.value     = val;
+  });
+  document.getElementById("fromLang")?.addEventListener("change", onLanguageChange);
+  document.getElementById("toLang")?.addEventListener("change",   onLanguageChange);
+  document.getElementById("convLangA")?.addEventListener("change", () => onConvLangChange("A"));
+  document.getElementById("convLangB")?.addEventListener("change", () => onConvLangChange("B"));
+  ["travelFromLang", "travelToLang"].forEach(id => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      localStorage.setItem(`vaani_lang_${id}`, document.getElementById(id).value);
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TRAVEL HELPER
+// ══════════════════════════════════════════════════════════════════
+
+let _cat   = "food";
+let _tCache = {};
+let _tTimer = null;
+
+const TRAVEL_PHRASES_DEFAULT = {
+  food: [
+    { en:"Where is a good restaurant?" }, { en:"I am vegetarian." },
+    { en:"The bill please." },            { en:"Is this spicy?" },
+    { en:"No onion, no garlic please." }, { en:"Water please." },
+    { en:"I am allergic to nuts." },      { en:"Is this food fresh?" },
+  ],
+  transport: [
+    { en:"Where is the bus stand?" },      { en:"How much to go to the station?" },
+    { en:"Stop here please." },            { en:"Is this the right bus?" },
+    { en:"I am lost, please help." },      { en:"Call an auto rickshaw please." },
+    { en:"How long will it take?" },       { en:"Please go slow." },
+  ],
+  hotel: [
+    { en:"Do you have a room available?" }, { en:"What is the price per night?" },
+    { en:"Can I see the room?" },           { en:"Please clean the room." },
+    { en:"The AC is not working." },        { en:"What time is checkout?" },
+    { en:"I need an extra blanket." },      { en:"Can I get hot water?" },
+  ],
+  emergency: [
+    { en:"Please call the police." }, { en:"I need a doctor." },
+    { en:"Where is the hospital?" },  { en:"I have lost my wallet." },
+    { en:"This is an emergency!" },   { en:"Help me please!" },
+    { en:"I need medicine." },        { en:"Call an ambulance." },
+  ],
+  shopping: [
+    { en:"How much does this cost?" }, { en:"Can you reduce the price?" },
+    { en:"I want to buy this." },      { en:"Do you have a smaller size?" },
+    { en:"Where is the market?" },     { en:"Give me a discount." },
+    { en:"Do you accept cards?" },     { en:"I want to return this." },
+  ],
+  greetings: [
+    { en:"Hello, how are you?" },     { en:"Good morning." },
+    { en:"Good evening." },           { en:"Thank you very much." },
+    { en:"I don't understand." },     { en:"Please speak slowly." },
+    { en:"What is your name?" },      { en:"Nice to meet you." },
+  ],
+};
+
+function _getTravelCustom() {
+  try { return JSON.parse(localStorage.getItem("vaani_travel_custom") || "{}"); } catch (_) { return {}; }
+}
+function _saveTravelCustom(data) { localStorage.setItem("vaani_travel_custom", JSON.stringify(data)); }
+function _getTravelCategories() {
+  const custom     = _getTravelCustom();
+  const defaultKeys = Object.keys(TRAVEL_PHRASES_DEFAULT);
+  const customKeys  = Object.keys(custom).filter(k => !defaultKeys.includes(k));
+  return [...defaultKeys, ...customKeys];
+}
+function _getPhrasesForCat(cat) {
+  const custom = _getTravelCustom();
+  return [...(TRAVEL_PHRASES_DEFAULT[cat] || []), ...(custom[cat] || [])];
+}
+function _getTravelCatLabel(cat) {
+  const LABELS = { food:"Food", transport:"Transport", hotel:"Hotel", emergency:"Emergency", shopping:"Shopping", greetings:"Greetings" };
+  return LABELS[cat] || (cat.charAt(0).toUpperCase() + cat.slice(1));
+}
+
+function _renderCatTabs() {
+  const tabs = document.getElementById("catTabs");
+  if (!tabs) return;
+  const cats = _getTravelCategories();
+  tabs.innerHTML = cats.map(cat => `
+    <button class="cat-btn${_cat === cat ? " active" : ""}" onclick="selectCategory('${cat}',this)">
+      ${_getTravelCatLabel(cat)}
+    </button>`).join("") +
+    `<button class="cat-btn cat-btn-add" onclick="addTravelCategory()" title="Add category">+</button>`;
+}
+
+function selectCategory(cat) {
+  _cat = cat; _renderCatTabs();
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 150);
+}
+
+function loadTravelPhrases() {
+  _renderCatTabs(); clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 200);
+}
+
+// Travel phrases: translateText used directly (English source → no normalisation needed)
+async function renderTravelPhrases() {
+  const fromLang = document.getElementById("travelFromLang")?.value || "en";
+  const toLang   = document.getElementById("travelToLang")?.value   || "en";
+  const phrases  = _getPhrasesForCat(_cat);
+  const list     = document.getElementById("phrasesList");
+  const loading  = document.getElementById("travelLoading");
+  if (!list) return;
+  list.innerHTML = "";
+  if (loading) loading.style.display = "flex";
+
+  const isBuiltin = (phrase) => (TRAVEL_PHRASES_DEFAULT[_cat] || []).some(p => p.en === phrase.en);
+
+  for (const phrase of phrases) {
+    const fk = `${phrase.en}|${fromLang}`;
+    const tk = `${phrase.en}|${toLang}`;
+    let fromText = phrase.en;
+    if (fromLang !== "en") {
+      fromText    = _tCache[fk] || await translateText(phrase.en, "en", fromLang);
+      _tCache[fk] = fromText;
+    }
+    const toText  = _tCache[tk] || await translateText(phrase.en, "en", toLang);
+    _tCache[tk]   = toText;
+
+    const isCustomPhrase = !isBuiltin(phrase);
+    const card     = document.createElement("div"); card.className    = "phrase-card";
+    const textsDiv = document.createElement("div"); textsDiv.className = "phrase-texts";
+    const origDiv  = document.createElement("div"); origDiv.className  = "phrase-orig";  origDiv.textContent  = fromText;
+    const transDiv = document.createElement("div"); transDiv.className = "phrase-trans"; transDiv.textContent = toText;
+    const enDiv    = document.createElement("div"); enDiv.className    = "phrase-en";    enDiv.textContent    = phrase.en;
+    textsDiv.appendChild(origDiv); textsDiv.appendChild(transDiv); textsDiv.appendChild(enDiv);
+
+    const btnsDiv = document.createElement("div"); btnsDiv.className = "phrase-btns";
+    const playBtn = document.createElement("button");
+    playBtn.className = "phrase-btn phrase-play"; playBtn.textContent = "Play";
+    playBtn.dataset.text = toText; playBtn.dataset.lang = toLang;
+    playBtn.addEventListener("click", function () { autoPlay(this.dataset.text, this.dataset.lang); });
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "phrase-btn phrase-copy"; copyBtn.textContent = "Copy";
+    copyBtn.dataset.text = toText;
+    copyBtn.addEventListener("click", function () {
+      navigator.clipboard.writeText(this.dataset.text).then(() => showToast("Copied!")).catch(() => {});
+    });
+
+    btnsDiv.appendChild(playBtn); btnsDiv.appendChild(copyBtn);
+
+    if (isCustomPhrase) {
+      const delBtn      = document.createElement("button");
+      delBtn.className  = "phrase-btn phrase-del"; delBtn.textContent = "✕"; delBtn.title = "Delete phrase";
+      const phraseEn    = phrase.en;
+      delBtn.addEventListener("click", () => deleteTravelPhrase(_cat, phraseEn));
+      btnsDiv.appendChild(delBtn);
+    }
+
+    card.appendChild(textsDiv); card.appendChild(btnsDiv); list.appendChild(card);
+  }
+
+  const addRow = document.createElement("div"); addRow.className = "phrase-add-row";
+  addRow.innerHTML = `
+    <input type="text" id="newPhraseInput" class="phrase-add-input" placeholder="Add a custom sentence in English…">
+    <button class="phrase-btn phrase-play phrase-add-btn" onclick="addTravelPhrase()">Add</button>`;
+  list.appendChild(addRow);
+  if (loading) loading.style.display = "none";
+}
+
+function addTravelPhrase() {
+  const input = document.getElementById("newPhraseInput");
+  const val   = (input?.value || "").trim();
+  if (!val) { showToast("Enter a sentence first"); return; }
+  const custom = _getTravelCustom();
+  if (!custom[_cat]) custom[_cat] = [];
+  if (custom[_cat].some(p => p.en === val)) { showToast("Already exists"); return; }
+  custom[_cat].push({ en: val }); _saveTravelCustom(custom);
+  if (input) input.value = "";
+  showToast("Phrase added!");
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
+function deleteTravelPhrase(cat, phraseEn) {
+  const custom = _getTravelCustom();
+  if (!custom[cat]) return;
+  custom[cat] = custom[cat].filter(p => p.en !== phraseEn);
+  _saveTravelCustom(custom); showToast("Phrase removed");
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
+function addTravelCategory() {
+  const name = prompt("New category name:");
+  if (!name || !name.trim()) return;
+  const key    = name.trim().toLowerCase().replace(/\s+/g, "_");
+  const custom = _getTravelCustom();
+  if (custom[key] || TRAVEL_PHRASES_DEFAULT[key]) { showToast("Category already exists"); return; }
+  custom[key] = []; _saveTravelCustom(custom); _cat = key; _renderCatTabs();
+  showToast(`Category "${name}" added!`);
+  clearTimeout(_tTimer); _tTimer = setTimeout(renderTravelPhrases, 100);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// HISTORY
+// ══════════════════════════════════════════════════════════════════
+
+function _readHistory() {
+  try {
+    const raw = localStorage.getItem("vaani_history");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.original) return [parsed];
+    return [];
+  } catch (_) { return []; }
+}
+
+function _writeHistory(arr) {
+  try { localStorage.setItem("vaani_history", JSON.stringify(arr)); } catch (_) {}
+}
+
+function saveToHistory(orig, trans, fromLang, toLang) {
+  if (!orig || !trans) return;
+  const h = _readHistory();
+  if (h.length && h[0].original === orig && h[0].toLang === toLang) return;
+  h.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
+  if (h.length > 200) h.splice(200);
+  _writeHistory(h);
+  const histPage = document.getElementById("pageHistory");
+  if (histPage && histPage.classList.contains("active")) renderHistory();
+}
+
+function deleteHistory(i) {
+  const h = _readHistory();
+  if (i < 0 || i >= h.length) return;
+  h.splice(i, 1); _writeHistory(h); renderHistory();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FAVOURITES
+// ══════════════════════════════════════════════════════════════════
+
+function _readFavs() {
+  try {
+    const raw = localStorage.getItem("vaani_favs");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object" && parsed.original) return [parsed];
+    return [];
+  } catch (_) { return []; }
+}
+
+function _writeFavs(arr) {
+  try { localStorage.setItem("vaani_favs", JSON.stringify(arr)); } catch (_) {}
+}
+
+function _starSvg() {
+  return `<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+}
+
+function _isSingleResultSaved() {
+  const t  = document.getElementById("translatedText")?.textContent;
+  const tl = document.getElementById("toLang")?.value;
+  if (!t || t === "—" || t === "…") return false;
+  return _readFavs().some(f => f.translated === t && f.toLang === tl);
+}
+
+function _updateSingleStarBtn() {
+  const btn = document.getElementById("saveBtn");
+  if (!btn) return;
+  const saved = _isSingleResultSaved();
+  btn.classList.toggle("active", saved);
+  btn.innerHTML = _starSvg() + (saved ? "Saved" : "Save");
+}
+
+function saveSingleToFavourites() {
+  const o  = document.getElementById("originalText")?.textContent;
+  const t  = document.getElementById("translatedText")?.textContent;
+  const f  = document.getElementById("fromLang")?.value;
+  const tl = document.getElementById("toLang")?.value;
+  if (!t || t === "—" || t === "…") return;
+
+  const favs    = _readFavs();
+  const already = favs.some(fav => fav.translated === t && fav.toLang === tl);
+
+  if (already) {
+    const idx = favs.findIndex(fav => fav.translated === t && fav.toLang === tl);
+    if (idx !== -1) favs.splice(idx, 1);
+    _writeFavs(favs); showToast("Removed from favourites");
+  } else {
+    favs.unshift({ original: o, translated: t, fromLang: f, toLang: tl, ts: Date.now() });
+    _writeFavs(favs); showToast("Saved to favourites");
+  }
+
+  _updateSingleStarBtn();
+  const favsPage = document.getElementById("pageFavourites");
+  if (favsPage && favsPage.classList.contains("active")) renderFavourites();
+}
+
+function saveFavourite(orig, trans, fromLang, toLang) {
+  const favs = _readFavs();
+  if (favs.some(f => f.original === orig && f.toLang === toLang)) { showToast("Already saved!"); return; }
+  favs.unshift({ original: orig, translated: trans, fromLang, toLang, ts: Date.now() });
+  _writeFavs(favs); showToast("Saved to favourites");
+  _updateSingleStarBtn();
+  const favsPage = document.getElementById("pageFavourites");
+  if (favsPage && favsPage.classList.contains("active")) renderFavourites();
+}
+
+function deleteFavourite(i) {
+  const favs = _readFavs();
+  if (i < 0 || i >= favs.length) return;
+  favs.splice(i, 1); _writeFavs(favs); renderFavourites();
+}
+
+// ── RENDER HISTORY ────────────────────────────────────────────────
+
+function renderHistory() {
+  const list = document.getElementById("historyList");
+  if (!list) return;
+
+  if (!window.VAANI_AUTH_READY) {
+    list.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto 16px"></div><p class="es-sub">Loading…</p></div>`;
+    return;
+  }
+
+  if (!window._vaaniCurrentUser) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <p class="es-title">Sign in to view history</p>
+        <p class="es-sub">Sign in to save and view your translation history across devices.</p>
+        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Sign In
+        </button>
+      </div>`;
+    return;
+  }
+
+  const hist = _readHistory();
+  if (!hist.length) {
+    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><p class="es-title">No history yet</p><p class="es-sub">Start translating to see your history here.</p></div>`;
+    return;
+  }
+
+  list.innerHTML = "";
+  hist.forEach((h, i) => {
+    const card    = document.createElement("div"); card.className    = "hist-card";
+    const langs   = document.createElement("div"); langs.className   = "hist-langs";
+    langs.textContent = `${LANG_NAMES[h.fromLang] || h.fromLang} → ${LANG_NAMES[h.toLang] || h.toLang}`;
+    const orig    = document.createElement("div"); orig.className    = "hist-orig";  orig.textContent  = h.original;
+    const trans   = document.createElement("div"); trans.className   = "hist-trans"; trans.textContent = h.translated;
+    const actions = document.createElement("div"); actions.className = "hist-actions";
+
+    const playBtn = document.createElement("button"); playBtn.className = "hist-btn"; playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => autoPlay(h.translated, h.toLang));
+
+    const copyBtn = document.createElement("button"); copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () =>
+      navigator.clipboard.writeText(h.translated).then(() => showToast("Copied!")).catch(() => {})
+    );
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "hist-btn hist-btn-star";
+    const alreadySaved = _readFavs().some(f => f.translated === h.translated && f.toLang === h.toLang);
+    saveBtn.innerHTML = _starSvg() + (alreadySaved ? " Saved" : " Save");
+    saveBtn.classList.toggle("active", alreadySaved);
+    saveBtn.addEventListener("click", () => {
+      const favs    = _readFavs();
+      const idx     = favs.findIndex(f => f.translated === h.translated && f.toLang === h.toLang);
+      const nowSaved = idx === -1;
+      if (!nowSaved) {
+        favs.splice(idx, 1); _writeFavs(favs); showToast("Removed from favourites");
+      } else {
+        favs.unshift({ original: h.original, translated: h.translated, fromLang: h.fromLang, toLang: h.toLang, ts: Date.now() });
+        _writeFavs(favs); showToast("Saved to favourites");
+      }
+      saveBtn.classList.toggle("active", nowSaved);
+      saveBtn.innerHTML = _starSvg() + (nowSaved ? " Saved" : " Save");
+      _updateSingleStarBtn();
+      const favsPage = document.getElementById("pageFavourites");
+      if (favsPage && favsPage.classList.contains("active")) renderFavourites();
+    });
+
+    const delBtn = document.createElement("button"); delBtn.className = "hist-btn del"; delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", () => deleteHistory(i));
+
+    actions.appendChild(playBtn); actions.appendChild(copyBtn);
+    actions.appendChild(saveBtn); actions.appendChild(delBtn);
+    card.appendChild(langs); card.appendChild(orig);
+    card.appendChild(trans); card.appendChild(actions);
+    list.appendChild(card);
+  });
+}
+
+// ── RENDER FAVOURITES ─────────────────────────────────────────────
+
+function renderFavourites() {
+  const list = document.getElementById("favouritesList");
+  if (!list) return;
+
+  if (!window.VAANI_AUTH_READY) {
+    list.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto 16px"></div><p class="es-sub">Loading…</p></div>`;
+    return;
+  }
+
+  if (!window._vaaniCurrentUser) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+        <p class="es-title">Sign in to view favourites</p>
+        <p class="es-sub">Sign in to save and access your favourite translations.</p>
+        <button class="btn-primary" style="margin-top:20px;padding:11px 28px;font-size:14px" onclick="signInWithGoogle()">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Sign In
+        </button>
+      </div>`;
+    return;
+  }
+
+  const favs = _readFavs();
+  if (!favs.length) {
+    list.innerHTML = `<div class="empty-state"><div class="es-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div><p class="es-title">No favourites yet</p><p class="es-sub">Tap the star after translating to save here.</p></div>`;
+    return;
+  }
+
+  list.innerHTML = "";
+  favs.forEach((f, i) => {
+    const card    = document.createElement("div"); card.className    = "hist-card fav-card";
+    const langs   = document.createElement("div"); langs.className   = "hist-langs";
+    langs.textContent = `${LANG_NAMES[f.fromLang] || f.fromLang} → ${LANG_NAMES[f.toLang] || f.toLang}`;
+    const orig    = document.createElement("div"); orig.className    = "hist-orig";  orig.textContent  = f.original;
+    const trans   = document.createElement("div"); trans.className   = "hist-trans"; trans.textContent = f.translated;
+    const actions = document.createElement("div"); actions.className = "hist-actions";
+
+    const playBtn = document.createElement("button"); playBtn.className = "hist-btn"; playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => playFavorite(f.translated, f.toLang));
+
+    const copyBtn = document.createElement("button"); copyBtn.className = "hist-btn"; copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () =>
+      navigator.clipboard.writeText(f.translated).then(() => showToast("Copied!")).catch(() => showToast("Copy failed"))
+    );
+
+    const removeBtn = document.createElement("button"); removeBtn.className = "hist-btn del"; removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => deleteFavourite(i));
+
+    actions.appendChild(playBtn); actions.appendChild(copyBtn); actions.appendChild(removeBtn);
+    card.appendChild(langs); card.appendChild(orig); card.appendChild(trans); card.appendChild(actions);
+    list.appendChild(card);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+// AUTH SESSION HELPERS
+// ══════════════════════════════════════════════════════════════════
+
+const SESSION_KEY = "vaani_user_session";
+
+function _persistUserSession(user) {
+  if (user) {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        uid: user.uid, displayName: user.displayName || "",
+        email: user.email || "", photoURL: user.photoURL || "", ts: Date.now(),
+      }));
+    } catch (_) {}
+  } else {
+    try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+  }
+}
+
+function _restoreUserSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    if (Date.now() - (session.ts || 0) > 30 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(SESSION_KEY); return null;
+    }
+    return session;
+  } catch (_) { return null; }
+}
+
+function _applyUserToUI(user) {
+  const card   = document.getElementById("menuSigninCard");
+  const out    = document.getElementById("menuSignout");
+  const uEl    = document.getElementById("menuUser");
+  const avatar = document.getElementById("menuAvatar");
+  const name   = document.getElementById("menuUserName");
+  if (!user) {
+    if (card) card.style.display = "block";
+    if (out)  out.style.display  = "none";
+    if (uEl)  uEl.style.display  = "none";
+    return;
+  }
+  if (card)   card.style.display   = "none";
+  if (out)    out.style.display    = "block";
+  if (uEl)    uEl.style.display    = "flex";
+  if (avatar) avatar.src           = user.photoURL    || "";
+  if (name)   name.textContent     = user.displayName || user.email || "User";
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════════════════════════
+
+function renderSettingsPage() {
+  const container = document.getElementById("settingsContainer");
+  if (!container) return;
+  const theme    = localStorage.getItem("vaani_theme") || "dark";
+  const fromPref = localStorage.getItem("vaani_lang_fromLang") || "te";
+  const toPref   = localStorage.getItem("vaani_lang_toLang")   || "ta";
+  let dialectInfo = "";
+  if (_dialectTone) {
+    dialectInfo = `<div class="stg-row"><span class="stg-label">Detected Dialect</span><span style="font-size:13px;color:var(--accent-light)">${_dialectTone}</span></div>`;
+  }
+  container.innerHTML = `
+    <div class="stg-section">
+      <div class="stg-title">Language Preferences</div>
+      <div class="stg-row"><label class="stg-label">Default Source Language</label><select class="stg-select" onchange="stgSaveLang('fromLang',this.value)">${buildLangOptions(fromPref)}</select></div>
+      <div class="stg-row"><label class="stg-label">Default Target Language</label><select class="stg-select" onchange="stgSaveLang('toLang',this.value)">${buildLangOptions(toPref)}</select></div>
+      ${dialectInfo}
+    </div>
+    <div class="stg-section">
+      <div class="stg-title">Appearance</div>
+      <div class="stg-row">
+        <label class="stg-label">Theme</label>
+        <div class="stg-radios">
+          <label class="stg-radio-lbl"><input type="radio" name="stgTheme" value="dark"  ${theme === "dark"  ? "checked" : ""} onchange="applyTheme('dark')"><span>Dark</span></label>
+          <label class="stg-radio-lbl"><input type="radio" name="stgTheme" value="light" ${theme === "light" ? "checked" : ""} onchange="applyTheme('light')"><span>Light</span></label>
+        </div>
+      </div>
+    </div>
+    <div class="stg-section">
+      <div class="stg-title">Data &amp; Cache</div>
+      <div class="stg-btn-col">
+        <button class="stg-btn stg-warn"   onclick="stgClearHistory()">Clear Translation History</button>
+        <button class="stg-btn stg-warn"   onclick="stgClearFavs()">Clear Favourites</button>
+        <button class="stg-btn stg-warn"   onclick="stgClearTravel()">Clear Custom Travel Phrases</button>
+        <button class="stg-btn stg-danger" onclick="stgResetAll()">Reset All App Data</button>
+      </div>
+    </div>
+    <div class="stg-section">
+      <div class="stg-title">About</div>
+      <div class="stg-about">
+        <div>Vaani — Indian Language Translator v5.7</div>
+        <div>Normalisation: Universal Indian romanisation engine (normalizer.js)</div>
+        <div>Translation: Bhashini NMT + Google Translate fallback</div>
+        <div>Speech: Bhashini TTS + gTTS + Browser TTS fallback</div>
+        <div>30+ Indian languages supported</div>
+      </div>
+    </div>`;
+}
+
+function stgSaveLang(field, val) {
+  localStorage.setItem(`vaani_lang_${field}`, val);
+  const el = document.getElementById(field);
+  if (el && LANG_CONFIG[val]) el.value = val;
+}
+function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("vaani_theme", t); }
+function stgClearHistory() { if (!confirm("Clear all translation history?")) return; localStorage.removeItem("vaani_history"); showToast("History cleared"); renderHistory(); }
+function stgClearFavs()    { if (!confirm("Clear all favourites?")) return; localStorage.removeItem("vaani_favs"); showToast("Favourites cleared"); renderFavourites(); }
+function stgClearTravel()  { if (!confirm("Clear all custom travel phrases?")) return; localStorage.removeItem("vaani_travel_custom"); _tCache = {}; showToast("Custom travel phrases cleared"); }
+function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.")) return; localStorage.clear(); cacheClear(); showToast("All data reset"); setTimeout(() => location.reload(), 800); }
+
+// ══════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════════════════
+
+const PAGES     = ["Home","Single","Conversation","Chat","Travel","History","Favourites","Settings"];
+const _navStack = [];
+
+
+function _syncChatViewportLock(page) {
+  const isChat = page === "Chat";
+  document.documentElement.classList.toggle("vaani-chat-locked", isChat);
+  document.body.classList.toggle("vaani-chat-locked", isChat);
+}
+
+
+function navigateTo(page) {
+  if (!PAGES.includes(page)) page = "Home";
+  PAGES.forEach(p => {
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
+  });
+  _syncChatViewportLock(page);
+  closeMenu();
+  const currentHash = location.hash.replace("#", "").toLowerCase();
+  const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
+  if (currentPage !== page) {
+    history.pushState({ page }, "", `#${page.toLowerCase()}`);
+    _navStack.push(page);
+  } else {
+    history.replaceState({ page }, "", `#${page.toLowerCase()}`);
+    if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
+  }
+  // Close chat listener when leaving
+  if (page !== "Chat" && window.vaaniChat) window.vaaniChat.close();
+  _onPageActivate(page);
+  Object.values(_mic).forEach(ctx => { _killMic(ctx); });
+  ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
+}
+
+function _onPageActivate(page) {
+  if (page === "Travel")     { _renderCatTabs(); loadTravelPhrases(); }
+  if (page === "History")    renderHistory();
+  if (page === "Favourites") renderFavourites();
+  if (page === "Settings")   renderSettingsPage();
+  if (page === "Chat" && window.vaaniChat) window.vaaniChat.open();
+}
+
+window.addEventListener("popstate", (e) => {
+  const page = e.state?.page || "Home";
+  PAGES.forEach(p => {
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === page);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
+  });
+  _syncChatViewportLock(page);
+  closeMenu(); _onPageActivate(page);
+  Object.values(_mic).forEach(ctx => { _killMic(ctx); });
+  ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
+});
+
+function toggleMenu()  { document.getElementById("sideMenu")?.classList.toggle("open"); document.getElementById("menuOverlay")?.classList.toggle("open"); }
+function closeMenu()   { document.getElementById("sideMenu")?.classList.remove("open"); document.getElementById("menuOverlay")?.classList.remove("open"); }
+function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+
+// ── TOAST ─────────────────────────────────────────────────────────
+let _toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  if (!t) return;
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(_toastTimer); _toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+// ── KEEP-ALIVE ────────────────────────────────────────────────────
+function pingBackend() {
+  fetch(`${API_URL}/ping`, { signal: AbortSignal.timeout(10000) })
+    .then(r => r.json()).then(d => console.log("[Vaani] ping:", d.status)).catch(() => {});
+}
+pingBackend();
+setInterval(pingBackend, 10 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════════
+// AUTH — SINGLE SOURCE OF TRUTH
+// ══════════════════════════════════════════════════════════════════
+
+if (typeof window.signInWithGoogle === "undefined") {
+  window.signInWithGoogle = () => showToast("Sign-in coming soon");
+}
+if (typeof window.signOutUser === "undefined") {
+  window.signOutUser = () => showToast("Sign-out coming soon");
+}
+
+window._vaaniOnAuthChange = function (user) {
+  window._vaaniCurrentUser = user || null;
+  window.VAANI_AUTH_READY  = true;
+  console.log("[Vaani] Auth →", user ? `signed in: ${user.email}` : "signed out");
+  _applyUserToUI(user);
+  _persistUserSession(user);
+  _refreshAuthSensitivePages();
+};
+
+function _refreshAuthSensitivePages() {
+  const histPage = document.getElementById("pageHistory");
+  const favPage  = document.getElementById("pageFavourites");
+  if (histPage && histPage.classList.contains("active")) renderHistory();
+  if (favPage  && favPage.classList.contains("active"))  renderFavourites();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════
+
+document.addEventListener("DOMContentLoaded", () => {
+  applyTheme(localStorage.getItem("vaani_theme") || "dark");
+  initLanguageSelects();
+  _initTimelineControls("");
+  if (window.speechSynthesis) _loadVoices().catch(() => {});
+
+  const hash        = location.hash.replace("#", "").toLowerCase();
+  const initialPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
+  history.replaceState({ page: initialPage }, "", `#${initialPage.toLowerCase()}`);
+  _navStack.push(initialPage);
+  PAGES.forEach(p => {
+    document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
+    document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
+  });
+  _syncChatViewportLock(initialPage);
+
+  _refreshAuthSensitivePages();
+
+  // FIX 12 — reduced from 5000 → 4000 ms for snappier signed-out fallback
+  setTimeout(() => {
+    if (!window.VAANI_AUTH_READY) {
+      console.warn("[Vaani] Auth timeout — defaulting to signed out");
+      window.VAANI_AUTH_READY  = true;
+      window._vaaniCurrentUser = null;
+      _applyUserToUI(null);
+      _refreshAuthSensitivePages();
+    }
+  }, 4000);
+
+  detectUserLocation();
+
+  // ── Live translation ──────────────────────────────────────────
+  const _liveTextArea = document.getElementById("textInputArea");
+  if (_liveTextArea) _liveTextArea.addEventListener("input", handleLiveTranslation);
+
+  // ── Mic permission prefetch ───────────────────────────────────
+  if (navigator.permissions) {
+    navigator.permissions.query({ name: "microphone" }).then(r => {
+      if (r.state === "granted") _permissionGranted.audio = true;
+      r.addEventListener("change", () => { _permissionGranted.audio = r.state === "granted"; });
+    }).catch(() => {});
+  }
+});
+
+/*
+ * ── IMPORTANT: Load order in your HTML ───────────────────────────
+ *
+ *   <!-- 1. Normalizer (must come before app.js) -->
+ *   <script src="normalizer.js"></script>
+ *
+ *   <!-- 2. Firebase (auth — must come before app.js) -->
+ *   <script src="firebase.js"></script>
+ *
+ *   <!-- 3. App -->
+ *   <script src="app.js"></script>
+ *
+ * ─────────────────────────────────────────────────────────────────
+ */
