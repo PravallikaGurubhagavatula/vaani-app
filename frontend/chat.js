@@ -1288,58 +1288,24 @@
   }
 
   function _renderMessages() {
-    // 1. Always try to get the freshest reference from the DOM
-    var container = document.getElementById("messagesContainer");
-    
-    if (!container) {
-        console.warn("[Vaani] Render skipped: #messagesContainer not found in DOM");
-        return;
-    }
-
-    _messagesContainerRef = container;
-
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid 
-        ? String(window._vaaniCurrentUser.uid) 
-        : "";
-
-    // 2. Clear the container
+    var container = _messagesContainerRef; if (!container) return;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     container.innerHTML = "";
-
-    var messages = (Array.isArray(_messages) ? _messages : [])
-        .concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
-
-    console.log("[Vaani] Rendering " + messages.length + " messages into container");
-
-    if (messages.length === 0) {
-        var emptyState = document.createElement("div");
-        emptyState.className = "vc-chat-empty";
-        emptyState.textContent = "Start a conversation";
-        container.appendChild(emptyState);
-        _scrollMessagesToBottom();
-        return;
+    var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
+    if (!messages.length) {
+      var emptyState = document.createElement("div");
+      emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
+      container.appendChild(emptyState); _scrollMessagesToBottom(); return;
     }
-
-    // 3. Build the fragment (more efficient and avoids "removeChild" errors)
-    var fragment = document.createDocumentFragment();
-
     messages.forEach(function (msg) {
-        var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
-        var isOwn = (senderId === currentUid);
-        
-        var row = document.createElement("div");
-        row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
-        
-        var bubble = document.createElement("div");
-        bubble.className = "vc-msg-bubble";
-        bubble.textContent = String(msg.text || "");
-        
-        row.appendChild(bubble);
-        fragment.appendChild(row);
+      var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
+      var isOwn = senderId === currentUid;
+      var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
+      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
+      row.appendChild(bubble); container.appendChild(row);
     });
-
-    container.appendChild(fragment);
     _scrollMessagesToBottom();
-}
+  }
 
   function _listenToMessages(chatId) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
