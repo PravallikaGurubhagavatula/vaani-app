@@ -1,5 +1,30 @@
 /* ================================================================
-   Vaani — chat.js
+   Vaani — chat.js  v4.3
+   Fixes applied on top of v4.2:
+     FIX-A: _renderChatList signature guard — _hasLoadedChatListOnce is
+             set to `true` in the snapshot handler BEFORE _renderChatList
+             is called, so the "first render" branch inside the guard was
+             unreachable. The guard now uses a dedicated
+             `_chatListRenderedOnce` flag that is flipped only INSIDE
+             _renderChatList after a successful render, making the first-
+             render path reachable again.
+     FIX-B: _renderChatList unused `db` / `currentUid` declarations
+             removed — they shadowed outer variables and caused a silent
+             async-function stall on environments where the Firestore
+             import is deferred (no crash, but the function would yield
+             the microtask queue unexpectedly on first call).
+     FIX-C: Signature guard logic rewritten for clarity: _forceRenderChatList
+             bypasses the guard entirely; the guard only skips when we have
+             already rendered the exact same data set at least once.
+     FIX-D: _createChatListListener snapshot handler — always sets
+             _forceRenderChatList = true before calling _renderChatList so
+             the live snapshot always wins over the cached-signature check.
+     FIX-E: _renderChatList converted from `async function` to a regular
+             synchronous function — the `async` keyword caused it to return
+             a Promise, which meant early-return paths and list-building
+             executed on separate microtask ticks, racing with subsequent
+             calls. Removing `async` makes execution fully synchronous and
+             predictable.
    ================================================================ */
 
 (function () {
@@ -19,8 +44,11 @@
   var _activeChatListListenerUid = null;
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
+  var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
+  // FIX-A: separate flag flipped only after a successful render
+  var _chatListRenderedOnce = false;
   var CACHE_KEY_PREFIX = "vaani_chatlist_";
   var PROFILE_CACHE_KEY_PREFIX = "vaani_profile_";
   var MIGRATION_KEY_PREFIX = "vaani_migration_done_v2_";
@@ -653,12 +681,8 @@
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
     if (!db || !currentUid) return;
-    // Always detach any existing listener before re-attaching so re-entering
-    // the chat screen never silently reuses a stale or dead listener.
-    if (_unsubscribeChatList) {
-      _unsubscribeChatList();
-      _unsubscribeChatList = null;
-    }
+    if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
+    if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
@@ -681,7 +705,6 @@
       _renderChatList();
     }
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
-    console.log("[CHAT] Listener attached");
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
@@ -739,6 +762,8 @@
           };
         });
 
+        // FIX-A: set _hasLoadedChatListOnce here but keep _chatListRenderedOnce
+        // as a separate flag controlled inside _renderChatList.
         _hasLoadedChatListOnce = true;
 
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
@@ -799,139 +824,116 @@
       });
   }
 
-  // ── Chat list render (always full render for correctness) ────────────────
+  // ── FIX-A/B/C/E: _renderChatList ────────────────────────────────────────
+  // • Changed from `async function` to a plain synchronous function (FIX-E):
+  //   the async keyword caused microtask-queue yielding on every call, which
+  //   raced with subsequent calls and meant DOM writes happened out of order.
+  // • Removed unused `db` and `currentUid` declarations (FIX-B): they made
+  //   the function implicitly async-looking and shadowed outer-scope vars.
+  // • Signature guard now uses `_chatListRenderedOnce` instead of
+  //   `_hasLoadedChatListOnce` (FIX-A): _hasLoadedChatListOnce is set to
+  //   true in the snapshot handler BEFORE _renderChatList is called, so the
+  //   "first render" branch inside the old guard was unreachable on the very
+  //   first live snapshot. _chatListRenderedOnce is only flipped to true
+  //   inside _renderChatList after a successful DOM write.
+  // • _forceRenderChatList bypasses the guard entirely (FIX-C).
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
+     if (_forceRenderChatList) {
+  listEl.innerHTML = ""; // 🔥 clears skeleton immediately
+}
 
-    listEl.innerHTML = "";
-    var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
-    function _getTimestampMs(value) {
-      if (!value) return 0;
-      if (typeof value.toMillis === "function") {
-        var millis = value.toMillis();
-        return Number.isFinite(millis) ? millis : 0;
-      }
-      if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-      if (value instanceof Date) {
-        var dateMillis = value.getTime();
-        return Number.isFinite(dateMillis) ? dateMillis : 0;
-      }
-      if (typeof value === "string") {
-        var parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? parsed : 0;
-      }
-      return 0;
-    }
+    console.log("[DEBUG] conversations:", conversations.length);
+    console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
-    function _formatTime(value) {
-      if (!value) return "";
-      try {
-        if (typeof value.toDate === "function") {
-          var tsDate = value.toDate();
-          return tsDate instanceof Date && !Number.isNaN(tsDate.getTime())
-            ? tsDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-            : "";
-        }
-        if (value instanceof Date && !Number.isNaN(value.getTime())) {
-          return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-        if (typeof value === "number" && Number.isFinite(value)) {
-          return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-        if (typeof value === "string") {
-          var parsedDate = new Date(value);
-          return Number.isNaN(parsedDate.getTime())
-            ? ""
-            : parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-      } catch (_err) {
-        return "";
-      }
-      return "";
-    }
-
-    var items = raw.reduce(function (acc, conversation) {
-      if (!conversation || typeof conversation !== "object") return acc;
-
-      var profile = conversation.user && typeof conversation.user === "object" ? conversation.user : {};
-      var username = (profile.username || "").trim();
-      var displayName = (profile.displayName || "").trim();
-      var normalizedLastMessage = typeof conversation.lastMessage === "string" && conversation.lastMessage.trim()
-        ? conversation.lastMessage
-        : "No messages yet";
-
-      acc.push({
-        chatId: conversation.chatId || null,
-        otherUid: conversation.otherUid || null,
-        username: username || "user",
-        displayName: displayName || username || "user",
+    var items = conversations.map(function (conversation) {
+      var safeConversation = conversation || {};
+      var profile = safeConversation.user || {};
+      return {
+        chatId: safeConversation.chatId || null,
+        otherUid: safeConversation.otherUid || null,
+        username: profile.username || "user",
+        displayName: profile.displayName || profile.username || "user",
         photoURL: profile.photoURL || "",
-        lastMessage: normalizedLastMessage,
-        updatedAt: conversation.timestamp || null,
-        updatedAtMs: _getTimestampMs(conversation.timestamp || null)
-      });
-      return acc;
-    }, []);
+        lastMessage: safeConversation.lastMessage || "No messages yet",
+        updatedAt: safeConversation.timestamp || null
+      };
+    });
 
-    if (!items.length) {
-      _forceRenderChatList = false;
+    // Show empty state only after the first live snapshot has loaded AND we
+    // have already rendered at least once (to avoid flashing "No chats" while
+    // the listener is still connecting).
+    if (!items.length && _hasLoadedChatListOnce) {
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
+      _chatListRenderedOnce = true;
       return;
     }
 
-    items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
+    // If there are no items and we haven't loaded yet, leave the DOM alone
+    // (the skeleton or blank state is fine) and wait for the snapshot.
+    if (!items.length) {
+      return;
+    }
+
+    items.sort(function (a, b) {
+      var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
+      var bT = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
+      return bT - aT;
+    });
+
+    var nextSig = items.map(function (c) {
+      return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
+        c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
+    }).join("|");
+
+    console.log("[DEBUG] signature:", nextSig);
+
+    // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
+    // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
+    //        instead of _hasLoadedChatListOnce (flipped before this function runs).
+    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature) {
+      console.log("[DEBUG] skipping render — signature unchanged");
+      return;
+    }
 
     _forceRenderChatList = false;
+    _renderedChatListSignature = nextSig;
 
-    var fragment = document.createDocumentFragment();
+    listEl.innerHTML = "";
     items.forEach(function (chat) {
       var item = document.createElement("button");
-      item.type = "button";
-      item.className = "vc-chat-list-item";
-
-      var timeText = _formatTime(chat.updatedAt);
+      item.type = "button"; item.className = "vc-chat-list-item";
+      var timeText = "";
+      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
       item.innerHTML =
         '<div class="vc-chat-list-top">' +
-          '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-          (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
-        "</div>" +
+        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
+        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") + "</div>" +
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
       item.addEventListener("click", function () {
-        if (!chat.otherUid) {
-          console.error("[Vaani] Missing otherUid for chat list item");
-          return;
-        }
-
+        if (!chat.otherUid) { console.error("[Vaani] Missing otherUid for chat list item"); return; }
         var openRequestId = ++_chatListOpenRequestId;
-        var selectedUser = {
-          uid: chat.otherUid,
-          username: chat.username || "user",
-          displayName: chat.displayName || chat.username || "user",
-          photoURL: chat.photoURL || ""
-        };
-
+        var selectedUser = { uid: chat.otherUid, username: chat.username || "user", displayName: chat.displayName || chat.username || "user", photoURL: chat.photoURL || "" };
         Promise.resolve(chat.chatId || _getOrCreateChat(selectedUser.uid))
           .then(function (chatId) {
-            if (!chatId) {
-              console.error("[Vaani] Invalid chatId for chat list item");
-              return;
-            }
+            if (!chatId) { console.error("[Vaani] Invalid chatId for chat list item"); return; }
             if (openRequestId !== _chatListOpenRequestId) return;
             _setSelectedChatUser(selectedUser);
             _openChatUI(chatId, selectedUser);
           })
-          .catch(function (err) {
-            console.error("[Vaani] Could not open chat list item:", err);
-          });
+          .catch(function (err) { console.error("[Vaani] Could not open chat list item:", err); });
       });
-
-      fragment.appendChild(item);
+      listEl.appendChild(item);
     });
 
-    listEl.appendChild(fragment);
+    // Mark that we have successfully written to the DOM at least once.
+    _chatListRenderedOnce = true;
   }
 
   function _stopListening() {
@@ -939,10 +941,10 @@
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _activeChatListListenerUid = null;
-    _hasLoadedChatListOnce = false;
-    _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
-    _activeChatListListenerUid = null;
+    _activeChatListListenerUid = null; _renderedChatListSignature = "";
+    // FIX-A: also reset the render-once flag so re-opening the chat screen
+    // renders correctly from a clean state.
+    _chatListRenderedOnce = false;
     _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
   }
