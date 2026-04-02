@@ -1288,24 +1288,58 @@
   }
 
   function _renderMessages() {
-    var container = _messagesContainerRef; if (!container) return;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
-    container.innerHTML = "";
-    var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
-    if (!messages.length) {
-      var emptyState = document.createElement("div");
-      emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
-      container.appendChild(emptyState); _scrollMessagesToBottom(); return;
+    // 1. Always try to get the freshest reference from the DOM
+    var container = document.getElementById("messagesContainer");
+    
+    if (!container) {
+        console.warn("[Vaani] Render skipped: #messagesContainer not found in DOM");
+        return;
     }
+
+    _messagesContainerRef = container;
+
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid 
+        ? String(window._vaaniCurrentUser.uid) 
+        : "";
+
+    // 2. Clear the container
+    container.innerHTML = "";
+
+    var messages = (Array.isArray(_messages) ? _messages : [])
+        .concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
+
+    console.log("[Vaani] Rendering " + messages.length + " messages into container");
+
+    if (messages.length === 0) {
+        var emptyState = document.createElement("div");
+        emptyState.className = "vc-chat-empty";
+        emptyState.textContent = "Start a conversation";
+        container.appendChild(emptyState);
+        _scrollMessagesToBottom();
+        return;
+    }
+
+    // 3. Build the fragment (more efficient and avoids "removeChild" errors)
+    var fragment = document.createDocumentFragment();
+
     messages.forEach(function (msg) {
-      var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
-      var isOwn = senderId === currentUid;
-      var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
-      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
-      row.appendChild(bubble); container.appendChild(row);
+        var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
+        var isOwn = (senderId === currentUid);
+        
+        var row = document.createElement("div");
+        row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
+        
+        var bubble = document.createElement("div");
+        bubble.className = "vc-msg-bubble";
+        bubble.textContent = String(msg.text || "");
+        
+        row.appendChild(bubble);
+        fragment.appendChild(row);
     });
+
+    container.appendChild(fragment);
     _scrollMessagesToBottom();
-  }
+}
 
   function _listenToMessages(chatId) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
@@ -1373,21 +1407,43 @@
   }
 
   // ── _openChatUI ─────────────────────────────────────────────────────────
+  // Opens the chat view for the given chatId + user profile.
+  // Order of operations:
+  //   1. Tear down any existing message listener if switching chats.
+  //   2. Set module-level state (_activeChatId, _selectedChatUser).
+  //   3. Render the chat UI into #vcChatScreen (synchronous innerHTML swap).
+  //   4. Show the chat panel / hide home panel.
+  //   5. Attach the Firestore message listener — container is now in DOM.
   function _openChatUI(chatId, user) {
     if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
-    // Tear down old listener if switching chats
+    console.log("[Vaani] _openChatUI:", chatId, user);
+
+    // Tear down previous listener only when switching to a different chat
     if (_activeChatId && _activeChatId !== chatId) {
-      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
       _teardownMessageListener();
     }
 
-    _activeChatId     = chatId;
+    _activeChatId    = String(chatId);
     _selectedChatUser = user || {};
 
-    console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});     // builds DOM and flips panel visibility
-    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
+    // Render the chat shell (sets innerHTML, wires back button & input handlers)
+    _renderChatUI(_selectedChatUser);
+
+    // _renderChatUI already calls _syncViewWithSelection implicitly via
+    // direct style manipulation, but we call it again to be safe.
+    _syncViewWithSelection();
+
+    // At this point #messagesContainer is definitely in the DOM because
+    // _renderChatUI just wrote it. Grab the reference and start listening.
+    _messagesContainerRef = document.getElementById("messagesContainer");
+    if (!_messagesContainerRef) {
+      console.error("[Vaani] _openChatUI: messagesContainer not found after render");
+      return;
+    }
+
+    // Attach (or reuse) the Firestore listener for this chat
+    _listenToMessages(_activeChatId);
   }
 
   function _renderChatUI(otherProfile) {
