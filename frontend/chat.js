@@ -1373,43 +1373,21 @@
   }
 
   // ── _openChatUI ─────────────────────────────────────────────────────────
-  // Opens the chat view for the given chatId + user profile.
-  // Order of operations:
-  //   1. Tear down any existing message listener if switching chats.
-  //   2. Set module-level state (_activeChatId, _selectedChatUser).
-  //   3. Render the chat UI into #vcChatScreen (synchronous innerHTML swap).
-  //   4. Show the chat panel / hide home panel.
-  //   5. Attach the Firestore message listener — container is now in DOM.
   function _openChatUI(chatId, user) {
     if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
-    console.log("[Vaani] _openChatUI:", chatId, user);
-
-    // Tear down previous listener only when switching to a different chat
+    // Tear down old listener if switching chats
     if (_activeChatId && _activeChatId !== chatId) {
+      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
       _teardownMessageListener();
     }
 
-    _activeChatId    = String(chatId);
+    _activeChatId     = chatId;
     _selectedChatUser = user || {};
 
-    // Render the chat shell (sets innerHTML, wires back button & input handlers)
-    _renderChatUI(_selectedChatUser);
-
-    // _renderChatUI already calls _syncViewWithSelection implicitly via
-    // direct style manipulation, but we call it again to be safe.
-    _syncViewWithSelection();
-
-    // At this point #messagesContainer is definitely in the DOM because
-    // _renderChatUI just wrote it. Grab the reference and start listening.
-    _messagesContainerRef = document.getElementById("messagesContainer");
-    if (!_messagesContainerRef) {
-      console.error("[Vaani] _openChatUI: messagesContainer not found after render");
-      return;
-    }
-
-    // Attach (or reuse) the Firestore listener for this chat
-    _listenToMessages(_activeChatId);
+    console.log("[Vaani] _openChatUI: chatId =", chatId);
+    _renderChatUI(user || {});     // builds DOM and flips panel visibility
+    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
   }
 
   function _renderChatUI(otherProfile) {
