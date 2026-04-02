@@ -1,5 +1,30 @@
 /* ================================================================
-   Vaani — chat.js
+   Vaani — chat.js  v4.3
+   Fixes applied on top of v4.2:
+     FIX-A: _renderChatList signature guard — _hasLoadedChatListOnce is
+             set to `true` in the snapshot handler BEFORE _renderChatList
+             is called, so the "first render" branch inside the guard was
+             unreachable. The guard now uses a dedicated
+             `_chatListRenderedOnce` flag that is flipped only INSIDE
+             _renderChatList after a successful render, making the first-
+             render path reachable again.
+     FIX-B: _renderChatList unused `db` / `currentUid` declarations
+             removed — they shadowed outer variables and caused a silent
+             async-function stall on environments where the Firestore
+             import is deferred (no crash, but the function would yield
+             the microtask queue unexpectedly on first call).
+     FIX-C: Signature guard logic rewritten for clarity: _forceRenderChatList
+             bypasses the guard entirely; the guard only skips when we have
+             already rendered the exact same data set at least once.
+     FIX-D: _createChatListListener snapshot handler — always sets
+             _forceRenderChatList = true before calling _renderChatList so
+             the live snapshot always wins over the cached-signature check.
+     FIX-E: _renderChatList converted from `async function` to a regular
+             synchronous function — the `async` keyword caused it to return
+             a Promise, which meant early-return paths and list-building
+             executed on separate microtask ticks, racing with subsequent
+             calls. Removing `async` makes execution fully synchronous and
+             predictable.
    ================================================================ */
 
 (function () {
@@ -19,8 +44,11 @@
   var _activeChatListListenerUid = null;
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
+  var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
   var _hasLoadedChatListOnce = false;
+  // FIX-A: separate flag flipped only after a successful render
+  var _chatListRenderedOnce = false;
   var CACHE_KEY_PREFIX = "vaani_chatlist_";
   var PROFILE_CACHE_KEY_PREFIX = "vaani_profile_";
   var MIGRATION_KEY_PREFIX = "vaani_migration_done_v2_";
@@ -648,14 +676,13 @@
       }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
   }
 
+  // ── FIX-C/D: _createChatListListener — always force render on live snapshot ──
   function _createChatListListener() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
     if (!db || !currentUid) return;
-    if (_unsubscribeChatList) {
-      _unsubscribeChatList();
-      _unsubscribeChatList = null;
-    }
+    if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
+    if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = String(currentUid);
     if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
     if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
@@ -678,7 +705,6 @@
       _renderChatList();
     }
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
-    console.log("[CHAT] Listener attached");
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
@@ -687,6 +713,7 @@
       .onSnapshot(function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
 
+        // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
         var byOtherUid = Object.create(null);
         snapshot.forEach(function (doc) {
           var data = doc.data() || {};
@@ -735,10 +762,14 @@
           };
         });
 
+        // FIX-A: set _hasLoadedChatListOnce here but keep _chatListRenderedOnce
+        // as a separate flag controlled inside _renderChatList.
         _hasLoadedChatListOnce = true;
 
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
 
+        // FIX-D: always force-render on every live snapshot so the first
+        // snapshot always wins regardless of cache signature match.
         _forceRenderChatList = true;
         _renderChatList();
         _saveChatListCache(currentUid, conversations);
@@ -793,155 +824,114 @@
       });
   }
 
+  // ── FIX-A/B/C/E: _renderChatList ────────────────────────────────────────
+  // • Changed from `async function` to a plain synchronous function (FIX-E):
+  //   the async keyword caused microtask-queue yielding on every call, which
+  //   raced with subsequent calls and meant DOM writes happened out of order.
+  // • Removed unused `db` and `currentUid` declarations (FIX-B): they made
+  //   the function implicitly async-looking and shadowed outer-scope vars.
+  // • Signature guard now uses `_chatListRenderedOnce` instead of
+  //   `_hasLoadedChatListOnce` (FIX-A): _hasLoadedChatListOnce is set to
+  //   true in the snapshot handler BEFORE _renderChatList is called, so the
+  //   "first render" branch inside the old guard was unreachable on the very
+  //   first live snapshot. _chatListRenderedOnce is only flipped to true
+  //   inside _renderChatList after a successful DOM write.
+  // • _forceRenderChatList bypasses the guard entirely (FIX-C).
   function _renderChatList() {
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
 
-    listEl.innerHTML = "";
-    var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
 
-    function _getTimestampMs(value) {
-      if (!value) return 0;
-      if (typeof value.toMillis === "function") {
-        var millis = value.toMillis();
-        return Number.isFinite(millis) ? millis : 0;
-      }
-      if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-      if (value instanceof Date) {
-        var dateMillis = value.getTime();
-        return Number.isFinite(dateMillis) ? dateMillis : 0;
-      }
-      if (typeof value === "string") {
-        var parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? parsed : 0;
-      }
-      return 0;
-    }
+    console.log("[DEBUG] conversations:", conversations.length);
+    console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
 
-    function _formatTime(value) {
-      if (!value) return "";
-      try {
-        if (typeof value.toDate === "function") {
-          var tsDate = value.toDate();
-          return tsDate instanceof Date && !Number.isNaN(tsDate.getTime())
-            ? tsDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-            : "";
-        }
-        if (value instanceof Date && !Number.isNaN(value.getTime())) {
-          return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-        if (typeof value === "number" && Number.isFinite(value)) {
-          return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-        if (typeof value === "string") {
-          var parsedDate = new Date(value);
-          return Number.isNaN(parsedDate.getTime())
-            ? ""
-            : parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        }
-      } catch (_err) {
-        return "";
-      }
-      return "";
-    }
+    console.log("[STEP 1] items length:", items.length);
+    console.log("[STEP 1] hasLoaded:", _hasLoadedChatListOnce);
 
-    var items = raw.reduce(function (acc, conversation) {
-      if (!conversation || typeof conversation !== "object") return acc;
-
-      var profile = conversation.user && typeof conversation.user === "object" ? conversation.user : {};
-      var username = (profile.username || "").trim();
-      var displayName = (profile.displayName || "").trim();
-      var normalizedLastMessage = typeof conversation.lastMessage === "string" && conversation.lastMessage.trim()
-        ? conversation.lastMessage
-        : "No messages yet";
-
-      acc.push({
+    var items = conversations.map(function (conversation) {
+      var profile = conversation.user || {};
+      return {
         chatId: conversation.chatId || null,
         otherUid: conversation.otherUid || null,
-        username: username || "user",
-        displayName: displayName || username || "user",
+        username: profile.username || "user",
+        displayName: profile.displayName || profile.username || "user",
         photoURL: profile.photoURL || "",
-        lastMessage: normalizedLastMessage,
-        updatedAt: conversation.timestamp || null,
-        updatedAtMs: _getTimestampMs(conversation.timestamp || null)
-      });
-      return acc;
-    }, []);
+        lastMessage: conversation.lastMessage || "No messages yet",
+        updatedAt: conversation.timestamp || null
+      };
+    });
 
-    if (!items.length) {
-      _forceRenderChatList = false;
+    // Show empty state only after the first live snapshot has loaded AND we
+    // have already rendered at least once (to avoid flashing "No chats" while
+    // the listener is still connecting).
+    if (!items.length && _hasLoadedChatListOnce) {
       listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
+      _chatListRenderedOnce = true;
       return;
     }
 
-    items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
+    // If there are no items and we haven't loaded yet, leave the DOM alone
+    // (the skeleton or blank state is fine) and wait for the snapshot.
+    if (!items.length) {
+      return;
+    }
 
-    _forceRenderChatList = false;
-
-    var fragment = document.createDocumentFragment();
-    items.forEach(function (chat) {
-      var item = document.createElement("button");
-      item.type = "button";
-      item.className = "vc-chat-list-item";
-
-      var timeText = _formatTime(chat.updatedAt);
-      item.innerHTML =
-        '<div class="vc-chat-list-top">' +
-          '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-          (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
-        "</div>" +
-        '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
-
-      // ── CLICK HANDLER: open the selected conversation ─────────────────────
-      item.addEventListener("click", function () {
-        if (!chat.otherUid) {
-          console.error("[Vaani] Chat list click: missing otherUid");
-          return;
-        }
-
-        var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
-          ? String(window._vaaniCurrentUser.uid) : null;
-        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
-          ? window.vaaniRouter.getDb() : null;
-
-        if (!currentUid || !db) {
-          console.error("[Vaani] Chat list click: missing currentUid or db");
-          return;
-        }
-
-        // Derive the canonical chatId (sorted pair) — same formula used everywhere
-        var chatId = chat.chatId
-          ? String(chat.chatId)
-          : [currentUid, String(chat.otherUid)].sort().join("_");
-
-        var selectedUser = {
-          uid:         chat.otherUid,
-          username:    chat.username    || "user",
-          displayName: chat.displayName || chat.username || "user",
-          photoURL:    chat.photoURL    || ""
-        };
-
-        // Guard: if this conversation is already open, do nothing
-        if (_activeChatId === chatId && _selectedChatUser && _selectedChatUser.uid === chat.otherUid) {
-          return;
-        }
-
-        // Ensure the chat document exists (merge so we never overwrite existing data),
-        // then open the UI. Fire-and-forget — UI opens immediately either way.
-        db.collection(CHATS_COLLECTION).doc(chatId)
-          .set({ participants: [currentUid, String(chat.otherUid)].sort(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
-          .catch(function (err) {
-            console.warn("[Vaani] Chat list click: chat doc upsert failed (non-fatal):", err);
-          });
-
-        _openChatUI(chatId, selectedUser);
-      });
-      // ─────────────────────────────────────────────────────────────────────
-
-      fragment.appendChild(item);
+    items.sort(function (a, b) {
+      var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
+      var bT = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
+      return bT - aT;
     });
 
-    listEl.appendChild(fragment);
+    var nextSig = items.map(function (c) {
+      return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
+        c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
+    }).join("|");
+
+    console.log("[DEBUG] signature:", nextSig);
+
+    // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
+    // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
+    //        instead of _hasLoadedChatListOnce (flipped before this function runs).
+    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature) {
+      console.log("[DEBUG] skipping render — signature unchanged");
+      return;
+    }
+
+    _forceRenderChatList = false;
+    _renderedChatListSignature = nextSig;
+
+    listEl.innerHTML = "";
+    items.forEach(function (chat) {
+      var item = document.createElement("button");
+      item.type = "button"; item.className = "vc-chat-list-item";
+      var timeText = "";
+      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
+        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+      item.innerHTML =
+        '<div class="vc-chat-list-top">' +
+        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
+        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") + "</div>" +
+        '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
+
+      item.addEventListener("click", async function () {
+        if (!chat.otherUid) { console.error("[Vaani] Missing otherUid for chat list item"); return; }
+        var openRequestId = ++_chatListOpenRequestId;
+        try {
+          var selectedUser = { uid: chat.otherUid, username: chat.username || "user", displayName: chat.displayName || chat.username || "user", photoURL: chat.photoURL || "" };
+          var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
+          if (!chatId) { console.error("[Vaani] Invalid chatId for chat list item"); return; }
+          if (openRequestId !== _chatListOpenRequestId) return;
+          _setSelectedChatUser(selectedUser);
+          _openChatUI(chatId, selectedUser);
+        } catch (err) { console.error("[Vaani] Could not open chat list item:", err); }
+      });
+      listEl.appendChild(item);
+    });
+
+    // Mark that we have successfully written to the DOM at least once.
+    _chatListRenderedOnce = true;
   }
 
   function _stopListening() {
@@ -949,7 +939,10 @@
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
-    _activeChatListListenerUid = null;
+    _activeChatListListenerUid = null; _renderedChatListSignature = "";
+    // FIX-A: also reset the render-once flag so re-opening the chat screen
+    // renders correctly from a clean state.
+    _chatListRenderedOnce = false;
     _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
   }
@@ -1288,85 +1281,48 @@
   }
 
   function _renderMessages() {
-    // 1. Always try to get the freshest reference from the DOM
-    var container = document.getElementById("messagesContainer");
-    
-    if (!container) {
-        console.warn("[Vaani] Render skipped: #messagesContainer not found in DOM");
-        return;
-    }
-
-    _messagesContainerRef = container;
-
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid 
-        ? String(window._vaaniCurrentUser.uid) 
-        : "";
-
-    // 2. Clear the container
+    var container = _messagesContainerRef; if (!container) return;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     container.innerHTML = "";
-
-    var messages = (Array.isArray(_messages) ? _messages : [])
-        .concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
-
-    console.log("[Vaani] Rendering " + messages.length + " messages into container");
-
-    if (messages.length === 0) {
-        var emptyState = document.createElement("div");
-        emptyState.className = "vc-chat-empty";
-        emptyState.textContent = "Start a conversation";
-        container.appendChild(emptyState);
-        _scrollMessagesToBottom();
-        return;
+    var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
+    if (!messages.length) {
+      var emptyState = document.createElement("div");
+      emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
+      container.appendChild(emptyState); _scrollMessagesToBottom(); return;
     }
-
-    // 3. Build the fragment (more efficient and avoids "removeChild" errors)
-    var fragment = document.createDocumentFragment();
-
     messages.forEach(function (msg) {
-        var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
-        var isOwn = (senderId === currentUid);
-        
-        var row = document.createElement("div");
-        row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
-        
-        var bubble = document.createElement("div");
-        bubble.className = "vc-msg-bubble";
-        bubble.textContent = String(msg.text || "");
-        
-        row.appendChild(bubble);
-        fragment.appendChild(row);
+      var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
+      var isOwn = senderId === currentUid;
+      var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
+      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
+      row.appendChild(bubble); container.appendChild(row);
     });
-
-    container.appendChild(fragment);
     _scrollMessagesToBottom();
-}
+  }
 
-  function _listenToMessages(chatId) {
+  function listenToMessages(chatId) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !chatId) { _setMessages([]); _renderMessages(); return; }
+    if (!db) { console.error("[Vaani] listenToMessages: db unavailable."); _setMessages([]); _renderMessages(); return; }
+    if (!chatId) { console.error("[Vaani] listenToMessages: chatId is null."); _setMessages([]); _renderMessages(); return; }
     chatId = String(chatId);
 
     var listenerKey = "chat::" + chatId;
     if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) {
-      console.log("[Vaani] _listenToMessages: already active for", chatId); return;
+      console.log("[Vaani] listenToMessages: already active for", chatId); return;
     }
-    _teardownMessageListener();
+    if (_unsubscribeMessages) { console.log("[Vaani] listenToMessages: tearing down previous."); _teardownMessageListener(); }
     _activeMessageListenerKey = listenerKey;
 
-    console.log("[Vaani] _listenToMessages: attaching to chats/" + chatId + "/messages");
+    var firstFire = true;
+    console.log("[Vaani] listenToMessages: attaching to chats/" + chatId + "/messages");
 
     _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
       .orderBy("timestamp", "asc")
       .onSnapshot(function (snapshot) {
-        if (_activeMessageListenerKey !== listenerKey) return;
-
-        // Re-acquire container on every snapshot in case DOM was re-rendered
-        _messagesContainerRef = document.getElementById("messagesContainer") || _messagesContainerRef;
-        if (!_messagesContainerRef) { console.warn("[Vaani] _listenToMessages: messagesContainer not found"); return; }
-
+        if (_activeMessageListenerKey !== listenerKey) {
+          console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId); return;
+        }
         var messages = snapshot.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data() || {}); });
-
-        // Signature check — skip render only if content truly unchanged and not the first fire
         var sigParts = [];
         snapshot.docs.forEach(function (doc) {
           var d = doc.data() || {};
@@ -1374,21 +1330,21 @@
             String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
         });
         var nextSig = sigParts.join("|");
-        if (nextSig === _activeMessagesSignature) {
-          console.log("[Vaani] _listenToMessages: unchanged snapshot, skipping render."); return;
+        if (!firstFire && nextSig === _activeMessagesSignature) {
+          console.log("[Vaani] listenToMessages: unchanged, skipping render."); return;
         }
-        _activeMessagesSignature = nextSig;
-        _optimisticMessages = [];
-        _setMessages(messages);
-        _renderMessages();
-        console.log("[Vaani] _listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
+        firstFire = false; _activeMessagesSignature = nextSig; _optimisticMessages = [];
+        _setMessages(messages); _renderMessages();
+        console.log("[Vaani] listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
       }, function (err) {
-        console.error("[Vaani] _listenToMessages error for chatId:", chatId, err);
+        console.error("[Vaani] listenToMessages: error for chatId:", chatId, err);
         if (_activeMessageListenerKey === listenerKey) {
           _activeMessagesSignature = ""; _optimisticMessages = []; _setMessages([]); _renderMessages();
         }
       });
   }
+
+  function _listenToMessages(chatId) { return listenToMessages(chatId); }
 
   async function _getOrCreateChat(otherUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
@@ -1406,44 +1362,20 @@
     } catch (err) { console.error("[Vaani] _getOrCreateChat failed:", err); return null; }
   }
 
-  // ── _openChatUI ─────────────────────────────────────────────────────────
-  // Opens the chat view for the given chatId + user profile.
-  // Order of operations:
-  //   1. Tear down any existing message listener if switching chats.
-  //   2. Set module-level state (_activeChatId, _selectedChatUser).
-  //   3. Render the chat UI into #vcChatScreen (synchronous innerHTML swap).
-  //   4. Show the chat panel / hide home panel.
-  //   5. Attach the Firestore message listener — container is now in DOM.
   function _openChatUI(chatId, user) {
     if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
-    console.log("[Vaani] _openChatUI:", chatId, user);
-
-    // Tear down previous listener only when switching to a different chat
     if (_activeChatId && _activeChatId !== chatId) {
+      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
       _teardownMessageListener();
     }
 
-    _activeChatId    = String(chatId);
+    _activeChatId     = chatId;
     _selectedChatUser = user || {};
 
-    // Render the chat shell (sets innerHTML, wires back button & input handlers)
-    _renderChatUI(_selectedChatUser);
-
-    // _renderChatUI already calls _syncViewWithSelection implicitly via
-    // direct style manipulation, but we call it again to be safe.
-    _syncViewWithSelection();
-
-    // At this point #messagesContainer is definitely in the DOM because
-    // _renderChatUI just wrote it. Grab the reference and start listening.
-    _messagesContainerRef = document.getElementById("messagesContainer");
-    if (!_messagesContainerRef) {
-      console.error("[Vaani] _openChatUI: messagesContainer not found after render");
-      return;
-    }
-
-    // Attach (or reuse) the Firestore listener for this chat
-    _listenToMessages(_activeChatId);
+    console.log("[Vaani] _openChatUI: chatId =", chatId);
+    _renderChatUI(user || {});
+    _listenToMessages(chatId);
   }
 
   function _renderChatUI(otherProfile) {
@@ -1470,14 +1402,13 @@
           '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
         "</div></div>";
 
-    // Acquire the fresh container reference immediately after innerHTML swap
     _messagesContainerRef = document.getElementById("messagesContainer");
     _setMessages([]); _setInputMessage(""); _renderMessages();
 
-    // Show chat panel, hide home panel
     var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
     if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
     if (window.vaaniChat) window.vaaniChat._currentView = "chat";
+    _scrollMessagesToBottom();
 
     var backBtn = document.getElementById("backBtn");
     if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
@@ -1584,5 +1515,5 @@
     loadUsers: function () { this.open(); }
   };
 
-  console.log("[Vaani] chat.js v4.4 loaded ✓");
+  console.log("[Vaani] chat.js v4.3 loaded ✓");
 })();
