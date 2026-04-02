@@ -1404,32 +1404,37 @@
   //   4. Show the chat panel / hide home panel.
   //   5. Attach the Firestore message listener — container is now in DOM.
   function _openChatUI(chatId, user) {
-    if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
-
-    console.log("[Vaani] _openChatUI:", chatId, user);
-
-    // Tear down previous listener only when switching to a different chat
-    if (_activeChatId && _activeChatId !== chatId) {
-      _teardownMessageListener();
-    }
-
-    _activeChatId    = String(chatId);
-    _selectedChatUser = user || {};
-
-    // Render the chat shell (sets innerHTML, wires back button & input handlers)
-    _renderChatUI(_selectedChatUser);
-
-    // At this point #messagesContainer is definitely in the DOM because
-    // _renderChatUI just wrote it. Grab the reference and start listening.
-    _messagesContainerRef = document.getElementById("messagesContainer");
-    if (!_messagesContainerRef) {
-      console.error("[Vaani] _openChatUI: messagesContainer not found after render");
-      return;
-    }
-
-    // Attach (or reuse) the Firestore listener for this chat
-    _listenToMessages(_activeChatId);
+  if (!chatId) {
+    console.error("[Vaani] _openChatUI: chatId missing");
+    return;
   }
+
+  console.log("[Vaani] _openChatUI:", chatId, user);
+
+  if (_activeChatId && _activeChatId !== chatId) {
+    _teardownMessageListener();
+  }
+
+  _activeChatId = String(chatId);
+  _selectedChatUser = user || {};
+
+  // ✅ FIRST: ensure correct screen is visible
+  _syncViewWithSelection();
+
+  // ✅ THEN: render UI into visible container
+  _renderChatUI(_selectedChatUser);
+
+  // ✅ NOW container will exist correctly
+  _messagesContainerRef = document.getElementById("messagesContainer");
+
+  if (!_messagesContainerRef) {
+    console.error("[Vaani] _openChatUI: messagesContainer not found after render");
+    return;
+  }
+
+  // ✅ FINALLY attach listener
+  _listenToMessages(_activeChatId);
+}
 
   function _renderChatUI(otherProfile) {
     var chatScreen = document.getElementById("vcChatScreen");
