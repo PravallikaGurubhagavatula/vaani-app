@@ -1419,10 +1419,6 @@
     // Render the chat shell (sets innerHTML, wires back button & input handlers)
     _renderChatUI(_selectedChatUser);
 
-    // _renderChatUI already calls _syncViewWithSelection implicitly via
-    // direct style manipulation, but we call it again to be safe.
-    _syncViewWithSelection();
-
     // At this point #messagesContainer is definitely in the DOM because
     // _renderChatUI just wrote it. Grab the reference and start listening.
     _messagesContainerRef = document.getElementById("messagesContainer");
