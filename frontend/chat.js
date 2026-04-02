@@ -546,7 +546,14 @@
     ]).then(function () {
       console.log("[Vaani] _renderChat: background migrations finished.");
     });
-    _setSelectedChatUser(null);
+    // Do not force-reset selection here: _renderChat can be called again while
+    // a chat is open (e.g. profile refresh/re-render), and resetting to null
+    // causes a race where the chat panel is immediately cleared.
+    if (_activeChatId && _selectedChatUser && _selectedChatUser.uid) {
+      _openChatUI(_activeChatId, _selectedChatUser);
+    } else {
+      _syncViewWithSelection();
+    }
   }
 
   function _renderSkeletonChatList() {
@@ -575,6 +582,7 @@
   }
 
   function _setSelectedChatUser(user) {
+    console.log("[Vaani] _setSelectedChatUser:", user && user.uid ? user.uid : null);
     if (!user) {
       try {
         var cu = window._vaaniCurrentUser;
