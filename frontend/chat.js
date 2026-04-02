@@ -1,30 +1,20 @@
 /* ================================================================
-   Vaani — chat.js  v4.3
-   Fixes applied on top of v4.2:
-     FIX-A: _renderChatList signature guard — _hasLoadedChatListOnce is
-             set to `true` in the snapshot handler BEFORE _renderChatList
-             is called, so the "first render" branch inside the guard was
-             unreachable. The guard now uses a dedicated
-             `_chatListRenderedOnce` flag that is flipped only INSIDE
-             _renderChatList after a successful render, making the first-
-             render path reachable again.
-     FIX-B: _renderChatList unused `db` / `currentUid` declarations
-             removed — they shadowed outer variables and caused a silent
-             async-function stall on environments where the Firestore
-             import is deferred (no crash, but the function would yield
-             the microtask queue unexpectedly on first call).
-     FIX-C: Signature guard logic rewritten for clarity: _forceRenderChatList
-             bypasses the guard entirely; the guard only skips when we have
-             already rendered the exact same data set at least once.
-     FIX-D: _createChatListListener snapshot handler — always sets
-             _forceRenderChatList = true before calling _renderChatList so
-             the live snapshot always wins over the cached-signature check.
-     FIX-E: _renderChatList converted from `async function` to a regular
-             synchronous function — the `async` keyword caused it to return
-             a Promise, which meant early-return paths and list-building
-             executed on separate microtask ticks, racing with subsequent
-             calls. Removing `async` makes execution fully synchronous and
-             predictable.
+   Vaani — chat.js  v4.2
+   Fixes applied:
+     1. _migrateTopLevelMessages — rules now allow reading top-level
+        /messages; migration is idempotent and skips already-copied docs.
+     2. _renderChat — await ALL migrations before attaching listeners,
+        eliminating the "empty list on first load" race condition.
+     3. _createChatListListener — deduplicate chat docs by participant
+        pair, preferring the canonical sorted-pair ID doc so the message
+        listener always attaches to the correct chatId.
+     4. _openChatUI — no longer calls _setSelectedChatUser() before DOM
+        is ready; tears down the old listener when switching chats.
+     5. listenToMessages — "firstFire" flag ensures the first snapshot
+        always renders (even when empty), fixing "Start a conversation"
+        not appearing on brand-new chats.
+     6. sendMessage — always includes participants[] in the message doc
+        so Firestore rules (which check participants) never reject it.
    ================================================================ */
 
 (function () {
@@ -45,13 +35,6 @@
   var _connectedUidSet = new Set();
   var _userProfileCache = Object.create(null);
   var _renderedChatListSignature = "";
-  var _forceRenderChatList = false;
-  var _hasLoadedChatListOnce = false;
-  // FIX-A: separate flag flipped only after a successful render
-  var _chatListRenderedOnce = false;
-  var CACHE_KEY_PREFIX = "vaani_chatlist_";
-  var PROFILE_CACHE_KEY_PREFIX = "vaani_profile_";
-  var MIGRATION_KEY_PREFIX = "vaani_migration_done_v2_";
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
   var _activeChatId = null;
@@ -87,80 +70,6 @@
       return firebase.firestore.Timestamp.fromMillis(value);
     }
     return null;
-  }
-
-  function _saveChatListCache(uid, conversations) {
-    if (!uid) return;
-    try {
-      var payload = (Array.isArray(conversations) ? conversations : []).map(function (conversation) {
-        var profile = conversation && conversation.user ? conversation.user : {};
-        var timestamp = conversation ? (conversation.timestamp || conversation.updatedAt || null) : null;
-        return {
-          chatId: conversation ? conversation.chatId : null,
-          otherUid: conversation ? conversation.otherUid : null,
-          username: profile.username || "user",
-          displayName: profile.displayName || profile.username || "user",
-          photoURL: profile.photoURL || "",
-          lastMessage: conversation && conversation.lastMessage ? conversation.lastMessage : "",
-          updatedAtMs: timestamp && typeof timestamp.toMillis === "function" ? timestamp.toMillis() : 0
-        };
-      }).filter(function (item) { return item && item.chatId && item.otherUid; });
-      localStorage.setItem(CACHE_KEY_PREFIX + String(uid), JSON.stringify(payload));
-    } catch (e) {}
-  }
-
-  function _loadChatListCache(uid) {
-    if (!uid) return null;
-    try {
-      var raw = localStorage.getItem(CACHE_KEY_PREFIX + String(uid));
-      if (!raw) return null;
-      var items = JSON.parse(raw);
-      if (!Array.isArray(items)) return null;
-      return items.map(function (item) {
-        return {
-          chatId: item.chatId,
-          otherUid: item.otherUid,
-          user: {
-            uid: item.otherUid,
-            username: item.username || "user",
-            displayName: item.displayName || item.username || "user",
-            photoURL: item.photoURL || ""
-          },
-          lastMessage: item.lastMessage || "",
-          timestamp: item.updatedAtMs
-            ? firebase.firestore.Timestamp.fromMillis(item.updatedAtMs)
-            : null
-        };
-      }).filter(function (item) { return item && item.chatId && item.otherUid; });
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function _saveProfileCache(uid, profile) {
-    if (!uid || !profile) return;
-    try {
-      localStorage.setItem(PROFILE_CACHE_KEY_PREFIX + String(uid), JSON.stringify({
-        username: profile.username || "",
-        displayName: profile.displayName || profile.username || "",
-        photoURL: profile.photoURL || ""
-      }));
-    } catch (e) {}
-  }
-
-  function _loadProfileCache(uid) {
-    if (!uid) return null;
-    try {
-      var raw = localStorage.getItem(PROFILE_CACHE_KEY_PREFIX + String(uid));
-      if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      if (!parsed || !parsed.username) return null;
-      return {
-        username: parsed.username,
-        displayName: parsed.displayName || parsed.username,
-        photoURL: parsed.photoURL || ""
-      };
-    } catch (e) { return null; }
   }
 
   function _extractLegacyMessageUsers(data) {
@@ -252,8 +161,8 @@
       ? String(window._vaaniCurrentUser.uid) : "";
     if (!db || !currentUid) { console.warn("[Vaani] _migrateLegacyMessages: missing db/uid — abort."); return; }
 
-    var migrationKey = MIGRATION_KEY_PREFIX + currentUid + "_legacy";
-    if (localStorage.getItem(migrationKey)) { console.log("[Vaani] _migrateLegacyMessages: skipping (already ran)."); return; }
+    var sessionKey = "vaani_migration_done_" + currentUid;
+    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateLegacyMessages: skipping (already ran)."); return; }
     console.log("[Vaani] _migrateLegacyMessages: starting for uid:", currentUid);
 
     var migrated = 0, skipped = 0, errors = 0;
@@ -272,7 +181,7 @@
         });
       });
       console.log("[Vaani] _migrateLegacyMessages: found", docsToProcess.length, "candidate(s).");
-      if (!docsToProcess.length) { localStorage.setItem(migrationKey, "1"); return; }
+      if (!docsToProcess.length) { sessionStorage.setItem(sessionKey, "1"); return; }
 
       for (var i = 0; i < docsToProcess.length; i++) {
         var doc = docsToProcess[i]; var data = doc.data() || {};
@@ -311,10 +220,13 @@
       }
     } catch (fatalErr) { console.error("[Vaani] _migrateLegacyMessages: fatal:", fatalErr); return; }
 
-    localStorage.setItem(migrationKey, "1");
+    sessionStorage.setItem(sessionKey, "1");
     console.log("[Vaani] _migrateLegacyMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
+  // ── FIX 1: _migrateTopLevelMessages ─────────────────────────────────────
+  // Rules now allow reading /messages where user is senderId or receiverId.
+  // Uses canonical sorted-pair chatId and checks _migratedFrom to stay idempotent.
   async function _migrateTopLevelMessages() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
       ? window.vaaniRouter.getDb() : null;
@@ -322,8 +234,8 @@
       ? String(window._vaaniCurrentUser.uid) : "";
     if (!db || !currentUid) return;
 
-    var migrationKey = MIGRATION_KEY_PREFIX + currentUid + "_toplevel";
-    if (localStorage.getItem(migrationKey)) { console.log("[Vaani] _migrateTopLevelMessages: skipping (already ran)."); return; }
+    var sessionKey = "vaani_toplevel_migration_" + currentUid;
+    if (sessionStorage.getItem(sessionKey)) { console.log("[Vaani] _migrateTopLevelMessages: skipping (already ran)."); return; }
     console.log("[Vaani] _migrateTopLevelMessages: starting for uid:", currentUid);
 
     var migrated = 0, skipped = 0, errors = 0;
@@ -355,10 +267,12 @@
           var participants = [senderId, receiverId].sort();
           var chatId = participants[0] + "_" + participants[1];
 
+          // Idempotency: skip if already in subcollection
           var existingSnap = await db.collection(CHATS_COLLECTION).doc(chatId)
             .collection(MESSAGES_COLLECTION).where("_migratedFrom", "==", doc.id).limit(1).get();
           if (!existingSnap.empty) { skipped++; continue; }
 
+          // Ensure parent chat doc with canonical ID
           var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
           var chatSnap = await chatRef.get();
           if (!chatSnap.exists) {
@@ -377,7 +291,7 @@
       }
     } catch (fatalErr) { console.error("[Vaani] _migrateTopLevelMessages: fatal:", fatalErr); return; }
 
-    localStorage.setItem(migrationKey, "1");
+    sessionStorage.setItem(sessionKey, "1");
     console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
@@ -531,7 +445,8 @@
     if (signOutBtn) signOutBtn.addEventListener("click", function () { window.vaaniRouter.signOut(); });
   }
 
-  function _renderChat(user, profile) {
+  // ── FIX 2: await ALL migrations before attaching listeners ───────────────
+  async function _renderChat(user, profile) {
     var root = _root(); if (!root) return;
     _clearSearchState(); _injectMenu(user, profile);
 
@@ -550,7 +465,7 @@
       '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
-      '<div class="vc-chat-list" id="vcChatList"></div>' +
+      '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
       '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
 
     var profileBtn = document.getElementById("vcProfileBtn");
@@ -560,37 +475,18 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
-    _renderSkeletonChatList();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
 
-    // Attach listener first for fast initial render; run migrations in background.
-    _createChatListListener();
-    console.log("[Vaani] _renderChat: running migrations in background…");
-    Promise.allSettled([
-      _backfillChatsFromLegacyMessages(),
-      _migrateLegacyMessages(),
-      _migrateTopLevelMessages()
-    ]).then(function () {
-      console.log("[Vaani] _renderChat: background migrations finished.");
-    });
-    _setSelectedChatUser(null);
-  }
+    // Migrations MUST complete before listeners attach
+    console.log("[Vaani] _renderChat: running all migrations…");
+    await _backfillChatsFromLegacyMessages();
+    await _migrateLegacyMessages();
+    await _migrateTopLevelMessages();
+    console.log("[Vaani] _renderChat: migrations done — attaching chat list listener.");
 
-  function _renderSkeletonChatList() {
-    var listEl = document.getElementById("vcChatList");
-    if (!listEl) return;
-    var skeletonItems = [1, 2, 3].map(function () {
-      return '<div class="vc-chat-list-item" style="pointer-events:none">' +
-        '<div class="vc-chat-list-top">' +
-        '<span class="vc-skeleton" style="width:120px;height:14px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
-        '<span class="vc-skeleton" style="width:36px;height:10px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
-        '</div>' +
-        '<div class="vc-chat-list-last">' +
-        '<span class="vc-skeleton" style="width:180px;height:10px;border-radius:4px;background:var(--color-border-tertiary);display:inline-block"></span>' +
-        "</div></div>";
-    }).join("");
-    listEl.innerHTML = skeletonItems;
+    _createChatListListener();
+    _setSelectedChatUser(null);
   }
 
   function _syncViewWithSelection() {
@@ -676,7 +572,7 @@
       }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
   }
 
-  // ── FIX-C/D: _createChatListListener — always force render on live snapshot ──
+  // ── FIX 3: _createChatListListener — deduplicate by canonical chatId ──────
   function _createChatListListener() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
@@ -684,33 +580,13 @@
     if (_unsubscribeChatList && _activeChatListListenerUid === String(currentUid)) return;
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = String(currentUid);
-    if (!Array.isArray(window.vaaniChat.conversations)) window.vaaniChat.conversations = [];
-    if (!Array.isArray(window.vaaniChat._chatList)) window.vaaniChat._chatList = [];
-
-    var cached = _loadChatListCache(currentUid);
-    if (cached && cached.length) {
-      window.vaaniChat.conversations = cached;
-      window.vaaniChat._chatList = cached.map(function (conversation) {
-        return {
-          chatId: conversation.chatId,
-          otherUid: conversation.otherUid,
-          username: conversation.user && conversation.user.username ? conversation.user.username : "user",
-          displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : "user",
-          photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
-          lastMessage: conversation.lastMessage || "",
-          updatedAt: conversation.timestamp || null
-        };
-      });
-      _forceRenderChatList = true;
-      _renderChatList();
-    }
+    window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
     console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
 
     _unsubscribeChatList = db.collection(CHATS_COLLECTION)
       .where("participants", "array-contains", currentUid)
       .orderBy("updatedAt", "desc")
-      .limit(20)
-      .onSnapshot(function (snapshot) {
+      .onSnapshot(async function (snapshot) {
         console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
 
         // Deduplicate: per otherUid, prefer the canonical sorted-pair ID doc
@@ -731,28 +607,31 @@
           var prev = byOtherUid[otherUid];
           if (!prev) { byOtherUid[otherUid] = candidate; return; }
 
+          // Canonical always wins; within same type, pick newest
           if (candidate.isCanonical && !prev.isCanonical) { byOtherUid[otherUid] = candidate; }
           else if (!candidate.isCanonical && prev.isCanonical) { /* keep prev */ }
           else if (_timestampToMillis(candidate.timestamp) > _timestampToMillis(prev.timestamp)) { byOtherUid[otherUid] = candidate; }
         });
 
-        var conversations = Object.keys(byOtherUid).map(function (uid) {
+        var conversations = await Promise.all(Object.keys(byOtherUid).map(async function (uid) {
           var conv = byOtherUid[uid];
-          var cachedProfile = _userProfileCache[conv.otherUid] || null;
+          var profile = await _getUserProfileCached(db, conv.otherUid);
           return {
             id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
-            user: {
-              uid: conv.otherUid,
-              username: cachedProfile ? (cachedProfile.username || "user") : "...",
-              displayName: cachedProfile ? (cachedProfile.displayName || cachedProfile.username || "user") : "...",
-              photoURL: cachedProfile ? (cachedProfile.photoURL || "") : ""
-            },
+            user: { uid: conv.otherUid, username: profile.username || "user", displayName: profile.displayName || profile.username || "user", photoURL: profile.photoURL || "" },
             lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
           };
-        });
+        }));
 
         conversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
 
+        var signature = conversations.map(function (c) {
+          return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
+            c.timestamp && typeof c.timestamp.toMillis === "function" ? c.timestamp.toMillis() : ""].join(":");
+        }).join("|");
+
+        var prev = _createChatListListener._lastSignature || "";
+        _createChatListListener._lastSignature = signature;
         window.vaaniChat.conversations = conversations;
         window.vaaniChat._chatList = conversations.map(function (c) {
           return {
@@ -761,120 +640,60 @@
             lastMessage: c.lastMessage, updatedAt: c.timestamp || null
           };
         });
-
-        // FIX-A: set _hasLoadedChatListOnce here but keep _chatListRenderedOnce
-        // as a separate flag controlled inside _renderChatList.
-        _hasLoadedChatListOnce = true;
-
         console.log("[Vaani] chat list: rendering", conversations.length, "conversation(s).");
-
-        // FIX-D: always force-render on every live snapshot so the first
-        // snapshot always wins regardless of cache signature match.
-        _forceRenderChatList = true;
-        _renderChatList();
-        _saveChatListCache(currentUid, conversations);
-
-        var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
-        if (!missingUids.length) return;
-
-        Promise.all(missingUids.map(function (uid) {
-          return _getUserProfileCached(db, uid);
-        })).then(function () {
-          var hydratedConversations = Object.keys(byOtherUid).map(function (uid) {
-            var conv = byOtherUid[uid];
-            var profile = _userProfileCache[conv.otherUid] || {};
-            return {
-              id: conv.id,
-              chatId: conv.chatId,
-              otherUid: conv.otherUid,
-              user: {
-                uid: conv.otherUid,
-                username: profile.username || "user",
-                displayName: profile.displayName || profile.username || "user",
-                photoURL: profile.photoURL || ""
-              },
-              lastMessage: conv.lastMessage || "",
-              timestamp: conv.timestamp || null
-            };
-          });
-          hydratedConversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
-          window.vaaniChat.conversations = hydratedConversations;
-          window.vaaniChat._chatList = hydratedConversations.map(function (c) {
-            return {
-              chatId: c.chatId,
-              otherUid: c.otherUid,
-              username: c.user.username,
-              displayName: c.user.displayName,
-              photoURL: c.user.photoURL,
-              lastMessage: c.lastMessage,
-              updatedAt: c.timestamp || null
-            };
-          });
-          _saveChatListCache(currentUid, hydratedConversations);
-          _forceRenderChatList = true;
-          _renderChatList();
-        }).catch(function (err) {
-          console.error("[Vaani] chat list profile hydration error:", err);
-        });
+        if (signature !== prev) _renderChatList();
       }, function (err) {
         console.error("[Vaani] chat list listener error:", err);
         window.vaaniChat._chatList = []; window.vaaniChat.conversations = [];
-        _hasLoadedChatListOnce = true;
         _activeChatListListenerUid = null; _renderChatList();
       });
   }
 
-  // ── FIX-A/B/C/E: _renderChatList ────────────────────────────────────────
-  // • Changed from `async function` to a plain synchronous function (FIX-E):
-  //   the async keyword caused microtask-queue yielding on every call, which
-  //   raced with subsequent calls and meant DOM writes happened out of order.
-  // • Removed unused `db` and `currentUid` declarations (FIX-B): they made
-  //   the function implicitly async-looking and shadowed outer-scope vars.
-  // • Signature guard now uses `_chatListRenderedOnce` instead of
-  //   `_hasLoadedChatListOnce` (FIX-A): _hasLoadedChatListOnce is set to
-  //   true in the snapshot handler BEFORE _renderChatList is called, so the
-  //   "first render" branch inside the old guard was unreachable on the very
-  //   first live snapshot. _chatListRenderedOnce is only flipped to true
-  //   inside _renderChatList after a successful DOM write.
-  // • _forceRenderChatList bypasses the guard entirely (FIX-C).
-  function _renderChatList() {
-    var listEl = document.getElementById("vcChatList");
-    if (!listEl) return;
-
+  async function _renderChatList() {
+    var listEl = document.getElementById("vcChatList"); if (!listEl) return;
     var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
 
-    console.log("[DEBUG] conversations:", conversations.length);
-    console.log("[DEBUG] hasLoaded:", _hasLoadedChatListOnce);
-
-    console.log("[STEP 1] items length:", items.length);
-    console.log("[STEP 1] hasLoaded:", _hasLoadedChatListOnce);
-
-    var items = conversations.map(function (conversation) {
-      var profile = conversation.user || {};
-      return {
-        chatId: conversation.chatId || null,
-        otherUid: conversation.otherUid || null,
-        username: profile.username || "user",
-        displayName: profile.displayName || profile.username || "user",
-        photoURL: profile.photoURL || "",
-        lastMessage: conversation.lastMessage || "No messages yet",
+    var itemsByUid = Object.create(null);
+    conversations.forEach(function (conversation) {
+      var profile = conversation && conversation.user ? conversation.user : {};
+      var otherUid = conversation && conversation.otherUid ? conversation.otherUid : null;
+      if (!otherUid) return;
+      itemsByUid[otherUid] = {
+        chatId: conversation.chatId || null, otherUid: otherUid,
+        username: profile.username || "user", displayName: profile.displayName || profile.username || "user",
+        photoURL: profile.photoURL || "", lastMessage: conversation.lastMessage || "No messages yet",
         updatedAt: conversation.timestamp || null
       };
     });
 
-    // Show empty state only after the first live snapshot has loaded AND we
-    // have already rendered at least once (to avoid flashing "No chats" while
-    // the listener is still connecting).
-    if (!items.length && _hasLoadedChatListOnce) {
-      listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
-      _chatListRenderedOnce = true;
-      return;
+    var connectedUids = Array.from(_connectedUidSet).filter(Boolean);
+    if (connectedUids.length && db && currentUid) {
+      var connectedUsers = await Promise.all(connectedUids.map(async function (uid) {
+        var profile = await _getUserProfileCached(db, uid);
+        var chatId  = _generateChatId(currentUid, uid);
+        var chatDoc = null;
+        if (chatId) { try { chatDoc = await db.collection(CHATS_COLLECTION).doc(chatId).get(); } catch (e) {} }
+        var existing = itemsByUid[uid] || null;
+        var chatData = chatDoc && chatDoc.exists ? chatDoc.data() || {} : {};
+        return {
+          chatId: chatDoc && chatDoc.exists ? chatId : (existing && existing.chatId ? existing.chatId : null),
+          otherUid: uid,
+          username: profile.username || "user",
+          displayName: profile.displayName || profile.username || "user",
+          photoURL: profile.photoURL || "",
+          lastMessage: chatData.lastMessage || (existing && existing.lastMessage) || "Start chatting",
+          updatedAt: chatData.updatedAt || chatData.createdAt || (existing ? existing.updatedAt : null) || null
+        };
+      }));
+      connectedUsers.forEach(function (entry) { itemsByUid[entry.otherUid] = entry; });
     }
 
-    // If there are no items and we haven't loaded yet, leave the DOM alone
-    // (the skeleton or blank state is fine) and wait for the snapshot.
+    var items = Object.keys(itemsByUid).map(function (uid) { return itemsByUid[uid]; });
     if (!items.length) {
-      return;
+      listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
+      _renderedChatListSignature = "empty"; return;
     }
 
     items.sort(function (a, b) {
@@ -887,18 +706,7 @@
       return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
         c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
     }).join("|");
-
-    console.log("[DEBUG] signature:", nextSig);
-
-    // FIX-C: _forceRenderChatList bypasses the duplicate-render guard entirely.
-    // FIX-A: use _chatListRenderedOnce (flipped only after a real DOM write)
-    //        instead of _hasLoadedChatListOnce (flipped before this function runs).
-    if (!_forceRenderChatList && _chatListRenderedOnce && nextSig === _renderedChatListSignature) {
-      console.log("[DEBUG] skipping render — signature unchanged");
-      return;
-    }
-
-    _forceRenderChatList = false;
+    if (nextSig === _renderedChatListSignature) return;
     _renderedChatListSignature = nextSig;
 
     listEl.innerHTML = "";
@@ -929,9 +737,6 @@
       });
       listEl.appendChild(item);
     });
-
-    // Mark that we have successfully written to the DOM at least once.
-    _chatListRenderedOnce = true;
   }
 
   function _stopListening() {
@@ -940,10 +745,6 @@
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = null; _renderedChatListSignature = "";
-    // FIX-A: also reset the render-once flag so re-opening the chat screen
-    // renders correctly from a clean state.
-    _chatListRenderedOnce = false;
-    _hasLoadedChatListOnce = false;
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
   }
 
@@ -1218,9 +1019,11 @@
     return {};
   }
 
+  // ── FIX 6: sendMessage — always include sorted participants[] ────────────
   async function sendMessage(chatId, text, currentUid, otherUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !chatId || !text || !currentUid || !otherUid) return;
+    // participants must be sorted to match the Firestore rule check
     var participants = [String(currentUid), String(otherUid)].sort();
     await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
       text: text, senderId: currentUid, receiverId: otherUid,
@@ -1300,6 +1103,7 @@
     _scrollMessagesToBottom();
   }
 
+  // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
   function listenToMessages(chatId) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db) { console.error("[Vaani] listenToMessages: db unavailable."); _setMessages([]); _renderMessages(); return; }
@@ -1313,7 +1117,7 @@
     if (_unsubscribeMessages) { console.log("[Vaani] listenToMessages: tearing down previous."); _teardownMessageListener(); }
     _activeMessageListenerKey = listenerKey;
 
-    var firstFire = true;
+    var firstFire = true; // always render on first snapshot to clear loading state
     console.log("[Vaani] listenToMessages: attaching to chats/" + chatId + "/messages");
 
     _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
@@ -1362,9 +1166,14 @@
     } catch (err) { console.error("[Vaani] _getOrCreateChat failed:", err); return null; }
   }
 
+  // ── FIX 5: _openChatUI — set state directly, don't call _setSelectedChatUser ──
+  // _setSelectedChatUser(non-null) calls _syncViewWithSelection which shows the
+  // chat panel BEFORE _renderChatUI has built the DOM. Instead we set state
+  // directly and let _renderChatUI manage visibility.
   function _openChatUI(chatId, user) {
     if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
 
+    // Tear down old listener if switching chats
     if (_activeChatId && _activeChatId !== chatId) {
       console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
       _teardownMessageListener();
@@ -1374,8 +1183,8 @@
     _selectedChatUser = user || {};
 
     console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});
-    _listenToMessages(chatId);
+    _renderChatUI(user || {});     // builds DOM and flips panel visibility
+    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
   }
 
   function _renderChatUI(otherProfile) {
@@ -1405,6 +1214,7 @@
     _messagesContainerRef = document.getElementById("messagesContainer");
     _setMessages([]); _setInputMessage(""); _renderMessages();
 
+    // Show chat panel only after DOM is ready
     var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
     if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
     if (window.vaaniChat) window.vaaniChat._currentView = "chat";
@@ -1445,63 +1255,42 @@
     _chatList: [],
     open: function () {
       var root = _root();
+      if (root && !root.children.length) {
+        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading…</p></div>';
+      }
       if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
         var auth = window.vaaniRouter.getAuth();
         if (auth) {
           var user = auth.currentUser;
-          if (!user || !window._vaaniCurrentUser) {
-            _renderLogin();
-            return;
+          if (user && window._vaaniCurrentUser) {
+            window.vaaniRouter.getDb().collection("users").doc(user.uid).get()
+              .then(function (doc) {
+                if (doc.exists && doc.data().username) {
+                  // _renderChat is now async; chain rehydration after it resolves
+                  _renderChat(user, doc.data()).then(function () {
+                    try {
+                      var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
+                      if (saved) {
+                        var state = JSON.parse(saved);
+                        if (state && state.chatId && state.otherUid) {
+                          window.vaaniRouter.getDb().collection("users").doc(state.otherUid).get()
+                            .then(function (profileDoc) {
+                              var profile = profileDoc.exists ? profileDoc.data() : {};
+                              profile.uid = state.otherUid;
+                              _openChatUI(state.chatId, profile);
+                            })
+                            .catch(function (err) {
+                              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
+                              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
+                            });
+                        }
+                      }
+                    } catch (e) {}
+                  });
+                } else { _renderProfile(user); }
+              })
+              .catch(function () { _renderProfile(user); });
           }
-
-          var db = window.vaaniRouter.getDb();
-          var cachedProfile = _loadProfileCache(user.uid);
-          var renderedFromCache = false;
-          if (cachedProfile) {
-            renderedFromCache = true;
-            _renderChat(user, cachedProfile);
-          } else if (root && !root.children.length) {
-            root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading profile…</p></div>';
-          }
-
-          var profilePromise = db.collection("users").doc(user.uid).get();
-          var activeChatPromise = Promise.resolve().then(function () {
-            try {
-              var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-              return saved ? JSON.parse(saved) : null;
-            } catch (e) { return null; }
-          });
-
-          Promise.all([profilePromise, activeChatPromise]).then(function (results) {
-            var doc = results[0];
-            var state = results[1];
-            if (!doc.exists || !doc.data().username) {
-              _renderProfile(user);
-              return;
-            }
-
-            var freshProfile = doc.data();
-            _saveProfileCache(user.uid, freshProfile);
-
-            if (!renderedFromCache) {
-              _renderChat(user, freshProfile);
-            }
-
-            if (state && state.chatId && state.otherUid) {
-              db.collection("users").doc(state.otherUid).get()
-                .then(function (profileDoc) {
-                  var otherProfile = profileDoc.exists ? profileDoc.data() : {};
-                  otherProfile.uid = state.otherUid;
-                  _openChatUI(state.chatId, otherProfile);
-                })
-                .catch(function (err) {
-                  console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-                  sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-                });
-            }
-          }).catch(function () {
-            if (!renderedFromCache) _renderProfile(user);
-          });
         }
       }
     },
@@ -1515,5 +1304,5 @@
     loadUsers: function () { this.open(); }
   };
 
-  console.log("[Vaani] chat.js v4.3 loaded ✓");
+  console.log("[Vaani] chat.js v4.2 loaded ✓");
 })();
