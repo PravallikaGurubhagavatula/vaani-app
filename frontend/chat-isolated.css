@@ -244,7 +244,15 @@ html, body {
   flex-direction: column;
   align-items: flex-start;
   padding: 16px 16px 0;
-  overflow: hidden;
+  overflow: visible;
+}
+
+#vaaniChat .vc-chat-view {
+  min-height: 0;
+}
+
+#vaaniChat .vc-chat-messages {
+  min-height: 0;
 }
 
 #vaaniChat .vc-home-view,
@@ -262,7 +270,7 @@ html, body {
 }
 
 #vaaniChat .vc-chat-view-wrap {
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   min-height: 0;
