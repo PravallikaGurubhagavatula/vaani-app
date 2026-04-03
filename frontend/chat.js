@@ -1284,6 +1284,8 @@ item.addEventListener("click", function () {
   }
 
 function _renderMessages() {
+   console.log("[DEBUG] container:", container);
+console.log("[DEBUG] messages:", messages);
   var container = document.getElementById("messagesContainer");
   
   if (!container) {
@@ -1354,14 +1356,8 @@ function _listenToMessages(chatId) {
       if (_activeMessageListenerKey !== listenerKey) return;
 
       _messagesContainerRef = document.getElementById("messagesContainer") || _messagesContainerRef;
-      if (!_messagesContainerRef) {
-  console.warn("[Vaani] messagesContainer not ready — retrying...");
-  setTimeout(function () {
-    _messagesContainerRef = document.getElementById("messagesContainer");
-    if (_messagesContainerRef) {
-      _renderMessages();
-    }
-  }, 50);
+if (!_messagesContainerRef) {
+  console.error("[Vaani] messagesContainer missing — abort render");
   return;
 }
 
@@ -1380,6 +1376,8 @@ function _listenToMessages(chatId) {
       _activeMessagesSignature = nextSig;
       _optimisticMessages = [];
       _setMessages(messages);
+       console.log("[Vaani] forcing render after snapshot");
+_renderMessages();
       _renderMessages();
       console.log("[Vaani] _listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
     }, function (err) {
@@ -1436,7 +1434,20 @@ function _openChatUI(chatId, user) {
     return;
   }
 
-  _listenToMessages(_activeChatId);
+  requestAnimationFrame(function () {
+  requestAnimationFrame(function () {
+    _messagesContainerRef = document.getElementById("messagesContainer");
+
+    if (!_messagesContainerRef) {
+      console.error("[Vaani] FIX: messagesContainer still not found after render");
+      return;
+    }
+
+    console.log("[Vaani] FIX: DOM ready, attaching listener");
+
+    _listenToMessages(_activeChatId);
+  });
+});
 }
 
 function _renderChatUI(otherProfile) {
