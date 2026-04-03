@@ -1354,7 +1354,16 @@ function _listenToMessages(chatId) {
       if (_activeMessageListenerKey !== listenerKey) return;
 
       _messagesContainerRef = document.getElementById("messagesContainer") || _messagesContainerRef;
-      if (!_messagesContainerRef) { console.warn("[Vaani] _listenToMessages: messagesContainer not found"); return; }
+      if (!_messagesContainerRef) {
+  console.warn("[Vaani] messagesContainer not ready — retrying...");
+  setTimeout(function () {
+    _messagesContainerRef = document.getElementById("messagesContainer");
+    if (_messagesContainerRef) {
+      _renderMessages();
+    }
+  }, 50);
+  return;
+}
 
       var messages = snapshot.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data() || {}); });
 
