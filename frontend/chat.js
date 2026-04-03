@@ -1301,21 +1301,24 @@
   // chat panel BEFORE _renderChatUI has built the DOM. Instead we set state
   // directly and let _renderChatUI manage visibility.
   function _openChatUI(chatId, user) {
-    if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
-
-    // Tear down old listener if switching chats
-    if (_activeChatId && _activeChatId !== chatId) {
-      console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
-      _teardownMessageListener();
-    }
-
-    _activeChatId     = chatId;
-    _selectedChatUser = user || {};
-
-    console.log("[Vaani] _openChatUI: chatId =", chatId);
-    _renderChatUI(user || {});     // builds DOM and flips panel visibility
-    _listenToMessages(chatId);     // attaches listener AFTER DOM is ready
+  if (!chatId) {
+    console.error("[Vaani] _openChatUI: chatId missing");
+    return;
   }
+
+  if (_activeChatId && _activeChatId !== chatId) {
+    console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
+    _teardownMessageListener();
+  }
+
+  _setSelectedChatUser(user);   // ✅ FIX
+  _activeChatId = chatId;
+
+  console.log("[Vaani] _openChatUI: chatId =", chatId);
+
+  _renderChatUI(user || {});
+  _listenToMessages(chatId);
+}
 
   function _renderChatUI(otherProfile) {
     var chatScreen = document.getElementById("vcChatScreen");
