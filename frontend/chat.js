@@ -1284,14 +1284,20 @@ item.addEventListener("click", function () {
   }
 
 function _renderMessages() {
-   console.log("[DEBUG] container:", container);
-console.log("[DEBUG] messages:", messages);
-  var container = document.getElementById("messagesContainer");
-  
+   var container = document.getElementById("messagesContainer");
+
+  console.log("[DEBUG] container:", container);
+  console.log("[DEBUG] messages:", _messages);
+
   if (!container) {
-      console.warn("[Vaani] Render skipped: #messagesContainer not found in DOM");
-      return;
-  }
+    console.warn("[Vaani] container not ready — retrying...");
+
+    requestAnimationFrame(function () {
+        _renderMessages();
+    });
+
+    return;
+}
 
   _messagesContainerRef = container;
 
@@ -1475,7 +1481,7 @@ function _renderChatUI(otherProfile) {
       "</div></div>";
 
   _messagesContainerRef = document.getElementById("messagesContainer");
-  _setMessages([]); _setInputMessage(""); _renderMessages();
+  _setMessages([]); _setInputMessage("");
 
   var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
   if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
