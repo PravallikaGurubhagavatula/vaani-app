@@ -1310,46 +1310,67 @@
     _currentView: "home",
     _chatList: [],
     open: function () {
-      var root = _root();
-      if (root && !root.children.length) {
-        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading…</p></div>';
+  var root = _root();
+  if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
+    var auth = window.vaaniRouter.getAuth();
+    if (auth) {
+      var user = auth.currentUser;
+      if (!user || !window._vaaniCurrentUser) {
+        _renderLogin();
+        return;
       }
-      if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
-        var auth = window.vaaniRouter.getAuth();
-        if (auth) {
-          var user = auth.currentUser;
-          if (user && window._vaaniCurrentUser) {
-            window.vaaniRouter.getDb().collection("users").doc(user.uid).get()
-              .then(function (doc) {
-                if (doc.exists && doc.data().username) {
-                  // _renderChat is now async; chain rehydration after it resolves
-                  _renderChat(user, doc.data()).then(function () {
-                    try {
-                      var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-                      if (saved) {
-                        var state = JSON.parse(saved);
-                        if (state && state.chatId && state.otherUid) {
-                          window.vaaniRouter.getDb().collection("users").doc(state.otherUid).get()
-                            .then(function (profileDoc) {
-                              var profile = profileDoc.exists ? profileDoc.data() : {};
-                              profile.uid = state.otherUid;
-                              _openChatUI(state.chatId, profile);
-                            })
-                            .catch(function (err) {
-                              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-                              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-                            });
-                        }
-                      }
-                    } catch (e) {}
-                  });
-                } else { _renderProfile(user); }
-              })
-              .catch(function () { _renderProfile(user); });
-          }
+
+      var db = window.vaaniRouter.getDb();
+      var cachedProfile = _loadProfileCache(user.uid);
+      var renderedFromCache = false;
+      if (cachedProfile) {
+        renderedFromCache = true;
+        _renderChat(user, cachedProfile);
+      } else if (root && !root.children.length) {
+        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading profile…</p></div>';
+      }
+
+      var profilePromise = db.collection("users").doc(user.uid).get();
+      var activeChatPromise = Promise.resolve().then(function () {
+        try {
+          var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
+          return saved ? JSON.parse(saved) : null;
+        } catch (e) { return null; }
+      });
+
+      Promise.all([profilePromise, activeChatPromise]).then(function (results) {
+        var doc = results[0];
+        var state = results[1];
+        if (!doc.exists || !doc.data().username) {
+          _renderProfile(user);
+          return;
         }
-      }
-    },
+
+        var freshProfile = doc.data();
+        _saveProfileCache(user.uid, freshProfile);
+
+        if (!renderedFromCache) {
+          _renderChat(user, freshProfile);
+        }
+
+        if (state && state.chatId && state.otherUid) {
+          db.collection("users").doc(state.otherUid).get()
+            .then(function (profileDoc) {
+              var otherProfile = profileDoc.exists ? profileDoc.data() : {};
+              otherProfile.uid = state.otherUid;
+              _openChatUI(state.chatId, otherProfile);
+            })
+            .catch(function (err) {
+              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
+              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
+            });
+        }
+      }).catch(function () {
+        if (!renderedFromCache) _renderProfile(user);
+      });
+    }
+  }
+},
 
     close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
 
