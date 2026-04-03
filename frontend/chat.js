@@ -799,11 +799,11 @@
     return acc;
   }, []);
 
-  if (!items.length) {
+/*  if (!items.length) {
     _forceRenderChatList = false;
     listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
     return;
-  }
+  } */
 
   items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
 
