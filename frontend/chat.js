@@ -1350,52 +1350,55 @@ function _renderMessages() {
 
 function _listenToMessages(chatId) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-  if (!db || !chatId) { _setMessages([]); _renderMessages(); return; }
+  if (!db || !chatId) {
+    _setMessages([]);
+    _renderMessages();
+    return;
+  }
   chatId = String(chatId);
-
   var listenerKey = "chat::" + chatId;
   if (_activeMessageListenerKey === listenerKey && _unsubscribeMessages) {
-    console.log("[Vaani] _listenToMessages: already active for", chatId); return;
+    console.log("[Vaani] _listenToMessages: already active for", chatId);
+    return;
   }
   _teardownMessageListener();
   _activeMessageListenerKey = listenerKey;
-
   console.log("[Vaani] _listenToMessages: attaching to chats/" + chatId + "/messages");
-
   _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
     .orderBy("timestamp", "asc")
     .onSnapshot(function (snapshot) {
       if (_activeMessageListenerKey !== listenerKey) return;
-
-      _messagesContainerRef = document.getElementById("messagesContainer") || _messagesContainerRef;
-if (!_messagesContainerRef) {
-  console.error("[Vaani] messagesContainer missing — abort render");
-  return;
-}
-
-      var messages = snapshot.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data() || {}); });
-
+      _messagesContainerRef = document.getElementById("messagesContainer");
+      if (!_messagesContainerRef) {
+        console.error("[Vaani] messagesContainer missing — abort render");
+        return;
+      }
+      var messages = snapshot.docs.map(function (doc) {
+        return Object.assign({ id: doc.id }, doc.data() || {});
+      });
       var sigParts = [];
       snapshot.docs.forEach(function (doc) {
         var d = doc.data() || {};
-        sigParts.push(doc.id, String(d.text || ""), String(d.senderId || ""),
-          String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
+        sigParts.push(doc.id, String(d.text || ""), String(d.senderId || ""), String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
       });
       var nextSig = sigParts.join("|");
       if (nextSig === _activeMessagesSignature) {
-        console.log("[Vaani] _listenToMessages: unchanged snapshot, skipping render."); return;
+        console.log("[Vaani] _listenToMessages: unchanged snapshot, skipping render.");
+        return;
       }
       _activeMessagesSignature = nextSig;
       _optimisticMessages = [];
       _setMessages(messages);
-       console.log("[Vaani] forcing render after snapshot");
-_renderMessages();
+      console.log("[Vaani] forcing render after snapshot");
       _renderMessages();
       console.log("[Vaani] _listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
     }, function (err) {
       console.error("[Vaani] _listenToMessages error for chatId:", chatId, err);
       if (_activeMessageListenerKey === listenerKey) {
-        _activeMessagesSignature = ""; _optimisticMessages = []; _setMessages([]); _renderMessages();
+        _activeMessagesSignature = "";
+        _optimisticMessages = [];
+        _setMessages([]);
+        _renderMessages();
       }
     });
 }
