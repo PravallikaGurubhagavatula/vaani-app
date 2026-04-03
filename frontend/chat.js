@@ -578,6 +578,26 @@
       }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
   }
 
+   function _loadChatListCache(uid) {
+  try {
+    var key = "vaani_chat_list_" + uid;
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.warn("[Vaani] load cache failed:", e);
+    return null;
+  }
+}
+
+function _saveChatListCache(uid, data) {
+  try {
+    var key = "vaani_chat_list_" + uid;
+    localStorage.setItem(key, JSON.stringify(data || []));
+  } catch (e) {
+    console.warn("[Vaani] save cache failed:", e);
+  }
+}
+   
   // ── FIX 3: _createChatListListener — deduplicate by canonical chatId ──────
   function _createChatListListener() {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
