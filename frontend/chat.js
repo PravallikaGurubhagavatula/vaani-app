@@ -893,38 +893,40 @@
         '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
 
       // ── CLICK HANDLER: open the selected conversation ─────────────────────
-      item.addEventListener("click", async function () {
-  if (!chat.otherUid) {
-    console.error("[Vaani] Chat list click: missing otherUid");
-    return;
-  }
+      item.addEventListener("click", function () {
+        if (!chat.otherUid) {
+          console.error("[Vaani] Chat list click: missing otherUid");
+          return;
+        }
 
-  var openRequestId = ++_chatListOpenRequestId;
+        // Guard: if this conversation is already open, do nothing
+        if (_activeChatId === chat.chatId && _selectedChatUser && _selectedChatUser.uid === chat.otherUid) {
+          return;
+        }
 
-  try {
-    var selectedUser = {
-      uid: chat.otherUid,
-      username: chat.username || "user",
-      displayName: chat.displayName || chat.username || "user",
-      photoURL: chat.photoURL || ""
-    };
+        var selectedUser = {
+          uid:         chat.otherUid,
+          username:    chat.username    || "user",
+          displayName: chat.displayName || chat.username || "user",
+          photoURL:    chat.photoURL    || ""
+        };
 
-    var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
+        var chatId = chat.chatId || null;
 
-    if (!chatId) {
-      console.error("[Vaani] Invalid chatId");
-      return;
-    }
+        // Sets _selectedChatUser, updates _currentView to "chat", shows chat panel
+        _setSelectedChatUser(selectedUser);
 
-    if (openRequestId !== _chatListOpenRequestId) return;
-
-    _setSelectedChatUser(selectedUser);
-    _openChatUI(chatId, selectedUser);
-
-  } catch (err) {
-    console.error("[Vaani] Could not open chat:", err);
-  }
-});
+        if (chatId) {
+          _openChatUI(chatId, selectedUser);
+        } else {
+          _getOrCreateChat(chat.otherUid).then(function (resolvedChatId) {
+            if (!resolvedChatId) { console.error("[Vaani] Chat list click: could not get/create chatId"); return; }
+            _openChatUI(resolvedChatId, selectedUser);
+          }).catch(function (err) {
+            console.error("[Vaani] Chat list click: _getOrCreateChat failed:", err);
+          });
+        }
+      });
       // ─────────────────────────────────────────────────────────────────────
 
       fragment.appendChild(item);
@@ -1403,38 +1405,26 @@
   //   3. Render the chat UI into #vcChatScreen (synchronous innerHTML swap).
   //   4. Show the chat panel / hide home panel.
   //   5. Attach the Firestore message listener — container is now in DOM.
-  function _openChatUI(chatId, user) {
-  if (!chatId) {
-    console.error("[Vaani] _openChatUI: chatId missing");
-    return;
+function _openChatUI(chatId, user) {
+    if (!chatId) { console.error("[Vaani] _openChatUI: chatId missing"); return; }
+
+    console.log("[Vaani] _openChatUI:", chatId, user);
+
+    // Tear down previous listener only when switching to a different chat
+    if (_activeChatId && _activeChatId !== chatId) {
+      _teardownMessageListener();
+    }
+
+    _activeChatId     = String(chatId);
+    _selectedChatUser = user || {};
+
+    // Render the chat shell (sets innerHTML, wires back button & input handlers,
+    // and handles home/chat panel visibility directly)
+    _renderChatUI(_selectedChatUser);
+
+    // Attach (or reuse) the Firestore listener for this chat
+    _listenToMessages(_activeChatId);
   }
-
-  console.log("[Vaani] _openChatUI:", chatId, user);
-
-  if (_activeChatId && _activeChatId !== chatId) {
-    _teardownMessageListener();
-  }
-
-  _activeChatId = String(chatId);
-  _selectedChatUser = user || {};
-
-  // ✅ FIRST: ensure correct screen is visible
-  _syncViewWithSelection();
-
-  // ✅ THEN: render UI into visible container
-  _renderChatUI(_selectedChatUser);
-
-  // ✅ NOW container will exist correctly
-  _messagesContainerRef = document.getElementById("messagesContainer");
-
-  if (!_messagesContainerRef) {
-    console.error("[Vaani] _openChatUI: messagesContainer not found after render");
-    return;
-  }
-
-  // ✅ FINALLY attach listener
-  _listenToMessages(_activeChatId);
-}
 
   function _renderChatUI(otherProfile) {
     var chatScreen = document.getElementById("vcChatScreen");
