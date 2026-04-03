@@ -724,76 +724,150 @@
     });
 }
 
-  async function _renderChatList() {
-    var listEl = document.getElementById("vcChatList"); if (!listEl) return;
-    var conversations = Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : null;
+  function _renderChatList() {
+  var listEl = document.getElementById("vcChatList");
+  if (!listEl) return;
 
-    var items = conversations.map(function (conversation) {
-  var profile = conversation.user || {};
-  return {
-    chatId: conversation.chatId || null,
-    otherUid: conversation.otherUid || null,
-    username: profile.username || "user",
-    displayName: profile.displayName || profile.username || "user",
-    photoURL: profile.photoURL || "",
-    lastMessage: conversation.lastMessage || "No messages yet",
-    updatedAt: conversation.timestamp || null
-  };
-});
-    if (!items.length) {
-      if (_renderedChatListSignature !== "empty") {
-        listEl.innerHTML = '<div class="vc-chat-list-empty">Start a conversation</div>';
-        _renderedChatListSignature = "empty";
-      }
-      return;
+  listEl.innerHTML = "";
+  var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+
+  function _getTimestampMs(value) {
+    if (!value) return 0;
+    if (typeof value.toMillis === "function") {
+      var millis = value.toMillis();
+      return Number.isFinite(millis) ? millis : 0;
     }
-
-    items.sort(function (a, b) {
-      var aT = a.updatedAt && typeof a.updatedAt.toMillis === "function" ? a.updatedAt.toMillis() : 0;
-      var bT = b.updatedAt && typeof b.updatedAt.toMillis === "function" ? b.updatedAt.toMillis() : 0;
-      return bT - aT;
-    });
-
-    var nextSig = items.map(function (c) {
-      return [c.chatId || "", c.otherUid || "", c.lastMessage || "",
-        c.updatedAt && typeof c.updatedAt.toMillis === "function" ? c.updatedAt.toMillis() : ""].join(":");
-    }).join("|");
-    // TEMP: disable signature blocking (causing UI freeze)
-    if (false && nextSig === _renderedChatListSignature && !_forceRenderChatList) return;
-    _forceRenderChatList = false;
-    _renderedChatListSignature = nextSig;
-
-    listEl.innerHTML = "";
-    items.forEach(function (chat) {
-      var item = document.createElement("button");
-      item.type = "button"; item.className = "vc-chat-list-item";
-      var timeText = "";
-      if (chat.updatedAt && typeof chat.updatedAt.toDate === "function") {
-        timeText = chat.updatedAt.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      }
-      item.innerHTML =
-        '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") + "</div>" +
-        '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
-
-      item.addEventListener("click", async function () {
-        if (!chat.otherUid) { console.error("[Vaani] Missing otherUid for chat list item"); return; }
-        var openRequestId = ++_chatListOpenRequestId;
-        try {
-          var selectedUser = { uid: chat.otherUid, username: chat.username || "user", displayName: chat.displayName || chat.username || "user", photoURL: chat.photoURL || "" };
-          var chatId = chat.chatId || await _getOrCreateChat(selectedUser.uid);
-          if (!chatId) { console.error("[Vaani] Invalid chatId for chat list item"); return; }
-          if (openRequestId !== _chatListOpenRequestId) return;
-          _setSelectedChatUser(selectedUser);
-          _openChatUI(chatId, selectedUser);
-        } catch (err) { console.error("[Vaani] Could not open chat list item:", err); }
-      });
-      listEl.appendChild(item);
-    });
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    if (value instanceof Date) {
+      var dateMillis = value.getTime();
+      return Number.isFinite(dateMillis) ? dateMillis : 0;
+    }
+    if (typeof value === "string") {
+      var parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
   }
+
+  function _formatTime(value) {
+    if (!value) return "";
+    try {
+      if (typeof value.toDate === "function") {
+        var tsDate = value.toDate();
+        return tsDate instanceof Date && !Number.isNaN(tsDate.getTime())
+          ? tsDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "";
+      }
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+      if (typeof value === "string") {
+        var parsedDate = new Date(value);
+        return Number.isNaN(parsedDate.getTime())
+          ? ""
+          : parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+    } catch (_err) {
+      return "";
+    }
+    return "";
+  }
+
+  var items = raw.reduce(function (acc, conversation) {
+    if (!conversation || typeof conversation !== "object") return acc;
+
+    var profile = conversation.user && typeof conversation.user === "object" ? conversation.user : {};
+    var username = (profile.username || "").trim();
+    var displayName = (profile.displayName || "").trim();
+    var normalizedLastMessage = typeof conversation.lastMessage === "string" && conversation.lastMessage.trim()
+      ? conversation.lastMessage
+      : "No messages yet";
+
+    acc.push({
+      chatId: conversation.chatId || null,
+      otherUid: conversation.otherUid || null,
+      username: username || "user",
+      displayName: displayName || username || "user",
+      photoURL: profile.photoURL || "",
+      lastMessage: normalizedLastMessage,
+      updatedAt: conversation.timestamp || null,
+      updatedAtMs: _getTimestampMs(conversation.timestamp || null)
+    });
+    return acc;
+  }, []);
+
+  if (!items.length) {
+    _forceRenderChatList = false;
+    listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
+    return;
+  }
+
+  items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
+
+  _forceRenderChatList = false;
+
+  var fragment = document.createDocumentFragment();
+  items.forEach(function (chat) {
+    var item = document.createElement("button");
+    item.type = "button";
+    item.className = "vc-chat-list-item";
+
+    var timeText = _formatTime(chat.updatedAt);
+    item.innerHTML =
+      '<div class="vc-chat-list-top">' +
+        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
+        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+      "</div>" +
+      '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
+
+    item.addEventListener("click", function () {
+      if (!chat.otherUid) {
+        console.error("[Vaani] Chat list click: missing otherUid");
+        return;
+      }
+
+      var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+        ? String(window._vaaniCurrentUser.uid) : null;
+      var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+        ? window.vaaniRouter.getDb() : null;
+
+      if (!currentUid || !db) {
+        console.error("[Vaani] Chat list click: missing currentUid or db");
+        return;
+      }
+
+      var chatId = chat.chatId
+        ? String(chat.chatId)
+        : [currentUid, String(chat.otherUid)].sort().join("_");
+
+      var selectedUser = {
+        uid:         chat.otherUid,
+        username:    chat.username    || "user",
+        displayName: chat.displayName || chat.username || "user",
+        photoURL:    chat.photoURL    || ""
+      };
+
+      if (_activeChatId === chatId && _selectedChatUser && _selectedChatUser.uid === chat.otherUid) {
+        return;
+      }
+
+      db.collection(CHATS_COLLECTION).doc(chatId)
+        .set({ participants: [currentUid, String(chat.otherUid)].sort(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        .catch(function (err) {
+          console.warn("[Vaani] Chat list click: chat doc upsert failed (non-fatal):", err);
+        });
+
+      _openChatUI(chatId, selectedUser);
+    });
+
+    fragment.appendChild(item);
+  });
+
+  listEl.appendChild(fragment);
+}
 
   function _stopListening() {
     if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
