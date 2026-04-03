@@ -9,11 +9,16 @@
 #vaaniChat *::after {
   box-sizing: border-box;
 }
-
+html, body {
+  height: 100%;
+}
+#vaaniChat .vc-shell {
+  height: 100%;
+}
 #vaaniChat {
   width: 100%;
   max-width: 720px;
-  height: 100%;
+  height: 100vh;
   margin: 0 auto;
   font-family: 'Outfit', sans-serif;
   background: var(--bg, #09090f);
