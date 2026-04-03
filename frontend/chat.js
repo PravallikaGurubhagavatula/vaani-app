@@ -794,6 +794,12 @@ function _setSelectedChatUser(user) {
   }
 
   function _renderChatList() {
+
+     if (_selectedChatUser) {
+    console.log("[FIX] Skipping chat list render — chat is open");
+    return;
+  }
+     
     var listEl = document.getElementById("vcChatList");
     if (!listEl) return;
 
