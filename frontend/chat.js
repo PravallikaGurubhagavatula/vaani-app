@@ -658,6 +658,7 @@
       conversations.sort(function (a, b) { return _timestampToMillis(b.timestamp) - _timestampToMillis(a.timestamp); });
 
       window.vaaniChat.conversations = conversations;
+       _forceRenderChatList = true;
       window.vaaniChat._chatList = conversations.map(function (c) {
         return {
           chatId: c.chatId, otherUid: c.otherUid,
@@ -665,6 +666,7 @@
           lastMessage: c.lastMessage, updatedAt: c.timestamp || null
         };
       });
+       
 
       _hasLoadedChatListOnce = true;
 
@@ -729,7 +731,25 @@
   if (!listEl) return;
 
   listEl.innerHTML = "";
-  var raw = window.vaaniChat && Array.isArray(window.vaaniChat.conversations) ? window.vaaniChat.conversations : [];
+  var raw = [];
+
+if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
+  raw = window.vaaniChat.conversations;
+} else if (window.vaaniChat && Array.isArray(window.vaaniChat._chatList)) {
+  raw = window.vaaniChat._chatList.map(function (c) {
+    return {
+      chatId: c.chatId,
+      otherUid: c.otherUid,
+      user: {
+        username: c.username,
+        displayName: c.displayName,
+        photoURL: c.photoURL
+      },
+      lastMessage: c.lastMessage,
+      timestamp: c.updatedAt
+    };
+  });
+}
 
   function _getTimestampMs(value) {
     if (!value) return 0;
@@ -793,17 +813,20 @@
       displayName: displayName || username || "user",
       photoURL: profile.photoURL || "",
       lastMessage: normalizedLastMessage,
-      updatedAt: conversation.timestamp || null,
+      updatedAt: conversation.timestamp || conversation.updatedAt || conversation.createdAt || null,
       updatedAtMs: _getTimestampMs(conversation.timestamp || null)
     });
     return acc;
   }, []);
 
   if (!items.length) {
-    _forceRenderChatList = false;
+  if (!_hasLoadedChatListOnce) {
+    listEl.innerHTML = '<div class="vc-chat-list-empty">Loading chats…</div>';
+  } else {
     listEl.innerHTML = '<div class="vc-chat-list-empty">No chats yet</div>';
-    return;
-  } 
+  }
+  return;
+}
 
   items.sort(function (a, b) { return b.updatedAtMs - a.updatedAtMs; });
 
@@ -1033,6 +1056,7 @@
             pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: fromData.username || "user", fromName: fromData.name || "" });
           } catch (err) {
             console.error("[Vaani] Failed to load incoming request profile:", err);
+             console.log("[DEBUG] Conversations:", conversations);
             pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: "user", fromName: "" });
           }
         }
