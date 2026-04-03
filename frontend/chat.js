@@ -99,7 +99,9 @@
       try {
         var existingChatKeySet = new Set();
         var existingChatSnap = await db.collection(CHATS_COLLECTION)
-          .where("participants", "array-contains", currentUid).get();
+          .where("participants", "array-contains", currentUid)
+  .orderBy("updatedAt", "desc")
+  .limit(20)
         existingChatSnap.forEach(function (doc) {
           var data = doc.data() || {};
           var p = Array.isArray(data.participants) ? data.participants.filter(Boolean).map(String).sort() : [];
