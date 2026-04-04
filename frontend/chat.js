@@ -1026,6 +1026,14 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     ]);
   }
 
+  async function _deleteUserRequestMirrors(db, requestId, fromUid, toUid) {
+    if (!db || !requestId || !fromUid || !toUid) return;
+    await Promise.all([
+      db.collection("users").doc(fromUid).collection(USER_REQUESTS_SENT_COLLECTION).doc(requestId).delete().catch(function () {}),
+      db.collection("users").doc(toUid).collection(USER_REQUESTS_RECEIVED_COLLECTION).doc(requestId).delete().catch(function () {})
+    ]);
+  }
+
   async function _sendConnectionRequest(db, fromUid, toUid) {
     if (!db || !fromUid || !toUid) return;
     if (fromUid === toUid) return;
@@ -1035,8 +1043,16 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     var requestId = _buildRequestId(fromUid, toUid);
     var createdAt = firebase.firestore.FieldValue.serverTimestamp();
+    var senderProfile = _userProfileCache[fromUid] || {};
     await db.collection(REQUESTS_COLLECTION).doc(requestId).set({
-      fromUid: fromUid, toUid: toUid, status: "pending", createdAt: createdAt
+      fromUid: fromUid,
+      toUid: toUid,
+      senderId: fromUid,
+      receiverId: toUid,
+      senderUsername: senderProfile.username || "",
+      status: "pending",
+      createdAt: createdAt,
+      timestamp: createdAt
     }, { merge: true });
     await _upsertUserRequestMirrors(db, requestId, fromUid, toUid, "pending", createdAt, null);
   }
@@ -1076,13 +1092,21 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var respondedAt = firebase.firestore.FieldValue.serverTimestamp();
       if (await _isConnected(db, currentUid, fromUid)) {
         console.warn("[Vaani] acceptConnectionRequest: already connected");
-        await requestRef.set({ status: "accepted", respondedAt: respondedAt }, { merge: true });
-        await _upsertUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid, "accepted", requestData.createdAt || null, respondedAt);
+        await requestRef.delete();
+        await _deleteUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid);
         return;
       }
       await db.collection(CONNECTIONS_COLLECTION).add({ users: [currentUid, fromUid], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-      await requestRef.set({ status: "accepted", respondedAt: respondedAt }, { merge: true });
-      await _upsertUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid, "accepted", requestData.createdAt || null, respondedAt);
+      var chatId = _generateChatId(fromRequestUid, toRequestUid);
+      if (chatId) {
+        await db.collection(CHATS_COLLECTION).doc(chatId).set({
+          participants: [fromRequestUid, toRequestUid].sort(),
+          updatedAt: respondedAt,
+          createdAt: respondedAt
+        }, { merge: true });
+      }
+      await requestRef.delete();
+      await _deleteUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid);
       if (typeof window.showToast === "function") window.showToast("Connection accepted");
     } catch (err) { console.error("[Vaani] acceptConnectionRequest failed:", err); throw err; }
   }
@@ -1095,12 +1119,11 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var requestData = requestSnap.exists ? (requestSnap.data() || {}) : {};
       var fromUid = String(requestData.fromUid || "");
       var toUid = String(requestData.toUid || "");
-      var respondedAt = firebase.firestore.FieldValue.serverTimestamp();
-      await requestRef.set({ status: "rejected", respondedAt: respondedAt }, { merge: true });
+      await requestRef.delete();
       if (fromUid && toUid) {
-        await _upsertUserRequestMirrors(db, requestId, fromUid, toUid, "rejected", requestData.createdAt || null, respondedAt);
+        await _deleteUserRequestMirrors(db, requestId, fromUid, toUid);
       }
-      if (typeof window.showToast === "function") window.showToast("Request rejected");
+      if (typeof window.showToast === "function") window.showToast("Request denied");
     } catch (err) { console.error("[Vaani] rejectConnectionRequest failed:", err); throw err; }
   }
 
@@ -1115,7 +1138,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         '<div class="vc-request-copy">' + _esc(r.fromName || "") + "</div>" +
         '<div class="vc-request-actions">' +
         '<button type="button" class="vc-mini-btn vc-accept-btn" data-request-id="' + _esc(r.id) + '" data-from-uid="' + _esc(r.fromUid) + '" data-to-uid="' + _esc(r.toUid) + '">Accept</button>' +
-        '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(r.id) + '">Reject</button></div></div>';
+        '<button type="button" class="vc-mini-btn vc-reject-btn" data-request-id="' + _esc(r.id) + '">Deny</button></div></div>';
     }).join("");
   }
 
@@ -1128,17 +1151,26 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       .where("toUid", "==", currentUid).where("status", "==", "pending").orderBy("createdAt", "desc")
       .onSnapshot(async function (snapshot) {
         var pending = [];
+        var seenRequestIds = new Set();
         for (var i = 0; i < snapshot.docs.length; i++) {
           var doc = snapshot.docs[i]; var data = doc.data() || {};
-          if (!data.fromUid) continue;
+          var requestId = doc.id;
+          var senderUid = String(data.fromUid || data.senderId || "");
+          if (!requestId || seenRequestIds.has(requestId) || !senderUid) continue;
+          seenRequestIds.add(requestId);
           try {
-            var fromProfile = await db.collection("users").doc(data.fromUid).get();
+            var fromProfile = await db.collection("users").doc(senderUid).get();
             var fromData = fromProfile.exists ? fromProfile.data() : {};
-            pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: fromData.username || "user", fromName: fromData.name || "" });
+            pending.push({
+              id: requestId,
+              fromUid: senderUid,
+              toUid: data.toUid || data.receiverId || "",
+              fromUsername: data.senderUsername || fromData.username || "user",
+              fromName: fromData.name || fromData.displayName || ""
+            });
           } catch (err) {
             console.error("[Vaani] Failed to load incoming request profile:", err);
-             console.log("[DEBUG] Conversations:", conversations);
-            pending.push({ id: doc.id, fromUid: data.fromUid || "", toUid: data.toUid || "", fromUsername: "user", fromName: "" });
+            pending.push({ id: requestId, fromUid: senderUid, toUid: data.toUid || data.receiverId || "", fromUsername: data.senderUsername || "user", fromName: "" });
           }
         }
         incomingRequests = pending; _renderIncomingRequests(incomingRequests);
@@ -1161,6 +1193,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
       if (!db) { console.error("[Vaani] request click: db unavailable"); return; }
       actionBtn.disabled = true;
+      incomingRequests = incomingRequests.filter(function (request) { return request.id !== requestId; });
+      _renderIncomingRequests(incomingRequests);
       try {
         if (acceptBtn) await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
         else           await _rejectConnectionRequest(db, requestId);
