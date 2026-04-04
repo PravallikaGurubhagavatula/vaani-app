@@ -1174,16 +1174,31 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   async function _rejectConnectionRequest(db, requestId) {
     if (!db || !requestId) { console.error("[Vaani] rejectConnectionRequest: missing params"); return; }
     try {
+      var nowTs = firebase.firestore.FieldValue.serverTimestamp();
       var requestRef = db.collection(REQUESTS_COLLECTION).doc(requestId);
-      var requestSnap = await requestRef.get();
-      var requestData = requestSnap.exists ? (requestSnap.data() || {}) : {};
-      var fromUid = String(requestData.fromUid || "");
-      var toUid = String(requestData.toUid || "");
-      await requestRef.delete();
-      if (fromUid && toUid) {
-        await _deleteUserRequestMirrors(db, requestId, fromUid, toUid);
+      var participantPair = await db.runTransaction(async function (tx) {
+        var requestSnap = await tx.get(requestRef);
+        if (!requestSnap.exists) throw new Error("REQUEST_ALREADY_HANDLED");
+        var requestData = requestSnap.data() || {};
+        var status = String(requestData.status || "pending");
+        if (status !== "pending") throw new Error("REQUEST_ALREADY_HANDLED");
+        var fromUid = String(requestData.fromUid || "");
+        var toUid = String(requestData.toUid || "");
+        if (!fromUid || !toUid) throw new Error("REQUEST_INVALID");
+
+        tx.update(requestRef, { status: "denied", respondedAt: nowTs });
+        tx.set(db.collection("users").doc(fromUid).collection(USER_REQUESTS_SENT_COLLECTION).doc(requestId), {
+          toUid: toUid, status: "denied", respondedAt: nowTs
+        }, { merge: true });
+        tx.set(db.collection("users").doc(toUid).collection(USER_REQUESTS_RECEIVED_COLLECTION).doc(requestId), {
+          fromUid: fromUid, status: "denied", respondedAt: nowTs
+        }, { merge: true });
+        return { fromUid: fromUid, toUid: toUid };
+      });
+
+      if (participantPair && participantPair.fromUid && participantPair.toUid) {
+        await _deleteUserRequestMirrors(db, requestId, participantPair.fromUid, participantPair.toUid);
       }
-      if (typeof window.showToast === "function") window.showToast("Request denied");
     } catch (err) { console.error("[Vaani] rejectConnectionRequest failed:", err); throw err; }
   }
 
@@ -1260,6 +1275,10 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         else           await _rejectConnectionRequest(db, requestId);
       } catch (err) {
         console.error("[Vaani] request action failed:", err);
+        if (err && err.message === "REQUEST_ALREADY_HANDLED") {
+          _fetchIncomingRequests(currentUid);
+          return;
+        }
         actionBtn.disabled = false;
         if (typeof window.showToast === "function") window.showToast("Action failed — please try again");
       }
