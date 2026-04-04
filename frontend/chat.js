@@ -26,6 +26,7 @@
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
   var _unsubscribeConnections = null;
+  var _unsubscribeRequestState = null;
   var _unsubscribeMessages = null;
   var _activeMessageListenerKey = null;
   var _activeMessagesSignature = "";
@@ -45,6 +46,8 @@
   var _messages = [];
   var _inputMessage = "";
   var _messagesContainerRef = null;
+  var _searchResultCache = [];
+  var _searchDropdownRef = null;
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -481,6 +484,7 @@
     _bindIncomingRequestActions();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
+    _listenToRequestState(user.uid);
 
     // Attach listener first for fast initial render; run migrations in background.
     _createChatListListener();
@@ -574,6 +578,7 @@
         var prev = _fetchConnections._lastSignature || "";
         _fetchConnections._lastSignature = next;
         console.log("[Vaani] connections updated —", _connectedUidSet.size, "connected");
+        _refreshActiveSearchDropdown();
         if (window.vaaniChat && window.vaaniChat._currentView === "home" && next !== prev) _renderChatList();
       }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
   }
@@ -915,6 +920,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   function _stopListening() {
     if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
+    if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = null; _renderedChatListSignature = "";
@@ -924,10 +930,10 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   function _clearSearchState() {
     if (_searchDebounceTimer) { clearTimeout(_searchDebounceTimer); _searchDebounceTimer = null; }
     _latestSearchQuery = "";
+    _searchResultCache = [];
+    _searchDropdownRef = null;
     if (_outsideClickHandler) { document.removeEventListener("mousedown", _outsideClickHandler); _outsideClickHandler = null; }
   }
-
-  function _isSearchItemDisabled(state, isSelf) { return isSelf || state === "requested" || state === "self"; }
 
   function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
     if (!dropdown) return; dropdown.innerHTML = "";
@@ -937,41 +943,34 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var uid = data && data.uid ? data.uid : ""; if (!uid) return;
       var username = data.username || ""; if (!username) return;
       var name = data.name || username, photo = data.photoURL || "", initial = (username.charAt(0) || "U").toUpperCase();
-      var state = stateByUid && uid ? stateByUid[uid] || "none" : "none", isSelf = uid === currentUid;
-      var label, disabled;
-      switch (state) {
-        case "self": label = "(You)"; disabled = true; break;
-        case "connected": label = "Message"; disabled = false; break;
-        case "requested": label = "Requested"; disabled = true; break;
-        case "incoming": label = "Accept"; disabled = false; break;
-        default: label = "Connect"; disabled = false; break;
+      var state = stateByUid && uid ? stateByUid[uid] || "not_connected" : "not_connected", isSelf = uid === currentUid;
+      if (isSelf) return;
+      var actionHTML = "";
+      if (state === "connected") {
+        actionHTML = '<button type="button" class="vc-search-btn vc-message-btn" data-action="message" data-uid="' + _esc(uid) + '">Message</button>';
+      } else if (state === "request_sent") {
+        actionHTML = '<button type="button" class="vc-search-btn vc-requested-btn" data-action="requested" data-uid="' + _esc(uid) + '" disabled>Requested</button>';
+      } else if (state === "request_received") {
+        actionHTML = '<div class="vc-search-actions-group">' +
+          '<button type="button" class="vc-search-btn vc-accept-btn" data-action="accept" data-uid="' + _esc(uid) + '">Accept</button>' +
+          '<button type="button" class="vc-search-btn vc-reject-btn" data-action="deny" data-uid="' + _esc(uid) + '">Deny</button>' +
+          "</div>";
+      } else {
+        actionHTML = '<button type="button" class="vc-search-btn vc-connect-btn" data-action="connect" data-uid="' + _esc(uid) + '">Connect</button>';
       }
-      var itemEl = document.createElement("button");
-      itemEl.className = "vc-search-item"; itemEl.type = "button";
+      var itemEl = document.createElement("div");
+      itemEl.className = "vc-search-item";
       itemEl.setAttribute("data-uid", uid); itemEl.setAttribute("data-state", state);
-      if (disabled) itemEl.disabled = true;
       itemEl.innerHTML = '<span class="vc-search-avatar">' +
         (photo ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
                : '<span class="vc-search-initial">' + _esc(initial) + "</span>") + "</span>" +
         '<span class="vc-search-meta"><span class="vc-search-username">@' + _esc(username) + "</span>" +
         '<span class="vc-search-name">' + _esc(name) + "</span></span>" +
-        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + _esc(label) + "</span>";
+        '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + actionHTML + "</span>";
       dropdown.appendChild(itemEl); visibleCount++;
     });
     if (!visibleCount) dropdown.innerHTML = '<div class="vc-search-empty">No users found</div>';
     dropdown.classList.add("vc-open");
-  }
-
-  function _setSearchItemState(dropdown, uid, state) {
-    if (!dropdown || !uid) return;
-    var itemEl   = dropdown.querySelector('.vc-search-item[data-uid="'   + uid + '"]');
-    var actionEl = dropdown.querySelector('.vc-search-action[data-uid="' + uid + '"]');
-    if (!actionEl || !itemEl) return;
-    var labelMap = { self: "(You)", connected: "Message", requested: "Requested", incoming: "Accept", none: "Connect" };
-    actionEl.textContent = labelMap[state] || "Connect";
-    actionEl.setAttribute("data-state", state || "none"); itemEl.setAttribute("data-state", state || "none");
-    var isSelf = window._vaaniCurrentUser && window._vaaniCurrentUser.uid === uid;
-    itemEl.disabled = _isSearchItemDisabled(state, isSelf);
   }
 
   async function _isConnected(db, currentUid, targetUid) {
@@ -987,7 +986,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     if (!db || !currentUid || !users || !users.length) return stateByUid;
     var targetUids = users.map(function (i) { return i.uid || ""; }).filter(Boolean);
     if (!targetUids.length) return stateByUid;
-    targetUids.forEach(function (uid) { stateByUid[uid] = uid === currentUid ? "self" : "none"; });
+    targetUids.forEach(function (uid) { stateByUid[uid] = uid === currentUid ? "self" : "not_connected"; });
 
     var results = await Promise.all([
       db.collection(REQUESTS_COLLECTION).where("fromUid", "==", currentUid).where("status", "==", "pending").limit(200).get(),
@@ -999,11 +998,11 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     if (results[1]) results[1].forEach(function (doc) { if (doc.data().fromUid) incomingSet.add(doc.data().fromUid); });
 
     targetUids.forEach(function (uid) {
-      if (uid === currentUid)         { stateByUid[uid] = "self";      return; }
-      if (_connectedUidSet.has(uid))  { stateByUid[uid] = "connected"; return; }
-      if (requestedSet.has(uid))      { stateByUid[uid] = "requested"; return; }
-      if (incomingSet.has(uid))       { stateByUid[uid] = "incoming";  return; }
-      stateByUid[uid] = "none";
+      if (uid === currentUid)         { stateByUid[uid] = "self";             return; }
+      if (_connectedUidSet.has(uid))  { stateByUid[uid] = "connected";        return; }
+      if (requestedSet.has(uid))      { stateByUid[uid] = "request_sent";     return; }
+      if (incomingSet.has(uid))       { stateByUid[uid] = "request_received"; return; }
+      stateByUid[uid] = "not_connected";
     });
     return stateByUid;
   }
@@ -1017,6 +1016,18 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     return !existing.empty;
   }
 
+  async function _findIncomingRequest(db, currentUid, fromUid) {
+    if (!db || !currentUid || !fromUid) return null;
+    var snap = await db.collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", fromUid)
+      .where("toUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    return snap.docs[0];
+  }
+
   async function _createConnection(db, uidA, uidB) {
     if (await _isConnected(db, uidA, uidB)) return;
     await db.collection(CONNECTIONS_COLLECTION).add({ users: [uidA, uidB], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
@@ -1027,10 +1038,11 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     try {
       if (await _isConnected(db, currentUid, fromUid)) {
         console.warn("[Vaani] acceptConnectionRequest: already connected");
-        await db.collection(REQUESTS_COLLECTION).doc(requestId).delete(); return;
+        await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "accepted", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return;
       }
       await db.collection(CONNECTIONS_COLLECTION).add({ users: [currentUid, fromUid], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
+      await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "accepted", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       if (typeof window.showToast === "function") window.showToast("Connection accepted");
     } catch (err) { console.error("[Vaani] acceptConnectionRequest failed:", err); throw err; }
   }
@@ -1038,7 +1050,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   async function _rejectConnectionRequest(db, requestId) {
     if (!db || !requestId) { console.error("[Vaani] rejectConnectionRequest: missing params"); return; }
     try {
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).delete();
+      await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "rejected", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       if (typeof window.showToast === "function") window.showToast("Request rejected");
     } catch (err) { console.error("[Vaani] rejectConnectionRequest failed:", err); throw err; }
   }
@@ -1121,9 +1133,12 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var list = [];
       snapshot.forEach(function (doc) {
         var data = doc.data(); if (!data || !data.username) return;
+        if (window._vaaniCurrentUser && window._vaaniCurrentUser.uid && doc.id === window._vaaniCurrentUser.uid) return;
         list.push({ uid: doc.id, username: data.username, name: data.name || "", photoURL: data.photoURL || "" });
       });
       if (query !== _latestSearchQuery) return;
+      _searchResultCache = list.slice();
+      _searchDropdownRef = dropdown;
       var stateByUid = await _buildSearchItemStates(db, currentUid, list);
       if (query !== _latestSearchQuery) return;
       _renderSearchResults(dropdown, list, stateByUid, currentUid);
@@ -1133,6 +1148,33 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       dropdown.innerHTML = '<div class="vc-search-empty">Search failed. Try again.</div>';
       dropdown.classList.add("vc-open");
     }
+  }
+
+  async function _refreshActiveSearchDropdown() {
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : "";
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    if (!db || !_searchDropdownRef || !_searchResultCache.length || !currentUid || !_latestSearchQuery) return;
+    var stateByUid = await _buildSearchItemStates(db, currentUid, _searchResultCache);
+    if (_latestSearchQuery) _renderSearchResults(_searchDropdownRef, _searchResultCache, stateByUid, currentUid);
+  }
+
+  function _listenToRequestState(currentUid) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    if (!db || !currentUid) return;
+    if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
+    var offOutgoing = db.collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
+        console.error("[Vaani] outgoing request-state listener error:", err);
+      });
+    var offIncoming = db.collection(REQUESTS_COLLECTION)
+      .where("toUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
+        console.error("[Vaani] incoming request-state listener error:", err);
+      });
+    _unsubscribeRequestState = function () { offOutgoing(); offIncoming(); };
   }
 
   function _bindUserSearch() {
@@ -1170,17 +1212,45 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     }
 
     searchDropdown.addEventListener("click", async function (event) {
-      var btn = event.target.closest(".vc-search-item"); if (!btn) return;
-      var targetUid  = btn.getAttribute("data-uid") || "";
+      var actionBtn = event.target.closest(".vc-search-btn"); if (!actionBtn) return;
+      var action = actionBtn.getAttribute("data-action") || "";
+      var targetUid = actionBtn.getAttribute("data-uid") || "";
       var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : "";
       if (!currentUid || !targetUid || currentUid === targetUid) return;
       var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
       if (!db) return;
-      btn.disabled = true;
+      actionBtn.disabled = true;
       try {
-        var profile = await _fetchOtherProfile(db, targetUid); profile.uid = targetUid;
-        closeDropdown(); await handleMessageClick(profile);
-      } finally { btn.disabled = false; }
+        if (action === "message") {
+          var profile = await _fetchOtherProfile(db, targetUid); profile.uid = targetUid;
+          closeDropdown(); await handleMessageClick(profile);
+          return;
+        }
+        if (action === "connect") {
+          if (await _isConnected(db, currentUid, targetUid)) return;
+          var hasOutgoing = await _hasPendingConnectionRequest(db, currentUid, targetUid);
+          var hasIncoming = await _hasPendingConnectionRequest(db, targetUid, currentUid);
+          if (!hasOutgoing && !hasIncoming) await _sendConnectionRequest(db, currentUid, targetUid);
+          await _refreshActiveSearchDropdown();
+          return;
+        }
+        if (action === "accept") {
+          var incomingDoc = await _findIncomingRequest(db, currentUid, targetUid);
+          if (incomingDoc) await _acceptConnectionRequest(db, incomingDoc.id, currentUid, targetUid);
+          await _refreshActiveSearchDropdown();
+          return;
+        }
+        if (action === "deny") {
+          var rejectDoc = await _findIncomingRequest(db, currentUid, targetUid);
+          if (rejectDoc) await _rejectConnectionRequest(db, rejectDoc.id);
+          await _refreshActiveSearchDropdown();
+        }
+      } catch (err) {
+        console.error("[Vaani] search action failed:", err);
+        if (typeof window.showToast === "function") window.showToast("Action failed — please try again");
+      } finally {
+        actionBtn.disabled = false;
+      }
     });
 
     _outsideClickHandler = function (event) { if (!searchWrap.contains(event.target)) closeDropdown(); };
