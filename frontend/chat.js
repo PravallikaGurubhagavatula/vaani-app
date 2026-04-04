@@ -56,6 +56,7 @@
 
   var REQUESTS_COLLECTION = "connectionRequests";
   var CONNECTIONS_COLLECTION = "connections";
+  var NOTIFICATIONS_COLLECTION = "notifications";
   var USER_REQUESTS_SENT_COLLECTION = "requestsSent";
   var USER_REQUESTS_RECEIVED_COLLECTION = "requestsReceived";
 
@@ -1013,6 +1014,12 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     return String(fromUid || "") + "_" + String(toUid || "");
   }
 
+  function _buildConnectionId(uidA, uidB) {
+    var pair = [String(uidA || ""), String(uidB || "")].filter(Boolean).sort();
+    if (pair.length !== 2) return "";
+    return pair[0] + "_" + pair[1];
+  }
+
   async function _upsertUserRequestMirrors(db, requestId, fromUid, toUid, status, createdAt, respondedAt) {
     var senderPayload = { toUid: toUid, status: status, createdAt: createdAt };
     var receiverPayload = { fromUid: fromUid, status: status, createdAt: createdAt };
@@ -1075,38 +1082,91 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   }
 
   async function _createConnection(db, uidA, uidB) {
+    var connectionId = _buildConnectionId(uidA, uidB);
+    if (!connectionId) return;
     if (await _isConnected(db, uidA, uidB)) return;
-    await db.collection(CONNECTIONS_COLLECTION).add({ users: [uidA, uidB], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    await db.collection(CONNECTIONS_COLLECTION).doc(connectionId).set({
+      users: connectionId.split("_"),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
   }
 
   async function _acceptConnectionRequest(db, requestId, currentUid, fromUid) {
     if (!db || !requestId || !currentUid || !fromUid) { console.error("[Vaani] acceptConnectionRequest: missing params"); return; }
     try {
       var requestRef = db.collection(REQUESTS_COLLECTION).doc(requestId);
-      var requestSnap = await requestRef.get();
-      var requestData = requestSnap.exists ? (requestSnap.data() || {}) : {};
-      var fromRequestUid = String(requestData.fromUid || fromUid || "");
-      var toRequestUid = String(requestData.toUid || currentUid || "");
-      if (!fromRequestUid || !toRequestUid) return;
+      var nowTs = firebase.firestore.FieldValue.serverTimestamp();
+      var serverTime = firebase.firestore.Timestamp.now();
 
-      var respondedAt = firebase.firestore.FieldValue.serverTimestamp();
-      if (await _isConnected(db, currentUid, fromUid)) {
-        console.warn("[Vaani] acceptConnectionRequest: already connected");
-        await requestRef.delete();
-        await _deleteUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid);
-        return;
-      }
-      await db.collection(CONNECTIONS_COLLECTION).add({ users: [currentUid, fromUid], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-      var chatId = _generateChatId(fromRequestUid, toRequestUid);
-      if (chatId) {
-        await db.collection(CHATS_COLLECTION).doc(chatId).set({
-          participants: [fromRequestUid, toRequestUid].sort(),
-          updatedAt: respondedAt,
-          createdAt: respondedAt
+      await db.runTransaction(async function (tx) {
+        var requestSnap = await tx.get(requestRef);
+        if (!requestSnap.exists) {
+          throw new Error("REQUEST_NOT_FOUND");
+        }
+        var requestData = requestSnap.data() || {};
+        var fromRequestUid = String(requestData.fromUid || fromUid || "");
+        var toRequestUid = String(requestData.toUid || currentUid || "");
+        var currentStatus = String(requestData.status || "");
+        if (!fromRequestUid || !toRequestUid) throw new Error("REQUEST_INVALID");
+        if (toRequestUid !== String(currentUid)) throw new Error("REQUEST_NOT_FOR_USER");
+
+        if (currentStatus === "accepted") {
+          console.warn("[Vaani] acceptConnectionRequest: already accepted");
+          return;
+        }
+        if (currentStatus && currentStatus !== "pending") throw new Error("REQUEST_NOT_PENDING");
+
+        var connectionId = _buildConnectionId(fromRequestUid, toRequestUid);
+        if (!connectionId) throw new Error("REQUEST_INVALID");
+        var sortedUsers = connectionId.split("_");
+        var connectionRef = db.collection(CONNECTIONS_COLLECTION).doc(connectionId);
+        var connectionSnap = await tx.get(connectionRef);
+        if (!connectionSnap.exists) {
+          tx.set(connectionRef, { users: sortedUsers, createdAt: nowTs });
+        }
+
+        tx.update(requestRef, { status: "accepted", respondedAt: nowTs });
+        tx.set(db.collection("users").doc(fromRequestUid).collection(USER_REQUESTS_SENT_COLLECTION).doc(requestId), {
+          toUid: toRequestUid, status: "accepted", respondedAt: nowTs
         }, { merge: true });
+        tx.set(db.collection("users").doc(toRequestUid).collection(USER_REQUESTS_RECEIVED_COLLECTION).doc(requestId), {
+          fromUid: fromRequestUid, status: "accepted", respondedAt: nowTs
+        }, { merge: true });
+
+        var chatId = _generateChatId(fromRequestUid, toRequestUid);
+        if (chatId) {
+          tx.set(db.collection(CHATS_COLLECTION).doc(chatId), {
+            participants: sortedUsers,
+            updatedAt: nowTs,
+            createdAt: nowTs
+          }, { merge: true });
+        }
+
+        var receiverProfile = _userProfileCache[toRequestUid] || {};
+        var receiverName = receiverProfile.username || receiverProfile.displayName || "A user";
+        tx.set(db.collection(NOTIFICATIONS_COLLECTION).doc(), {
+          type: "connection_accepted",
+          toUid: fromRequestUid,
+          fromUid: toRequestUid,
+          requestId: requestId,
+          connectionId: connectionId,
+          createdAt: nowTs,
+          read: false,
+          message: receiverName + " accepted your request. You can start a conversation."
+        });
+      });
+
+      incomingRequests = incomingRequests.filter(function (request) { return request.id !== requestId; });
+      _renderIncomingRequests(incomingRequests);
+      _connectedUidSet.add(fromUid);
+      _refreshActiveSearchDropdown();
+      if (window.vaaniChat && typeof window.vaaniChat.attachChatListListener === "function") {
+        window.vaaniChat.attachChatListListener();
       }
-      await requestRef.delete();
-      await _deleteUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid);
+      var chatId = _generateChatId(currentUid, fromUid);
+      if (chatId && window.vaaniChat && typeof window.vaaniChat.upsertConversationPlaceholder === "function") {
+        window.vaaniChat.upsertConversationPlaceholder(chatId, fromUid, "", serverTime);
+      }
       if (typeof window.showToast === "function") window.showToast("Connection accepted");
     } catch (err) { console.error("[Vaani] acceptConnectionRequest failed:", err); throw err; }
   }
