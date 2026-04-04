@@ -56,6 +56,8 @@
 
   var REQUESTS_COLLECTION = "connectionRequests";
   var CONNECTIONS_COLLECTION = "connections";
+  var USER_REQUESTS_SENT_COLLECTION = "requestsSent";
+  var USER_REQUESTS_RECEIVED_COLLECTION = "requestsReceived";
 
   function _root() {
     return document.getElementById(CHAT_ROOT_ID);
@@ -1007,8 +1009,36 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     return stateByUid;
   }
 
+  function _buildRequestId(fromUid, toUid) {
+    return String(fromUid || "") + "_" + String(toUid || "");
+  }
+
+  async function _upsertUserRequestMirrors(db, requestId, fromUid, toUid, status, createdAt, respondedAt) {
+    var senderPayload = { toUid: toUid, status: status, createdAt: createdAt };
+    var receiverPayload = { fromUid: fromUid, status: status, createdAt: createdAt };
+    if (respondedAt) {
+      senderPayload.respondedAt = respondedAt;
+      receiverPayload.respondedAt = respondedAt;
+    }
+    await Promise.all([
+      db.collection("users").doc(fromUid).collection(USER_REQUESTS_SENT_COLLECTION).doc(requestId).set(senderPayload, { merge: true }),
+      db.collection("users").doc(toUid).collection(USER_REQUESTS_RECEIVED_COLLECTION).doc(requestId).set(receiverPayload, { merge: true })
+    ]);
+  }
+
   async function _sendConnectionRequest(db, fromUid, toUid) {
-    await db.collection(REQUESTS_COLLECTION).add({ fromUid: fromUid, toUid: toUid, status: "pending", createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    if (!db || !fromUid || !toUid) return;
+    if (fromUid === toUid) return;
+    if (await _isConnected(db, fromUid, toUid)) return;
+    if (await _hasPendingConnectionRequest(db, fromUid, toUid)) return;
+    if (await _hasPendingConnectionRequest(db, toUid, fromUid)) return;
+
+    var requestId = _buildRequestId(fromUid, toUid);
+    var createdAt = firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection(REQUESTS_COLLECTION).doc(requestId).set({
+      fromUid: fromUid, toUid: toUid, status: "pending", createdAt: createdAt
+    }, { merge: true });
+    await _upsertUserRequestMirrors(db, requestId, fromUid, toUid, "pending", createdAt, null);
   }
 
   async function _hasPendingConnectionRequest(db, fromUid, toUid) {
@@ -1036,13 +1066,23 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   async function _acceptConnectionRequest(db, requestId, currentUid, fromUid) {
     if (!db || !requestId || !currentUid || !fromUid) { console.error("[Vaani] acceptConnectionRequest: missing params"); return; }
     try {
+      var requestRef = db.collection(REQUESTS_COLLECTION).doc(requestId);
+      var requestSnap = await requestRef.get();
+      var requestData = requestSnap.exists ? (requestSnap.data() || {}) : {};
+      var fromRequestUid = String(requestData.fromUid || fromUid || "");
+      var toRequestUid = String(requestData.toUid || currentUid || "");
+      if (!fromRequestUid || !toRequestUid) return;
+
+      var respondedAt = firebase.firestore.FieldValue.serverTimestamp();
       if (await _isConnected(db, currentUid, fromUid)) {
         console.warn("[Vaani] acceptConnectionRequest: already connected");
-        await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "accepted", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await requestRef.set({ status: "accepted", respondedAt: respondedAt }, { merge: true });
+        await _upsertUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid, "accepted", requestData.createdAt || null, respondedAt);
         return;
       }
       await db.collection(CONNECTIONS_COLLECTION).add({ users: [currentUid, fromUid], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "accepted", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await requestRef.set({ status: "accepted", respondedAt: respondedAt }, { merge: true });
+      await _upsertUserRequestMirrors(db, requestId, fromRequestUid, toRequestUid, "accepted", requestData.createdAt || null, respondedAt);
       if (typeof window.showToast === "function") window.showToast("Connection accepted");
     } catch (err) { console.error("[Vaani] acceptConnectionRequest failed:", err); throw err; }
   }
@@ -1050,7 +1090,16 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   async function _rejectConnectionRequest(db, requestId) {
     if (!db || !requestId) { console.error("[Vaani] rejectConnectionRequest: missing params"); return; }
     try {
-      await db.collection(REQUESTS_COLLECTION).doc(requestId).set({ status: "rejected", respondedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      var requestRef = db.collection(REQUESTS_COLLECTION).doc(requestId);
+      var requestSnap = await requestRef.get();
+      var requestData = requestSnap.exists ? (requestSnap.data() || {}) : {};
+      var fromUid = String(requestData.fromUid || "");
+      var toUid = String(requestData.toUid || "");
+      var respondedAt = firebase.firestore.FieldValue.serverTimestamp();
+      await requestRef.set({ status: "rejected", respondedAt: respondedAt }, { merge: true });
+      if (fromUid && toUid) {
+        await _upsertUserRequestMirrors(db, requestId, fromUid, toUid, "rejected", requestData.createdAt || null, respondedAt);
+      }
       if (typeof window.showToast === "function") window.showToast("Request rejected");
     } catch (err) { console.error("[Vaani] rejectConnectionRequest failed:", err); throw err; }
   }
@@ -1162,15 +1211,15 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !currentUid) return;
     if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
-    var offOutgoing = db.collection(REQUESTS_COLLECTION)
-      .where("fromUid", "==", currentUid)
-      .where("status", "==", "pending")
+    var offOutgoing = db.collection("users")
+      .doc(currentUid)
+      .collection(USER_REQUESTS_SENT_COLLECTION)
       .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
         console.error("[Vaani] outgoing request-state listener error:", err);
       });
-    var offIncoming = db.collection(REQUESTS_COLLECTION)
-      .where("toUid", "==", currentUid)
-      .where("status", "==", "pending")
+    var offIncoming = db.collection("users")
+      .doc(currentUid)
+      .collection(USER_REQUESTS_RECEIVED_COLLECTION)
       .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
         console.error("[Vaani] incoming request-state listener error:", err);
       });
