@@ -1954,20 +1954,23 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var menuIconSVG = '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>';
 
     chatScreen.innerHTML =
-      '<div class="vc-chat-view">' +
-        '<div class="vc-chat-header">' +
-          '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
-          '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
-          '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
-          '<div class="vc-chat-hsub">Online • Connected</div></div>' +
-          '<div class="vc-chat-hactions">' +
-            '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
-          "</div></div>" +
-        '<div class="vc-chat-messages" id="messagesContainer"></div>' +
-        '<div class="vc-chat-input-bar">' +
-          '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
-          '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
-        "</div></div>";
+      '<div class="vc-chat-view chat-wrapper">' +
+        '<div class="chat-container">' +
+          '<div class="vc-chat-header">' +
+            '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
+            '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
+            '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
+            '<div class="vc-chat-hsub">Online • Connected</div></div>' +
+            '<div class="vc-chat-hactions">' +
+              '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
+            "</div></div>" +
+          '<div class="vc-chat-messages chat-messages" id="messagesContainer"></div>' +
+          '<div class="vc-chat-input-bar">' +
+            '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
+            '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
+          "</div>" +
+        "</div>" +
+      "</div>";
 
     _messagesContainerRef = document.getElementById("messagesContainer");
     _setupViewportSync();
