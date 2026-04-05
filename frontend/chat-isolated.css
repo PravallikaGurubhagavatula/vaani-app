@@ -17,10 +17,12 @@ html, body {
 }
 #vaaniChat {
   --vc-header-z: 1200;
-  --vc-chat-header-height: 74px;
+  --vc-chat-header-height: clamp(60px, 10vw, 74px);
   --vc-keyboard-offset: 0px;
+  --vc-shell-pad-x: clamp(8px, 3vw, 16px);
+  --vc-bubble-max: min(78%, 680px);
   width: 100%;
-  max-width: 720px;
+  max-width: min(100%, 1200px);
   height: 100%;
   margin: 0 auto;
   font-family: 'Outfit', sans-serif;
@@ -45,7 +47,7 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  padding: clamp(8px, 2.2vw, 12px);
   display: flex;
   flex-direction: column;
   -webkit-overflow-scrolling: touch;
@@ -406,7 +408,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 16px 16px 0;
+  padding: 16px var(--vc-shell-pad-x) 0;
   overflow: visible;
 }
 
@@ -1057,7 +1059,7 @@ body.vm-menu-open {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px;
+  padding: clamp(8px, 2.2vw, 12px) var(--vc-shell-pad-x);
   min-height: var(--vc-chat-header-height);
   border-bottom: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
@@ -1134,7 +1136,7 @@ body.vm-menu-open {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 16px;
+  padding: 8px var(--vc-shell-pad-x);
   padding-bottom: calc(8px + var(--vc-keyboard-offset, 0px));
   display: flex;
   flex-direction: column;
@@ -1167,7 +1169,7 @@ body.vm-menu-open {
 }
 
 #vaaniChat .vc-msg-bubble {
-  max-width: 78%;
+  max-width: var(--vc-bubble-max);
   padding: 10px 12px;
   border-radius: 14px;
   line-height: 1.35;
@@ -1189,7 +1191,7 @@ body.vm-menu-open {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 10px 16px;
+  padding: 10px var(--vc-shell-pad-x);
   border-top: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
   box-sizing: border-box;
@@ -1233,7 +1235,7 @@ body.vm-menu-open {
 #vaaniChat .vc-chat-input {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: clamp(38px, 8.2vw, 44px);
   margin: 0;
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,0.12);
@@ -1251,8 +1253,8 @@ body.vm-menu-open {
 }
 
 #vaaniChat .vc-chat-send {
-  width: 40px;
-  height: 40px;
+  width: clamp(38px, 8.2vw, 44px);
+  height: clamp(38px, 8.2vw, 44px);
   margin: 0;
   border-radius: 12px;
   border: 0;
@@ -1277,4 +1279,65 @@ body.vm-menu-open {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+@media (min-width: 920px) {
+  #vaaniChat {
+    --vc-shell-pad-x: clamp(16px, 2vw, 24px);
+    --vc-bubble-max: min(70%, 760px);
+  }
+}
+
+@media (max-width: 480px) {
+  #vaaniChat {
+    --vc-shell-pad-x: clamp(8px, 4vw, 12px);
+    --vc-bubble-max: 84%;
+  }
+
+  #vaaniChat .vc-chat-avatar,
+  #vaaniChat .vc-chat-list-avatar,
+  #vaaniChat .vc-search-avatar {
+    width: clamp(38px, 11vw, 46px);
+    height: clamp(38px, 11vw, 46px);
+  }
+
+  #vaaniChat .vc-chat-hname,
+  #vaaniChat .vc-chat-list-username {
+    font-size: 13px;
+  }
+
+  #vaaniChat .vc-chat-list-meta,
+  #vaaniChat .vc-chat-list-last {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 320px) {
+  #vaaniChat {
+    --vc-chat-header-height: 56px;
+    --vc-shell-pad-x: 8px;
+    --vc-bubble-max: 90%;
+  }
+
+  #vaaniChat .vc-top-bar {
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  #vaaniChat .vc-avatar-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  #vaaniChat .vc-search-input,
+  #vaaniChat .vc-requests-toggle,
+  #vaaniChat .vc-chat-input {
+    font-size: 13px;
+  }
+}
+
+@media (min-width: 700px) and (max-width: 1100px) and (orientation: landscape) {
+  #vaaniChat {
+    --vc-bubble-max: min(74%, 720px);
+  }
 }
