@@ -25,6 +25,7 @@
   var _latestSearchQuery = "";
   var _outsideClickHandler = null;
   var _unsubscribeIncomingRequests = null;
+  var _unsubscribeSentRequests = null;
   var _unsubscribeConnections = null;
   var _unsubscribeRequestState = null;
   var _unsubscribeMessages = null;
@@ -53,6 +54,7 @@
   var MESSAGES_COLLECTION = "messages";
   var LEGACY_MESSAGES_COLLECTION = "vaani_messages";
   var incomingRequests = [];
+  var sentRequests = [];
 
   var REQUESTS_COLLECTION = "connectionRequests";
   var CONNECTIONS_COLLECTION = "connections";
@@ -475,6 +477,10 @@
       '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
+      '<div class="vc-requests-wrap">' +
+      '<button class="vc-requests-toggle" id="vcSentRequestsToggle" type="button">Requests Sent <span class="vc-requests-badge" id="vcSentRequestsBadge">Requested: 0</span></button>' +
+      '<div class="vc-requests-panel" id="vcSentRequestsPanel">' +
+      '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
       '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
       '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
 
@@ -485,8 +491,10 @@
 
     _bindUserSearch();
     _bindIncomingRequestActions();
+    _bindSentRequestActions();
     _fetchConnections(user.uid);
     _fetchIncomingRequests(user.uid);
+    _fetchSentRequests(user.uid);
     _listenToRequestState(user.uid);
 
     // Attach listener first for fast initial render; run migrations in background.
@@ -922,6 +930,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
   function _stopListening() {
     if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
+    if (_unsubscribeSentRequests) { _unsubscribeSentRequests(); _unsubscribeSentRequests = null; }
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
     _teardownMessageListener();
@@ -1217,6 +1226,38 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     }).join("");
   }
 
+  function _formatRequestTime(ts) {
+    if (!ts) return "";
+    try {
+      var value = typeof ts.toDate === "function" ? ts.toDate() : (ts instanceof Date ? ts : null);
+      if (!value || Number.isNaN(value.getTime())) return "";
+      return value.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function _renderSentRequests(requests) {
+    var listEl = document.getElementById("vcSentRequestsList");
+    var badgeEl = document.getElementById("vcSentRequestsBadge");
+    if (!listEl || !badgeEl) return;
+    var count = requests.length;
+    badgeEl.textContent = "Requested: " + String(count);
+    badgeEl.classList.toggle("vc-visible", count > 0);
+    if (!count) {
+      listEl.innerHTML = '<div class="vc-requests-empty">No pending requests</div>';
+      return;
+    }
+    listEl.innerHTML = requests.map(function (r) {
+      var createdAt = _formatRequestTime(r.createdAt);
+      return '<div class="vc-request-item vc-request-item-sent">' +
+        '<div class="vc-request-meta">' +
+        '<div class="vc-request-copy">@' + _esc(r.toUsername || "user") + "</div>" +
+        '<div class="vc-request-copy">' + _esc(r.statusLabel || "Pending") + (createdAt ? " • " + _esc(createdAt) : "") + "</div>" +
+        "</div></div>";
+    }).join("");
+  }
+
   async function _fetchIncomingRequests(currentUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !currentUid) return;
@@ -1252,6 +1293,53 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       }, function (err) { console.error("[Vaani] incoming requests listener error:", err); incomingRequests = []; _renderIncomingRequests([]); });
   }
 
+  async function _fetchSentRequests(currentUid) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    if (!db || !currentUid) return;
+    if (_unsubscribeSentRequests) { _unsubscribeSentRequests(); _unsubscribeSentRequests = null; }
+
+    _unsubscribeSentRequests = db.collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", currentUid)
+      .orderBy("createdAt", "desc")
+      .onSnapshot(async function (snapshot) {
+        var pending = [];
+        var seenRequestIds = new Set();
+        for (var i = 0; i < snapshot.docs.length; i++) {
+          var doc = snapshot.docs[i];
+          var data = doc.data() || {};
+          var requestId = doc.id;
+          var status = String(data.status || "").toLowerCase();
+          if (!requestId || seenRequestIds.has(requestId) || status !== "pending") continue;
+          seenRequestIds.add(requestId);
+
+          var receiverUid = String(data.toUid || data.receiverId || "");
+          var receiverUsername = String(data.receiverUsername || "").trim();
+          if (!receiverUsername && receiverUid) {
+            try {
+              var receiverProfile = await _getUserProfileCached(db, receiverUid);
+              receiverUsername = receiverProfile && receiverProfile.username ? receiverProfile.username : "user";
+            } catch (err) {
+              console.error("[Vaani] Failed to load sent-request receiver profile:", err);
+              receiverUsername = "user";
+            }
+          }
+          pending.push({
+            id: requestId,
+            toUid: receiverUid,
+            toUsername: receiverUsername || "user",
+            statusLabel: "Pending",
+            createdAt: data.createdAt || data.timestamp || null
+          });
+        }
+        sentRequests = pending;
+        _renderSentRequests(sentRequests);
+      }, function (err) {
+        console.error("[Vaani] sent requests listener error:", err);
+        sentRequests = [];
+        _renderSentRequests([]);
+      });
+  }
+
   function _bindIncomingRequestActions() {
     var listEl = document.getElementById("vcRequestsList"), toggleBtn = document.getElementById("vcRequestsToggle"), panel = document.getElementById("vcRequestsPanel");
     if (!listEl || !toggleBtn || !panel) return;
@@ -1283,6 +1371,13 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         if (typeof window.showToast === "function") window.showToast("Action failed — please try again");
       }
     });
+  }
+
+  function _bindSentRequestActions() {
+    var toggleBtn = document.getElementById("vcSentRequestsToggle");
+    var panel = document.getElementById("vcSentRequestsPanel");
+    if (!toggleBtn || !panel) return;
+    toggleBtn.addEventListener("click", function () { panel.classList.toggle("vc-open"); });
   }
 
   async function _fetchUsersByPrefix(query, dropdown) {
