@@ -485,13 +485,14 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     var initials = ((profile.username || "U").charAt(0) || "U").toUpperCase();
 
     root.innerHTML = '<section class="vc-shell" aria-label="Chat screen">' +
+      '<div class="vc-top-bar">' +
       '<button class="vc-avatar-btn" id="vcProfileBtn" aria-label="Open profile menu" title="Profile menu">' +
       (photo ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img avatar">'
              : '<span class="vc-avatar-initials avatar-placeholder">' + _esc(initials) + "</span>") + "</button>" +
-      '<div class="vc-home-view" id="vcHomeScreen">' +
       '<div class="vc-search-wrap" id="vcSearchWrap">' +
-      '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
-      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div></div>' +
+      '<input id="vcUserSearchInput" class="vc-search-input search-bar" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
+      '<div class="vc-search-dropdown" id="vcSearchDropdown"></div></div></div>' +
+      '<div class="vc-home-view" id="vcHomeScreen">' +
       '<div class="vc-requests-wrap">' +
       '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +

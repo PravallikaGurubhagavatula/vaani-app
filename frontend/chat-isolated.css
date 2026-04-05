@@ -398,6 +398,14 @@ html, body {
   overflow: visible;
 }
 
+#vaaniChat .vc-top-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
 #vaaniChat .vc-chat-view {
   min-height: 0;
 }
@@ -472,7 +480,8 @@ html, body {
 
 #vaaniChat .vc-search-wrap {
   width: 100%;
-  margin-top: 14px;
+  flex: 1;
+  min-width: 0;
   position: relative;
 }
 
@@ -488,6 +497,12 @@ html, body {
   font-size: 14px;
   padding: 11px 12px;
   outline: none;
+}
+
+#vaaniChat .search-bar {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
 }
 
 #vaaniChat .vc-search-input::placeholder {
