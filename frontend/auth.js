@@ -48,7 +48,6 @@
 
   var _auth = null;
   var _db   = null;
-  var _modularFirestore = null;
 
   /* ── Wait for compat SDK ─────────────────────────────────────── */
   function _waitForCompat(cb, tries) {
@@ -108,31 +107,8 @@
     });
   }
 
-  async function _getModularFirestore() {
-    if (_modularFirestore) return _modularFirestore;
-
-    var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-    var fsMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
-
-    var apps = appMod.getApps();
-    var modularApp = null;
-    for (var i = 0; i < apps.length; i++) {
-      if (apps[i].name === "vaani-chat-v2-modular") {
-        modularApp = apps[i];
-        break;
-      }
-    }
-    if (!modularApp) {
-      modularApp = appMod.initializeApp(FB_CONFIG, "vaani-chat-v2-modular");
-    }
-
-    _modularFirestore = {
-      db: fsMod.getFirestore(modularApp),
-      doc: fsMod.doc,
-      getDoc: fsMod.getDoc,
-    };
-
-    return _modularFirestore;
+  function loadChatHome(user, profile) {
+    _showChatScreen(user, profile || {});
   }
 
   /**
@@ -149,19 +125,30 @@
     }
 
     try {
-      var modular = await _getModularFirestore();
-      var userRef = modular.doc(modular.db, "users", user.uid);
-      var userSnap = await modular.getDoc(userRef);
+      var getUserProfile =
+        (typeof window.getUserProfile === "function")
+          ? window.getUserProfile
+          : (window.vaaniProfile && typeof window.vaaniProfile.get === "function"
+            ? window.vaaniProfile.get.bind(window.vaaniProfile)
+            : null);
+      var showProfileOnboarding =
+        (typeof window.showProfileOnboarding === "function")
+          ? window.showProfileOnboarding
+          : function () { _showProfileScreen(user); };
 
-      if (!userSnap.exists()) {
+      if (!getUserProfile) {
+        throw new Error("Profile module not ready.");
+      }
+
+      var profile = await getUserProfile(user.uid);
+      if (!profile) {
         console.log("[Vaani Router] Profile check → none");
-        _showProfileScreen(user);
+        await showProfileOnboarding(user.uid);
         return;
       }
 
-      var profile = userSnap.data() || {};
       console.log("[Vaani Router] Profile check →", profile.username ? "@" + profile.username : "exists");
-      _showChatScreen(user, profile);
+      loadChatHome(user, profile);
     } catch (err) {
       console.error("[Vaani Router] Profile read error:", err.message);
       if (typeof window.showToast === "function") {

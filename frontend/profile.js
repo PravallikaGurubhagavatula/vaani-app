@@ -180,6 +180,21 @@
   };
 
   window.saveProfile = _saveProfile;
+  window.getUserProfile = function (uid) {
+    return window.vaaniProfile.get(uid);
+  };
+  window.showProfileOnboarding = function (uid) {
+    var auth = _getAuth();
+    var user = auth && auth.currentUser ? auth.currentUser : null;
+    if (!user || !user.uid || user.uid !== uid) {
+      throw new Error("Signed-in user not available for onboarding.");
+    }
+    if (window.vaaniChat && typeof window.vaaniChat._renderProfile === "function") {
+      window.vaaniChat._renderProfile(user);
+      return;
+    }
+    throw new Error("Chat module not ready for onboarding.");
+  };
 
   console.log("[Vaani Profile] profile.js v3.0 loaded ✓");
 
