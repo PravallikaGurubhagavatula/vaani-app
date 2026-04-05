@@ -45,6 +45,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   var _chatListOpenRequestId = 0;
   var _chatBackfillPromisesByUid = Object.create(null);
   var _activeChatId = null;
+  var _visualViewportResizeHandler = null;
   var _selectedChatUser = null;
   var _loading = true;
   var _messages = [];
@@ -552,6 +553,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     if (!_selectedChatUser) {
       _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
       _teardownMessageListener();
+      _teardownViewportSync();
     }
     _syncViewWithSelection();
   }
@@ -578,6 +580,39 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   function _teardownMessageListener() {
     if (_unsubscribeMessages) { _unsubscribeMessages(); _unsubscribeMessages = null; }
     _activeMessageListenerKey = null; _activeMessagesSignature = ""; _optimisticMessages = [];
+  }
+
+  function _syncViewportForKeyboard() {
+    var root = _root();
+    if (!root) return;
+    var viewport = window.visualViewport;
+    if (!viewport) {
+      root.style.setProperty("--vc-keyboard-offset", "0px");
+      return;
+    }
+    var offset = Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop));
+    root.style.setProperty("--vc-keyboard-offset", offset + "px");
+  }
+
+  function _setupViewportSync() {
+    if (!window.visualViewport || _visualViewportResizeHandler) return;
+    _visualViewportResizeHandler = function () {
+      _syncViewportForKeyboard();
+      _scrollMessagesToBottom(false);
+    };
+    window.visualViewport.addEventListener("resize", _visualViewportResizeHandler, { passive: true });
+    window.visualViewport.addEventListener("scroll", _visualViewportResizeHandler, { passive: true });
+    _syncViewportForKeyboard();
+  }
+
+  function _teardownViewportSync() {
+    if (window.visualViewport && _visualViewportResizeHandler) {
+      window.visualViewport.removeEventListener("resize", _visualViewportResizeHandler);
+      window.visualViewport.removeEventListener("scroll", _visualViewportResizeHandler);
+    }
+    _visualViewportResizeHandler = null;
+    var root = _root();
+    if (root) root.style.setProperty("--vc-keyboard-offset", "0px");
   }
 
   function _shortFluentLanguages(list) {
@@ -1931,6 +1966,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         "</div></div>";
 
     _messagesContainerRef = document.getElementById("messagesContainer");
+    _setupViewportSync();
     _setMessages([]); _setInputMessage(""); _shouldStickToBottom = true; _renderMessages(true);
 
     // Show chat panel only after DOM is ready
@@ -2050,7 +2086,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       return _openChatWithUser({ uid: targetUid });
     },
 
-    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
+    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); },
 
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
