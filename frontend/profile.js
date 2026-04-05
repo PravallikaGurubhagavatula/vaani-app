@@ -1,19 +1,8 @@
 /* ================================================================
-   Vaani — profile.js  v2.0
+   Vaani — profile.js  v3.0
    ================================================================
-   Uses window.vaaniRouter.getDb() and window.vaaniRouter.getAuth()
-   so it always operates on the SAME Firebase app instance as
-   auth.js and chat.js — zero cross-instance permission issues.
-
-   USERNAME RULES (strict, as requested):
-   ─────────────────────────────────────────────────────────────────
-   Must contain BOTH letters AND numbers.
-   Optional underscores.
-   3–20 characters.
-   Regex: /^(?=.*[a-zA-Z])(?=.*[0-9])[a-zA-Z0-9_]{3,20}$/
-
-   Valid:   pravallika_03, user01, abc123
-   Invalid: pravallika (no number), 12345 (no letter), ___ (no alnum)
+   First-time profile onboarding data API.
+   Uses the same Firebase app instance as auth.js and chat.js.
 ================================================================ */
 
 (function () {
@@ -39,19 +28,111 @@
   /* ── Username validation ─────────────────────────────────────── */
   function _validateUsername(raw) {
     var v = (raw || "").trim();
-    if (!v)            return "Username cannot be empty.";
-    if (v.length < 3)  return "At least 3 characters required.";
+    if (!v) return "Username is required.";
+    if (v.length < 3) return "At least 3 characters required.";
     if (v.length > 20) return "Maximum 20 characters allowed.";
-
-    // Must contain at least one letter AND at least one number
-    if (!/^[a-zA-Z0-9_]+$/.test(v))
+    if (!/^[a-zA-Z0-9_]+$/.test(v)) {
       return "Only letters, numbers and underscores allowed.";
-    if (!/[a-zA-Z]/.test(v))
-      return "Must contain at least one letter (e.g. user_01).";
-    if (!/[0-9]/.test(v))
-      return "Must contain at least one number (e.g. pravallika_03).";
+    }
 
     return null; // valid
+  }
+
+  function _toArray(value) {
+    if (Array.isArray(value)) {
+      return value.map(function (item) { return String(item || "").trim(); }).filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value
+        .split(",")
+        .map(function (item) { return item.trim(); })
+        .filter(Boolean);
+    }
+    return [];
+  }
+
+  function _toLinksObject(value) {
+    if (!value || typeof value !== "object") return {};
+    var normalized = {};
+    Object.keys(value).forEach(function (key) {
+      var safeKey = String(key || "").trim();
+      var safeValue = String(value[key] || "").trim();
+      if (!safeKey || !safeValue) return;
+      normalized[safeKey] = safeValue;
+    });
+    return normalized;
+  }
+
+  function _normalizeProfileData(data) {
+    var safeData = data && typeof data === "object" ? data : {};
+    return {
+      name: String(safeData.name || "").trim(),
+      username: String(safeData.username || "").trim().toLowerCase(),
+      city: String(safeData.city || "").trim(),
+      bio: String(safeData.bio || "").trim(),
+      languages: _toArray(safeData.languages),
+      fluentLanguages: _toArray(safeData.fluentLanguages),
+      localExpertise: _toArray(safeData.localExpertise),
+      links: _toLinksObject(safeData.links),
+    };
+  }
+
+  async function _isUsernameTaken(db, uid, usernameLower) {
+    var snap = await db
+      .collection(COLLECTION)
+      .where("usernameLower", "==", usernameLower)
+      .limit(1)
+      .get();
+    if (snap.empty) return false;
+    var doc = snap.docs[0];
+    return doc.id !== uid;
+  }
+
+  function _validateRequired(data) {
+    if (!data.name) return "Name is required.";
+    var usernameError = _validateUsername(data.username);
+    if (usernameError) return usernameError;
+    if (!data.city) return "City is required.";
+    return null;
+  }
+
+  async function _saveProfile(uid, data) {
+    if (!uid) throw new Error("Missing user id.");
+
+    var db = _getDb();
+    if (!db) throw new Error("Database not available. Please refresh.");
+
+    var cleaned = _normalizeProfileData(data);
+    var requiredError = _validateRequired(cleaned);
+    if (requiredError) throw new Error(requiredError);
+
+    var usernameLower = cleaned.username.toLowerCase();
+    if (await _isUsernameTaken(db, uid, usernameLower)) {
+      throw new Error("That username is already taken. Try another.");
+    }
+
+    var docRef = db.collection(COLLECTION).doc(uid);
+    var existing = await docRef.get();
+    var payload = {
+      uid: uid,
+      name: cleaned.name,
+      username: cleaned.username,
+      usernameLower: usernameLower,
+      city: cleaned.city,
+      bio: cleaned.bio,
+      languages: cleaned.languages,
+      fluentLanguages: cleaned.fluentLanguages,
+      localExpertise: cleaned.localExpertise,
+      links: cleaned.links,
+      lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (!existing.exists || !existing.data().joinedDate) {
+      payload.joinedDate = firebase.firestore.FieldValue.serverTimestamp();
+    }
+
+    await docRef.set(payload, { merge: true });
+    return Object.assign({}, existing.exists ? existing.data() : {}, payload);
   }
 
   /* ── Public API ──────────────────────────────────────────────── */
@@ -76,76 +157,30 @@
       }
     },
 
-    /**
-     * create(user, username)
-     *
-     * Auth is already synced because we're using the same Firebase
-     * app instance as the router. No updateCurrentUser() needed —
-     * _auth.currentUser IS the signed-in user.
-     *
-     * Steps:
-     *   1. Validate username (strict: needs letter + number)
-     *   2. Check username uniqueness
-     *   3. Guard against duplicate profile
-     *   4. Write to users/{uid}
-     *   5. Call window.vaaniRouter.goToChat()
-     */
-    create: async function (user, username) {
-      var db   = _getDb();
-      var auth = _getAuth();
+    saveProfile: async function (uid, data) {
+      return _saveProfile(uid, data);
+    },
 
-      if (!db)   throw new Error("Database not available. Please refresh.");
+    create: async function (user, username, city) {
+      var auth = _getAuth();
       if (!auth) throw new Error("Auth not available. Please refresh.");
       if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
-
-      // 1. Validate
-      var cleaned      = (username || "").trim().toLowerCase();
-      var validationErr = _validateUsername(cleaned);
-      if (validationErr) throw new Error(validationErr);
-
-      // 2. Check uniqueness
-      try {
-        var snap = await db.collection(COLLECTION)
-                           .where("username", "==", cleaned)
-                           .limit(1)
-                           .get();
-        if (!snap.empty) throw new Error("That username is already taken. Try another.");
-      } catch (err) {
-        if (err.message.includes("already taken")) throw err;
-        console.warn("[Vaani Profile] Username check error:", err.message);
-        // Non-fatal — proceed (Firestore rules will block duplicates)
-      }
-
-      // 3. Guard against double-submit
-      try {
-        var existing = await db.collection(COLLECTION).doc(user.uid).get();
-        if (existing.exists) {
-          console.log("[Vaani Profile] Profile already exists — returning it.");
-          return existing.data();
-        }
-      } catch (_) {}
-
-      // 4. Write to users/{uid} — matches Firestore rule {uid}
-      var profileData = {
-        uid:       user.uid,
-        username:  cleaned,
-        name:      user.displayName || "",
-        email:     user.email       || "",
-        photoURL:  user.photoURL    || "",
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      };
-
-      console.log("[Vaani Profile] Writing profile:", profileData);
-      await db.collection(COLLECTION).doc(user.uid).set(profileData);
-      console.log("[Vaani Profile] ✅ Profile saved at users/" + user.uid);
-
-      return profileData;
+      var profile = await _saveProfile(user.uid, {
+        name: user.displayName || "",
+        username: username,
+        city: city || "Unknown",
+      });
+      return profile;
     },
 
     /** Exposed for live UI validation */
     validateUsername: _validateUsername,
+    normalizeProfileData: _normalizeProfileData,
+    validateRequired: _validateRequired,
   };
 
-  console.log("[Vaani Profile] profile.js v2.0 loaded ✓");
+  window.saveProfile = _saveProfile;
+
+  console.log("[Vaani Profile] profile.js v3.0 loaded ✓");
 
 })();

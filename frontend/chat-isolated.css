@@ -93,6 +93,13 @@ html, body {
   padding: 32px 26px 26px;
 }
 
+#vaaniChat .vg-onboarding-card {
+  max-width: 520px;
+  align-items: stretch;
+  text-align: left;
+  gap: 14px;
+}
+
 #vaaniChat .vg-card-icon {
   width: 62px;
   height: 62px;
@@ -191,6 +198,13 @@ html, body {
   gap: 6px;
 }
 
+#vaaniChat .vg-form-grid {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 #vaaniChat .vg-label {
   color: var(--text2, #9a9ab2);
   font-size: 12px;
@@ -224,6 +238,18 @@ html, body {
   font-family: 'Outfit', sans-serif;
 }
 
+#vaaniChat .vg-input-solid {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #13131f;
+  padding: 12px;
+}
+
+#vaaniChat .vg-textarea {
+  resize: vertical;
+  min-height: 82px;
+}
+
 #vaaniChat .vg-field-hint {
   margin: 0;
   color: #787890;
@@ -244,6 +270,18 @@ html, body {
   background: linear-gradient(135deg, #7c3aed, #6d28d9);
 }
 
+#vaaniChat .vg-secondary-btn {
+  width: 100%;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  color: #ddd6fe;
+  background: rgba(124, 58, 237, 0.1);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 #vaaniChat .vg-ghost-btn {
   border: 0;
   background: transparent;
@@ -252,6 +290,79 @@ html, body {
   border-radius: 8px;
   font-family: 'Outfit', sans-serif;
   cursor: pointer;
+}
+
+#vaaniChat .vg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#vaaniChat .vg-optional-block {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+#vaaniChat .vg-optional-block summary {
+  cursor: pointer;
+  color: #c4b5fd;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+#vaaniChat .vg-links-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#vaaniChat .vg-link-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(130px, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+#vaaniChat .vg-link-remove,
+#vaaniChat .vg-link-add {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text2, #9a9ab2);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+}
+
+#vaaniChat .vg-link-remove {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+@media (max-width: 520px) {
+  #vaaniChat .vg-screen {
+    padding: 14px;
+  }
+
+  #vaaniChat .vg-card.vg-onboarding-card {
+    padding: 20px 16px 18px;
+    border-radius: 16px;
+  }
+
+  #vaaniChat .vg-link-row {
+    grid-template-columns: 1fr;
+  }
+
+  #vaaniChat .vg-link-remove {
+    width: 100%;
+    height: auto;
+    padding: 8px;
+  }
 }
 
 /* Minimal chat shell: avatar + empty area only */

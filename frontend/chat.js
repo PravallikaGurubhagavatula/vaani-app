@@ -419,48 +419,243 @@
     var root = _root(); if (!root) return;
     _stopListening(); _clearSearchState(); _removeMenu();
     var firstName = (user.displayName || "").split(" ")[0] || "";
-    var suggested = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
-    root.innerHTML = '<div class="vg-screen vg-profile-screen"><div class="vg-card">' +
+    var suggestedUsername = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    var draftKey = "vaani_onboarding_draft_" + user.uid;
+    var profileDraft = {
+      name: user.displayName || "",
+      username: suggestedUsername,
+      city: "",
+      bio: "",
+      languages: [],
+      fluentLanguages: [],
+      localExpertise: [],
+      links: { instagram: "", linkedin: "" }
+    };
+
+    try {
+      var savedDraft = localStorage.getItem(draftKey);
+      if (savedDraft) {
+        var parsedDraft = JSON.parse(savedDraft);
+        if (parsedDraft && typeof parsedDraft === "object") {
+          profileDraft = Object.assign({}, profileDraft, parsedDraft);
+          if (!profileDraft.links || typeof profileDraft.links !== "object") {
+            profileDraft.links = { instagram: "", linkedin: "" };
+          }
+        }
+      }
+    } catch (_) {}
+
+    function _arrayToInput(value) {
+      if (!Array.isArray(value)) return "";
+      return value.join(", ");
+    }
+
+    function _linksRows(linksObj) {
+      var keys = Object.keys(linksObj || {});
+      if (!keys.length) keys = ["instagram", "linkedin"];
+      var rows = "";
+      keys.forEach(function (key) {
+        rows += '<div class="vg-link-row">' +
+          '<input class="vg-input vg-link-key" type="text" placeholder="platform" value="' + _esc(key) + '">' +
+          '<input class="vg-input vg-link-value" type="text" placeholder="link or @handle" value="' + _esc(linksObj[key] || "") + '">' +
+          '<button class="vg-link-remove" type="button" aria-label="Remove link">×</button></div>';
+      });
+      return rows;
+    }
+
+    root.innerHTML = '<div class="vg-screen vg-profile-screen"><div class="vg-card vg-onboarding-card">' +
       '<div class="vg-avatar-wrap">' +
       (user.photoURL ? '<img class="vg-profile-avatar" src="' + _esc(user.photoURL) + '" alt="avatar">'
         : '<div class="vg-profile-avatar vg-avatar-fallback">' + _esc((firstName[0] || "?").toUpperCase()) + "</div>") +
-      '</div><h2 class="vg-card-title">Create Your Profile</h2>' +
-      '<p class="vg-card-sub">Hi ' + _esc(firstName || "there") + '! Choose a unique username.</p>' +
-      '<div class="vg-field"><label class="vg-label" for="vgUsernameInput">Username</label>' +
+      '</div><h2 class="vg-card-title">Build your identity</h2>' +
+      '<p class="vg-card-sub">Build your profile so others can know you better and connect with you.</p>' +
+      '<div class="vg-form-grid">' +
+      '<div class="vg-field"><label class="vg-label" for="vgNameInput">Name *</label>' +
+      '<input id="vgNameInput" class="vg-input vg-input-solid" type="text" autocomplete="name" placeholder="Your full name" value="' + _esc(profileDraft.name) + '"></div>' +
+      '<div class="vg-field"><label class="vg-label" for="vgUsernameInput">Username *</label>' +
       '<div class="vg-input-wrap"><span class="vg-input-prefix">@</span>' +
-      '<input id="vgUsernameInput" class="vg-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="yourname_01" value="' + _esc(suggested) + '"></div>' +
-      '<span class="vg-field-hint" id="vgUsernameHint">Must include letters + numbers. Underscore (_) allowed.</span></div>' +
-      '<button class="vg-primary-btn" id="vgCreateProfileBtn" disabled>Create Profile</button>' +
-      '<button class="vg-ghost-btn" id="vgSignOutBtn">Sign out</button></div></div>';
+      '<input id="vgUsernameInput" class="vg-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="yourname" value="' + _esc(profileDraft.username) + '"></div>' +
+      '<span class="vg-field-hint" id="vgUsernameHint">3-20 chars. Letters, numbers, underscore.</span></div>' +
+      '<div class="vg-field"><label class="vg-label" for="vgCityInput">City *</label>' +
+      '<input id="vgCityInput" class="vg-input vg-input-solid" type="text" autocomplete="address-level2" placeholder="Your city" value="' + _esc(profileDraft.city) + '"></div>' +
+      '<details class="vg-optional-block"><summary>Optional details</summary>' +
+      '<div class="vg-field"><label class="vg-label" for="vgBioInput">Bio</label>' +
+      '<textarea id="vgBioInput" class="vg-input vg-input-solid vg-textarea" rows="3" placeholder="A short intro">' + _esc(profileDraft.bio) + '</textarea></div>' +
+      '<div class="vg-field"><label class="vg-label" for="vgLanguagesInput">Languages</label>' +
+      '<input id="vgLanguagesInput" class="vg-input vg-input-solid" type="text" placeholder="Hindi, Telugu, English" value="' + _esc(_arrayToInput(profileDraft.languages)) + '"></div>' +
+      '<div class="vg-field"><label class="vg-label" for="vgFluentLanguagesInput">Fluent Languages</label>' +
+      '<input id="vgFluentLanguagesInput" class="vg-input vg-input-solid" type="text" placeholder="Telugu, English" value="' + _esc(_arrayToInput(profileDraft.fluentLanguages)) + '"></div>' +
+      '<div class="vg-field"><label class="vg-label" for="vgLocalExpertiseInput">Local Expertise</label>' +
+      '<input id="vgLocalExpertiseInput" class="vg-input vg-input-solid" type="text" placeholder="Street food, local transport" value="' + _esc(_arrayToInput(profileDraft.localExpertise)) + '"></div>' +
+      '<div class="vg-field"><label class="vg-label">Links</label><div id="vgLinksWrap" class="vg-links-wrap">' + _linksRows(profileDraft.links) + '</div>' +
+      '<button class="vg-link-add" id="vgAddLinkBtn" type="button">+ Add link</button></div>' +
+      '</details>' +
+      '</div>' +
+      '<span class="vg-field-hint" id="vgSaveHint">Draft is auto-saved on this device.</span>' +
+      '<div class="vg-actions">' +
+      '<button class="vg-primary-btn" id="vgCreateProfileBtn">Save profile</button>' +
+      '<button class="vg-secondary-btn" id="vgSkipOptionalBtn" type="button">Skip optional fields</button>' +
+      '<button class="vg-ghost-btn" id="vgSignOutBtn" type="button">Sign out</button>' +
+      '</div></div></div>';
 
-    var input = document.getElementById("vgUsernameInput");
-    var hint  = document.getElementById("vgUsernameHint");
+    var nameInput = document.getElementById("vgNameInput");
+    var usernameInput = document.getElementById("vgUsernameInput");
+    var cityInput = document.getElementById("vgCityInput");
+    var bioInput = document.getElementById("vgBioInput");
+    var languagesInput = document.getElementById("vgLanguagesInput");
+    var fluentLanguagesInput = document.getElementById("vgFluentLanguagesInput");
+    var localExpertiseInput = document.getElementById("vgLocalExpertiseInput");
+    var usernameHint = document.getElementById("vgUsernameHint");
+    var saveHint = document.getElementById("vgSaveHint");
     var createBtn = document.getElementById("vgCreateProfileBtn");
+    var skipOptionalBtn = document.getElementById("vgSkipOptionalBtn");
+    var linksWrap = document.getElementById("vgLinksWrap");
+    var addLinkBtn = document.getElementById("vgAddLinkBtn");
 
-    function validate() {
-      if (!input || !hint || !createBtn) return;
-      var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(input.value) : null;
-      if (err) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; createBtn.disabled = true; }
-      else     { hint.textContent = "✓ Username looks good"; hint.className = "vg-field-hint vg-hint-success"; createBtn.disabled = false; }
+    function parseList(raw) {
+      return String(raw || "")
+        .split(",")
+        .map(function (item) { return item.trim(); })
+        .filter(Boolean);
     }
-    if (input) { input.addEventListener("input", validate); validate(); }
 
-    if (createBtn) {
-      createBtn.addEventListener("click", async function () {
-        var username = input ? input.value.trim() : "";
-        var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(username) : null;
-        if (err) { if (hint) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; } return; }
-        createBtn.disabled = true; createBtn.textContent = "Creating…";
-        try {
-          var profile = await window.vaaniProfile.create(user, username);
-          window.vaaniRouter.goToChat(user, profile);
-        } catch (error) {
-          if (hint) { hint.textContent = error.message || "Something went wrong."; hint.className = "vg-field-hint vg-hint-error"; }
-          createBtn.disabled = false; createBtn.textContent = "Create Profile";
+    function collectLinks() {
+      var links = {};
+      if (!linksWrap) return links;
+      linksWrap.querySelectorAll(".vg-link-row").forEach(function (row) {
+        var keyInput = row.querySelector(".vg-link-key");
+        var valueInput = row.querySelector(".vg-link-value");
+        var key = keyInput ? keyInput.value.trim() : "";
+        var value = valueInput ? valueInput.value.trim() : "";
+        if (key && value) links[key] = value;
+      });
+      return links;
+    }
+
+    function getFormData(includeOptional) {
+      var data = {
+        name: nameInput ? nameInput.value.trim() : "",
+        username: usernameInput ? usernameInput.value.trim().toLowerCase() : "",
+        city: cityInput ? cityInput.value.trim() : "",
+        bio: includeOptional ? (bioInput ? bioInput.value.trim() : "") : "",
+        languages: includeOptional ? parseList(languagesInput && languagesInput.value) : [],
+        fluentLanguages: includeOptional ? parseList(fluentLanguagesInput && fluentLanguagesInput.value) : [],
+        localExpertise: includeOptional ? parseList(localExpertiseInput && localExpertiseInput.value) : [],
+        links: includeOptional ? collectLinks() : {},
+      };
+      return data;
+    }
+
+    var saveDraftTimer = null;
+    function persistDraft() {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(getFormData(true)));
+        if (saveHint) {
+          saveHint.textContent = "Draft saved";
+          saveHint.className = "vg-field-hint vg-hint-success";
         }
+      } catch (_) {
+        if (saveHint) {
+          saveHint.textContent = "Could not save draft on this browser.";
+          saveHint.className = "vg-field-hint vg-hint-error";
+        }
+      }
+    }
+
+    function scheduleDraftSave() {
+      if (saveDraftTimer) clearTimeout(saveDraftTimer);
+      saveDraftTimer = setTimeout(persistDraft, 250);
+    }
+
+    function validateRequiredFields() {
+      var payload = getFormData(true);
+      var usernameError = window.vaaniProfile && window.vaaniProfile.validateUsername
+        ? window.vaaniProfile.validateUsername(payload.username) : null;
+      if (usernameError) {
+        usernameHint.textContent = usernameError;
+        usernameHint.className = "vg-field-hint vg-hint-error";
+      } else {
+        usernameHint.textContent = "✓ Username format looks good";
+        usernameHint.className = "vg-field-hint vg-hint-success";
+      }
+
+      var requiredErr = window.vaaniProfile && window.vaaniProfile.validateRequired
+        ? window.vaaniProfile.validateRequired(payload) : null;
+      createBtn.disabled = !!requiredErr;
+      return requiredErr;
+    }
+
+    function bindAutoSave(el) {
+      if (!el) return;
+      el.addEventListener("input", function () {
+        validateRequiredFields();
+        scheduleDraftSave();
       });
     }
 
+    [nameInput, usernameInput, cityInput, bioInput, languagesInput, fluentLanguagesInput, localExpertiseInput]
+      .forEach(bindAutoSave);
+
+    if (linksWrap) {
+      linksWrap.addEventListener("input", scheduleDraftSave);
+      linksWrap.addEventListener("click", function (event) {
+        var btn = event.target && event.target.closest ? event.target.closest(".vg-link-remove") : null;
+        if (!btn) return;
+        var row = btn.closest(".vg-link-row");
+        if (row) row.remove();
+        scheduleDraftSave();
+      });
+    }
+
+    if (addLinkBtn && linksWrap) {
+      addLinkBtn.addEventListener("click", function () {
+        var row = document.createElement("div");
+        row.className = "vg-link-row";
+        row.innerHTML = '<input class="vg-input vg-link-key" type="text" placeholder="platform">' +
+          '<input class="vg-input vg-link-value" type="text" placeholder="link or @handle">' +
+          '<button class="vg-link-remove" type="button" aria-label="Remove link">×</button>';
+        linksWrap.appendChild(row);
+      });
+    }
+
+    async function submitProfile(includeOptional) {
+      var data = getFormData(includeOptional);
+      var err = window.vaaniProfile && window.vaaniProfile.validateRequired
+        ? window.vaaniProfile.validateRequired(data) : null;
+      if (err) {
+        if (saveHint) {
+          saveHint.textContent = err;
+          saveHint.className = "vg-field-hint vg-hint-error";
+        }
+        return;
+      }
+
+      createBtn.disabled = true;
+      skipOptionalBtn.disabled = true;
+      createBtn.textContent = "Saving…";
+      try {
+        var profile = await window.saveProfile(user.uid, data);
+        localStorage.removeItem(draftKey);
+        window.vaaniRouter.goToChat(user, profile);
+      } catch (error) {
+        if (saveHint) {
+          saveHint.textContent = error.message || "Could not save profile.";
+          saveHint.className = "vg-field-hint vg-hint-error";
+        }
+        createBtn.disabled = false;
+        skipOptionalBtn.disabled = false;
+        createBtn.textContent = "Save profile";
+      }
+    }
+
+    if (createBtn) {
+      createBtn.addEventListener("click", function () { submitProfile(true); });
+    }
+    if (skipOptionalBtn) {
+      skipOptionalBtn.addEventListener("click", function () { submitProfile(false); });
+    }
+
+    validateRequiredFields();
     var signOutBtn = document.getElementById("vgSignOutBtn");
     if (signOutBtn) signOutBtn.addEventListener("click", function () { window.vaaniRouter.signOut(); });
   }
