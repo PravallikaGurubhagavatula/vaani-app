@@ -48,6 +48,7 @@
 
   var _auth = null;
   var _db   = null;
+  var _modularFirestore = null;
 
   /* ── Wait for compat SDK ─────────────────────────────────────── */
   function _waitForCompat(cb, tries) {
@@ -103,28 +104,72 @@
         window._vaaniOnAuthChange(user);
       }
 
-      // ── Profile check — this BLOCKS the UI until resolved ──────
-      _showLoadingScreen();
-
-      var profile = null;
-      try {
-        var doc = await _db.collection("users").doc(user.uid).get();
-        profile = doc.exists ? doc.data() : null;
-        console.log("[Vaani Router] Profile check →", profile ? "@" + profile.username : "none");
-      } catch (err) {
-        console.error("[Vaani Router] Profile read error:", err.message);
-        // On read error: show profile screen (safer than skipping to chat)
-        profile = null;
-      }
-
-      if (profile && profile.username) {
-        // Profile exists and has a username → go to chat
-        _showChatScreen(user, profile);
-      } else {
-        // No profile, or profile incomplete → must create one first
-        _showProfileScreen(user);
-      }
+      await handlePostLogin(user);
     });
+  }
+
+  async function _getModularFirestore() {
+    if (_modularFirestore) return _modularFirestore;
+
+    var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+    var fsMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+
+    var apps = appMod.getApps();
+    var modularApp = null;
+    for (var i = 0; i < apps.length; i++) {
+      if (apps[i].name === "vaani-chat-v2-modular") {
+        modularApp = apps[i];
+        break;
+      }
+    }
+    if (!modularApp) {
+      modularApp = appMod.initializeApp(FB_CONFIG, "vaani-chat-v2-modular");
+    }
+
+    _modularFirestore = {
+      db: fsMod.getFirestore(modularApp),
+      doc: fsMod.doc,
+      getDoc: fsMod.getDoc,
+    };
+
+    return _modularFirestore;
+  }
+
+  /**
+   * Required post-login gate:
+   *  - users/{uid} exists  -> chat home
+   *  - users/{uid} missing -> profile onboarding
+   */
+  async function handlePostLogin(user) {
+    _showLoadingScreen();
+
+    if (!user || !user.uid) {
+      _showLoginScreen();
+      return;
+    }
+
+    try {
+      var modular = await _getModularFirestore();
+      var userRef = modular.doc(modular.db, "users", user.uid);
+      var userSnap = await modular.getDoc(userRef);
+
+      if (!userSnap.exists()) {
+        console.log("[Vaani Router] Profile check → none");
+        _showProfileScreen(user);
+        return;
+      }
+
+      var profile = userSnap.data() || {};
+      console.log("[Vaani Router] Profile check →", profile.username ? "@" + profile.username : "exists");
+      _showChatScreen(user, profile);
+    } catch (err) {
+      console.error("[Vaani Router] Profile read error:", err.message);
+      if (typeof window.showToast === "function") {
+        window.showToast("Could not verify profile. Please try again.");
+      }
+      // Fail closed: onboarding screen blocks chat access on error.
+      _showProfileScreen(user);
+    }
   }
 
   /* ════════════════════════════════════════════════════════════════
@@ -264,7 +309,11 @@
     /** Expose auth/db for profile.js to use */
     getAuth: function () { return _auth; },
     getDb:   function () { return _db;   },
+    handlePostLogin: handlePostLogin,
   };
+
+  // Expose explicitly as requested for direct usage in login flows.
+  window.handlePostLogin = handlePostLogin;
 
   /* Keep window.vaaniAuth for backward compat */
   window.vaaniAuth = {
