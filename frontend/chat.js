@@ -499,7 +499,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +
       '<div class="vc-requests-list" id="vcRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
       '<div class="vc-requests-wrap">' +
-      '<button class="vc-requests-toggle" id="vcSentRequestsToggle" type="button">Requests Sent <span class="vc-requests-badge" id="vcSentRequestsBadge">Requested: 0</span></button>' +
+      '<button class="vc-requests-toggle" id="vcSentRequestsToggle" type="button">Requests Sent <span class="vc-requests-badge" id="vcSentRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcSentRequestsPanel">' +
       '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div></div>' +
       '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
@@ -1330,7 +1330,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var badgeEl = document.getElementById("vcSentRequestsBadge");
     if (!listEl || !badgeEl) return;
     var count = requests.length;
-    badgeEl.textContent = "Requested: " + String(count);
+    badgeEl.textContent = String(count);
     badgeEl.classList.toggle("vc-visible", count > 0);
     if (!count) {
       listEl.innerHTML = '<div class="vc-requests-empty">No pending requests</div>';
