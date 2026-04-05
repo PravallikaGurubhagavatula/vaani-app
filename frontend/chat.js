@@ -536,9 +536,18 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   function _syncViewWithSelection() {
     var home = document.getElementById("vcHomeScreen");
     var chat = document.getElementById("vcChatScreen");
+    var topBar = document.querySelector(".vc-top-bar");
     if (!home || !chat) return;
-    if (_selectedChatUser) { home.style.display = "none"; chat.style.display = "block"; }
-    else { home.style.display = "block"; chat.style.display = "none"; chat.innerHTML = ""; }
+    if (_selectedChatUser) {
+      home.style.display = "none";
+      chat.style.display = "block";
+      if (topBar) topBar.style.display = "none";
+    } else {
+      home.style.display = "block";
+      chat.style.display = "none";
+      chat.innerHTML = "";
+      if (topBar) topBar.style.display = "flex";
+    }
     if (window.vaaniChat) window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
   }
 
