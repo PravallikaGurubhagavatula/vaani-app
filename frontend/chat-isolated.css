@@ -521,6 +521,11 @@ html, body {
   font-family: 'Outfit', sans-serif;
 }
 
+#vaaniChat .vc-chat-list-item.vc-chat-list-item-active {
+  border-color: rgba(96, 165, 250, 0.9);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35) inset;
+}
+
 #vaaniChat .vc-chat-list-top {
   display: flex;
   align-items: center;
