@@ -1,3 +1,5 @@
+import { getUserProfile } from "./profile.js";
+
 /* ================================================================
    Vaani — chat.js  v4.2
    Fixes applied:
@@ -554,17 +556,41 @@
     _activeMessageListenerKey = null; _activeMessagesSignature = ""; _optimisticMessages = [];
   }
 
+  function _shortFluentLanguages(list) {
+    var arr = Array.isArray(list) ? list.filter(Boolean) : [];
+    if (!arr.length) return "";
+    if (arr.length <= 2) return arr.join(", ");
+    return arr.slice(0, 2).join(", ") + " +" + (arr.length - 2);
+  }
+
   function _getUserProfileCached(db, uid) {
-    if (!db || !uid) return Promise.resolve({ username: "user", photoURL: "" });
+    if (!uid) {
+      return Promise.resolve({
+        name: "User",
+        username: "user",
+        photoURL: "",
+        fluentLanguages: [],
+        fluentLanguagesShort: ""
+      });
+    }
     if (_userProfileCache[uid]) return Promise.resolve(_userProfileCache[uid]);
-    return db.collection("users").doc(uid).get()
-      .then(function (doc) {
-        var data = doc.exists ? (doc.data() || {}) : {};
-        var profile = { username: data.username || "user", displayName: data.displayName || null, photoURL: data.photoURL || "" };
-        _userProfileCache[uid] = profile; return profile;
+    return getUserProfile(uid)
+      .then(function (data) {
+        var safe = data && typeof data === "object" ? data : {};
+        var username = String(safe.username || "").trim();
+        var name = String(safe.name || "").trim();
+        var profile = {
+          name: name || username || "User",
+          username: username || "user",
+          photoURL: safe.photoURL || safe.avatar || "",
+          fluentLanguages: Array.isArray(safe.fluentLanguages) ? safe.fluentLanguages : [],
+          fluentLanguagesShort: _shortFluentLanguages(safe.fluentLanguages)
+        };
+        _userProfileCache[uid] = profile;
+        return profile;
       })
       .catch(function () {
-        var fallback = { username: "user", displayName: null, photoURL: "" };
+        var fallback = { name: "User", username: "user", photoURL: "", fluentLanguages: [], fluentLanguagesShort: "" };
         _userProfileCache[uid] = fallback; return fallback;
       });
   }
@@ -656,15 +682,16 @@ function _saveChatListCache(uid, data) {
   if (cached && cached.length) {
     window.vaaniChat.conversations = cached;
     window.vaaniChat._chatList = cached.map(function (conversation) {
-      return {
-        chatId: conversation.chatId,
-        otherUid: conversation.otherUid,
-        username: conversation.user && conversation.user.username ? conversation.user.username : "user",
-        displayName: conversation.user && conversation.user.displayName ? conversation.user.displayName : "user",
-        photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
-        lastMessage: conversation.lastMessage || "",
-        updatedAt: conversation.timestamp || null
-      };
+        return {
+          chatId: conversation.chatId,
+          otherUid: conversation.otherUid,
+          username: conversation.user && conversation.user.username ? conversation.user.username : "user",
+          name: conversation.user && conversation.user.name ? conversation.user.name : "User",
+          photoURL: conversation.user && conversation.user.photoURL ? conversation.user.photoURL : "",
+          fluentLanguagesShort: conversation.user && conversation.user.fluentLanguagesShort ? conversation.user.fluentLanguagesShort : "",
+          lastMessage: conversation.lastMessage || "",
+          updatedAt: conversation.timestamp || null
+        };
     });
     _forceRenderChatList = true;
     _renderChatList();
@@ -709,8 +736,9 @@ function _saveChatListCache(uid, data) {
           user: {
             uid: conv.otherUid,
             username: cachedProfile ? (cachedProfile.username || "user") : "...",
-            displayName: cachedProfile ? (cachedProfile.displayName || cachedProfile.username || "user") : "...",
-            photoURL: cachedProfile ? (cachedProfile.photoURL || "") : ""
+            name: cachedProfile ? (cachedProfile.name || cachedProfile.username || "User") : "...",
+            photoURL: cachedProfile ? (cachedProfile.photoURL || "") : "",
+            fluentLanguagesShort: cachedProfile ? (cachedProfile.fluentLanguagesShort || "") : ""
           },
           lastMessage: conv.lastMessage || "", timestamp: conv.timestamp || null
         };
@@ -723,7 +751,7 @@ function _saveChatListCache(uid, data) {
       window.vaaniChat._chatList = conversations.map(function (c) {
         return {
           chatId: c.chatId, otherUid: c.otherUid,
-          username: c.user.username, displayName: c.user.displayName, photoURL: c.user.photoURL,
+          username: c.user.username, name: c.user.name, photoURL: c.user.photoURL, fluentLanguagesShort: c.user.fluentLanguagesShort,
           lastMessage: c.lastMessage, updatedAt: c.timestamp || null
         };
       });
@@ -753,8 +781,9 @@ function _saveChatListCache(uid, data) {
             user: {
               uid: conv.otherUid,
               username: profile.username || "user",
-              displayName: profile.displayName || profile.username || "user",
-              photoURL: profile.photoURL || ""
+              name: profile.name || profile.username || "User",
+              photoURL: profile.photoURL || "",
+              fluentLanguagesShort: profile.fluentLanguagesShort || ""
             },
             lastMessage: conv.lastMessage || "",
             timestamp: conv.timestamp || null
@@ -767,8 +796,9 @@ function _saveChatListCache(uid, data) {
             chatId: c.chatId,
             otherUid: c.otherUid,
             username: c.user.username,
-            displayName: c.user.displayName,
+            name: c.user.name,
             photoURL: c.user.photoURL,
+            fluentLanguagesShort: c.user.fluentLanguagesShort,
             lastMessage: c.lastMessage,
             updatedAt: c.timestamp || null
           };
@@ -799,13 +829,14 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 } else if (window.vaaniChat && Array.isArray(window.vaaniChat._chatList)) {
   raw = window.vaaniChat._chatList.map(function (c) {
     return {
-      chatId: c.chatId,
-      otherUid: c.otherUid,
-      user: {
-        username: c.username,
-        displayName: c.displayName,
-        photoURL: c.photoURL
-      },
+        chatId: c.chatId,
+        otherUid: c.otherUid,
+        user: {
+          username: c.username,
+          name: c.name,
+          photoURL: c.photoURL,
+          fluentLanguagesShort: c.fluentLanguagesShort
+        },
       lastMessage: c.lastMessage,
       timestamp: c.updatedAt
     };
@@ -862,7 +893,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     var profile = conversation.user && typeof conversation.user === "object" ? conversation.user : {};
     var username = (profile.username || "").trim();
-    var displayName = (profile.displayName || "").trim();
+    var name = (profile.name || "").trim();
     var normalizedLastMessage = typeof conversation.lastMessage === "string" && conversation.lastMessage.trim()
       ? conversation.lastMessage
       : "No messages yet";
@@ -871,8 +902,9 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       chatId: conversation.chatId || null,
       otherUid: conversation.otherUid || null,
       username: username || "user",
-      displayName: displayName || username || "user",
+      name: name || username || "User",
       photoURL: profile.photoURL || "",
+      fluentLanguagesShort: profile.fluentLanguagesShort || "",
       lastMessage: normalizedLastMessage,
       updatedAt: conversation.timestamp || conversation.updatedAt || conversation.createdAt || null,
       updatedAtMs: _getTimestampMs(conversation.timestamp || null)
@@ -900,12 +932,25 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     item.className = "vc-chat-list-item";
 
     var timeText = _formatTime(chat.updatedAt);
+    var initials = ((chat.name || chat.username || "U").charAt(0) || "U").toUpperCase();
+    var avatarHTML = chat.photoURL
+      ? '<img class="vc-chat-list-avatar-img" src="' + _esc(chat.photoURL) + '" alt="' + _esc(chat.username || "user") + ' avatar">'
+      : '<span class="vc-chat-list-avatar-fallback">' + _esc(initials) + "</span>";
     item.innerHTML =
-      '<div class="vc-chat-list-top">' +
-        '<span class="vc-chat-list-username">' + _esc(chat.displayName || chat.username || "user") + "</span>" +
-        (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+      '<div class="vc-chat-list-row">' +
+        '<div class="vc-chat-list-avatar">' + avatarHTML + "</div>" +
+        '<div class="vc-chat-list-main">' +
+          '<div class="vc-chat-list-top">' +
+            '<span class="vc-chat-list-username">' + _esc(chat.name || chat.username || "user") + "</span>" +
+            (timeText ? '<span class="vc-chat-list-time">' + _esc(timeText) + "</span>" : "") +
+          "</div>" +
+          '<div class="vc-chat-list-meta">@' + _esc(chat.username || "user") +
+            (chat.fluentLanguagesShort ? ' · ' + _esc(chat.fluentLanguagesShort) : "") +
+          "</div>" +
+          '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>" +
+        "</div>" +
       "</div>" +
-      '<div class="vc-chat-list-last">' + _esc(chat.lastMessage || "No messages yet") + "</div>";
+      "";
 
     item.addEventListener("click", function () {
       if (!chat.otherUid) {
@@ -930,7 +975,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var selectedUser = {
         uid:         chat.otherUid,
         username:    chat.username    || "user",
-        displayName: chat.displayName || chat.username || "user",
+        displayName: chat.name || chat.username || "User",
         photoURL:    chat.photoURL    || ""
       };
 

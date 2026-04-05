@@ -413,10 +413,10 @@
  
 <!-- Identity system (must load before chat.js) -->
 <script src="auth.js?v=1"></script>
-<script src="profile.js?v=2"></script>
+<script type="module" src="profile.js?v=3"></script>
  
 <!-- Chat (gated — requires auth + profile) -->
-<script src="chat.js?v=4"></script>
+<script type="module" src="chat.js?v=5"></script>
  
 <!-- Firebase ESM module — main app auth
      type="module" makes this automatically deferred.

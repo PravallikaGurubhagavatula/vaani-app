@@ -5,6 +5,13 @@
    Uses the same Firebase app instance as auth.js and chat.js.
 ================================================================ */
 
+export async function getUserProfile(uid) {
+  if (window.vaaniProfile && typeof window.vaaniProfile.get === "function") {
+    return window.vaaniProfile.get(uid);
+  }
+  return null;
+}
+
 (function () {
   "use strict";
 
@@ -180,9 +187,7 @@
   };
 
   window.saveProfile = _saveProfile;
-  window.getUserProfile = function (uid) {
-    return window.vaaniProfile.get(uid);
-  };
+  window.getUserProfile = getUserProfile;
   window.showProfileOnboarding = function (uid) {
     var auth = _getAuth();
     var user = auth && auth.currentUser ? auth.currentUser : null;
