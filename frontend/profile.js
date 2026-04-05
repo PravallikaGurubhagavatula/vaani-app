@@ -129,7 +129,7 @@ export function dispatchProfileAction(action, user) {
     return true;
   }
 
-  async function _saveProfile(uid, data) {
+  async function saveProfile(uid, data) {
     if (!uid) throw new Error("Missing user id.");
 
     var db = _getDb();
@@ -191,7 +191,7 @@ export function dispatchProfileAction(action, user) {
     },
 
     saveProfile: async function (uid, data) {
-      return _saveProfile(uid, data);
+      return saveProfile(uid, data);
     },
 
     dispatchAction: function (action, user) {
@@ -232,7 +232,7 @@ export function dispatchProfileAction(action, user) {
       var auth = _getAuth();
       if (!auth) throw new Error("Auth not available. Please refresh.");
       if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
-      var profile = await _saveProfile(user.uid, {
+      var profile = await saveProfile(user.uid, {
         name: user.displayName || "",
         username: username,
         city: city || "Unknown",
@@ -246,7 +246,7 @@ export function dispatchProfileAction(action, user) {
     validateRequired: _validateRequired,
   };
 
-  window.saveProfile = _saveProfile;
+  window.saveProfile = saveProfile;
   window.getUserProfile = getUserProfile;
   window.showProfileOnboarding = function (uid) {
     var auth = _getAuth();
