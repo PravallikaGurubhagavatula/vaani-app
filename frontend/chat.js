@@ -52,6 +52,9 @@
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
   var _pendingIncomingUidSet = new Set();
+  var _chatRenderUid = null;
+  var _homeScrollTop = 0;
+  var _suppressNextChatHistoryPush = false;
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -520,8 +523,29 @@
     var chat = document.getElementById("vcChatScreen");
     if (!home || !chat) return;
     if (_selectedChatUser) { home.style.display = "none"; chat.style.display = "block"; }
-    else { home.style.display = "block"; chat.style.display = "none"; chat.innerHTML = ""; }
+    else {
+      home.style.display = "block"; chat.style.display = "none"; chat.innerHTML = "";
+      _restoreHomeScroll();
+    }
     if (window.vaaniChat) window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
+  }
+
+  function _homeViewEl() {
+    return document.getElementById("vcHomeScreen");
+  }
+
+  function _saveHomeScroll() {
+    var home = _homeViewEl();
+    if (!home) return;
+    _homeScrollTop = home.scrollTop || 0;
+  }
+
+  function _restoreHomeScroll() {
+    var home = _homeViewEl();
+    if (!home) return;
+    window.requestAnimationFrame(function () {
+      home.scrollTop = _homeScrollTop || 0;
+    });
   }
 
   function _setSelectedChatUser(user) {
@@ -944,7 +968,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
           console.warn("[Vaani] Chat list click: chat doc upsert failed (non-fatal):", err);
         });
 
-      _openChatUI(chatId, selectedUser);
+      _saveHomeScroll();
+      _openChatUI(chatId, selectedUser, { pushHistory: true });
     });
 
     fragment.appendChild(item);
@@ -972,6 +997,25 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _searchResultCache = [];
     _searchDropdownRef = null;
     if (_outsideClickHandler) { document.removeEventListener("mousedown", _outsideClickHandler); _outsideClickHandler = null; }
+  }
+
+  function _pushChatDetailHistory(chatId, otherUid) {
+    if (_suppressNextChatHistoryPush) {
+      _suppressNextChatHistoryPush = false;
+      return;
+    }
+    try {
+      var currentState = history.state || {};
+      if (currentState.page === "Chat" &&
+          currentState.chatView === "detail" &&
+          currentState.chatId === chatId &&
+          currentState.otherUid === otherUid) {
+        return;
+      }
+      history.pushState({ page: "Chat", chatView: "detail", chatId: chatId, otherUid: otherUid }, "", "#chat");
+    } catch (err) {
+      console.warn("[Vaani] push chat history failed:", err);
+    }
   }
 
   function _renderSearchResults(dropdown, list, stateByUid, currentUid) {
@@ -1582,7 +1626,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         await db.collection(CHATS_COLLECTION).doc(chatId).set({
           participants: sortedPair, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
-        _activeChatId = chatId; _openChatUI(chatId, user);
+        _activeChatId = chatId; _saveHomeScroll(); _openChatUI(chatId, user, { pushHistory: true });
       } catch (error) {
         console.error("[Vaani] handleMessageClick error:", error);
         if (typeof window.showToast === "function") window.showToast("Could not open chat — please try again");
@@ -1797,7 +1841,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   // _setSelectedChatUser(non-null) calls _syncViewWithSelection which shows the
   // chat panel BEFORE _renderChatUI has built the DOM. Instead we set state
   // directly and let _renderChatUI manage visibility.
-  function _openChatUI(chatId, user) {
+  function _openChatUI(chatId, user, options) {
+  options = options || {};
   if (!chatId) {
     console.error("[Vaani] _openChatUI: chatId missing");
     return;
@@ -1815,6 +1860,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
   _renderChatUI(user || {});
   _listenToMessages(chatId);
+  if (options.pushHistory && user && user.uid) _pushChatDetailHistory(chatId, user.uid);
 }
 
   function _renderChatUI(otherProfile) {
@@ -1851,7 +1897,13 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _scrollMessagesToBottom();
 
     var backBtn = document.getElementById("backBtn");
-    if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
+    if (backBtn) {
+      backBtn.onclick = function () {
+        var st = history.state || {};
+        if (st.page === "Chat" && st.chatView === "detail") history.back();
+        else _setSelectedChatUser(null);
+      };
+    }
 
     var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
     function _toggleSendState() {
@@ -1895,11 +1947,22 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       }
 
       var db = window.vaaniRouter.getDb();
+      var alreadyRendered = !!document.getElementById("vcHomeScreen");
+      if (alreadyRendered && _chatRenderUid === user.uid) {
+        _injectMenu(user, _loadProfileCache(user.uid) || { username: "user" });
+        _createChatListListener();
+        _fetchConnections(user.uid);
+        _fetchIncomingRequests(user.uid);
+        _fetchSentRequests(user.uid);
+        _listenToRequestState(user.uid);
+        return;
+      }
       var cachedProfile = _loadProfileCache(user.uid);
       var renderedFromCache = false;
       if (cachedProfile) {
         renderedFromCache = true;
         _renderChat(user, cachedProfile);
+        _chatRenderUid = user.uid;
       } else if (root && !root.children.length) {
         root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading profile…</p></div>';
       }
@@ -1926,13 +1989,14 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         if (!renderedFromCache) {
           _renderChat(user, freshProfile);
         }
+        _chatRenderUid = user.uid;
 
         if (state && state.chatId && state.otherUid) {
           db.collection("users").doc(state.otherUid).get()
             .then(function (profileDoc) {
               var otherProfile = profileDoc.exists ? profileDoc.data() : {};
               otherProfile.uid = state.otherUid;
-              _openChatUI(state.chatId, otherProfile);
+              _openChatUI(state.chatId, otherProfile, { pushHistory: false });
             })
             .catch(function (err) {
               console.warn("[Vaani] rehydrate: profile fetch failed:", err);
@@ -1946,7 +2010,25 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   }
 },
 
-    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
+    close: function () { _stopListening(); _removeMenu(); },
+    handleHistoryState: function (state) {
+      var nextState = state || {};
+      if (nextState.page !== "Chat") return;
+      if (nextState.chatView === "detail" && nextState.chatId && nextState.otherUid) {
+        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+        if (!db) return;
+        _suppressNextChatHistoryPush = true;
+        db.collection("users").doc(nextState.otherUid).get()
+          .then(function (profileDoc) {
+            var otherProfile = profileDoc.exists ? profileDoc.data() : {};
+            otherProfile.uid = nextState.otherUid;
+            _openChatUI(nextState.chatId, otherProfile, { pushHistory: false });
+          })
+          .catch(function () { _setSelectedChatUser(null); });
+        return;
+      }
+      _setSelectedChatUser(null);
+    },
 
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
