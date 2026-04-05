@@ -1965,7 +1965,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
               '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
             "</div></div>" +
           '<div class="vc-chat-messages chat-messages" id="messagesContainer"></div>' +
-          '<div class="vc-chat-input-bar">' +
+          '<div class="vc-chat-input-bar chat-input">' +
             '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
             '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
           "</div>" +
