@@ -582,25 +582,35 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       _viewportCleanup = null;
     }
     document.documentElement.style.setProperty("--vaani-chat-vh", "100dvh");
-    document.documentElement.style.setProperty("--vaani-chat-keyboard-inset", "0px");
+    document.documentElement.style.setProperty("--vaani-chat-input-translate", "0px");
   }
 
   function _bindKeyboardViewportSync() {
     _unbindKeyboardViewportSync();
 
-    var baseViewportHeight = Math.max(window.innerHeight || 0, (window.visualViewport && window.visualViewport.height) || 0);
+    var vv = window.visualViewport;
+    var maxViewportHeight = Math.max(window.innerHeight || 0, (vv && vv.height) || 0);
     var rafId = null;
 
     function _applyViewportMetrics() {
-      var vv = window.visualViewport;
       var viewportHeight = vv && vv.height ? vv.height : window.innerHeight;
       var keyboardInset = 0;
       if (vv) {
-        var visualBottom = vv.height + vv.offsetTop;
-        keyboardInset = Math.max(0, Math.round(baseViewportHeight - visualBottom));
+        var visualBottom = (vv.height || 0) + (vv.offsetTop || 0);
+        var keyboardLikelyClosed =
+          Math.abs(vv.offsetTop || 0) < 1 &&
+          Math.max(0, (window.innerHeight || 0) - (vv.height || 0)) < 160;
+        if (keyboardLikelyClosed) {
+          maxViewportHeight = Math.max(maxViewportHeight, window.innerHeight || 0, vv.height || 0);
+        }
+        keyboardInset = Math.max(0, Math.round(maxViewportHeight - visualBottom));
       }
+      if (keyboardInset < 4) keyboardInset = 0;
       document.documentElement.style.setProperty("--vaani-chat-vh", Math.round(viewportHeight) + "px");
-      document.documentElement.style.setProperty("--vaani-chat-keyboard-inset", keyboardInset + "px");
+      document.documentElement.style.setProperty(
+        "--vaani-chat-input-translate",
+        keyboardInset > 0 ? ("-" + keyboardInset + "px") : "0px"
+      );
     }
 
     function _scheduleApply() {
@@ -611,7 +621,6 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       });
     }
 
-    var vv = window.visualViewport;
     window.addEventListener("resize", _scheduleApply);
     window.addEventListener("orientationchange", _scheduleApply);
     window.addEventListener("pageshow", _scheduleApply);
