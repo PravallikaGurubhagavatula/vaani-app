@@ -17,7 +17,7 @@ html, body {
 }
 #vaaniChat {
   --vc-header-z: 1200;
-  --vc-chat-header-height: 64px;
+  --vc-chat-header-height: 60px;
   --vc-chat-header-safe-height: calc(var(--vc-chat-header-height) + env(safe-area-inset-top, 0px));
   --vc-chat-input-bar-height: 62px;
   --vc-chat-input-safe-height: calc(var(--vc-chat-input-bar-height) + env(safe-area-inset-bottom, 0px));
@@ -1271,6 +1271,12 @@ body.vm-menu-open {
 }
 
 #vaaniChat .header {
+  position: fixed;
+  top: var(--nav-h, 0px);
+  left: 0;
+  width: 100%;
+  height: var(--vc-chat-header-safe-height);
+  z-index: 1000;
   flex-shrink: 0;
 }
 
@@ -1287,6 +1293,10 @@ body.vm-menu-open {
   padding-top: 0;
   padding-bottom: 8px;
   margin-bottom: 0;
+}
+
+#vaaniChat .chat-messages {
+  margin-top: var(--vc-chat-header-safe-height);
 }
 
 #vaaniChat .input-bar {
