@@ -396,6 +396,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -608,10 +609,26 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding-bottom: 6px;
+}
+
+/* Compatibility aliases for chat page layout contract */
+#vaaniChat .chat-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#vaaniChat .chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 #vaaniChat .vc-chat-list-empty {
@@ -630,6 +647,51 @@ html, body {
   padding: 12px;
   text-align: left;
   font-family: 'Outfit', sans-serif;
+}
+
+#vaaniChat .vc-chat-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+#vaaniChat .vc-chat-list-avatar {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
+
+#vaaniChat .vc-chat-list-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#vaaniChat .vc-chat-list-avatar-fallback {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#vaaniChat .vc-chat-list-main {
+  min-width: 0;
+  flex: 1;
+}
+
+#vaaniChat .vc-chat-list-meta {
+  margin-top: 2px;
+  color: #9a9ab2;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #vaaniChat .vc-chat-list-item.vc-chat-list-item-active {
