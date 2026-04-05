@@ -50,6 +50,8 @@
   var _messagesContainerRef = null;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
+  var _pendingOutgoingUidSet = new Set();
+  var _pendingIncomingUidSet = new Set();
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -956,6 +958,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     if (_unsubscribeSentRequests) { _unsubscribeSentRequests(); _unsubscribeSentRequests = null; }
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; _connectedUidSet.clear(); }
     if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
+    _pendingOutgoingUidSet.clear();
+    _pendingIncomingUidSet.clear();
     _teardownMessageListener();
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = null; _renderedChatListSignature = "";
@@ -1022,21 +1026,23 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var targetUids = users.map(function (i) { return i.uid || ""; }).filter(Boolean);
     if (!targetUids.length) return stateByUid;
     targetUids.forEach(function (uid) { stateByUid[uid] = uid === currentUid ? "self" : "not_connected"; });
+    var requestedSet = new Set(_pendingOutgoingUidSet);
+    var incomingSet = new Set(_pendingIncomingUidSet);
 
-    var results = await Promise.all([
-      db.collection(REQUESTS_COLLECTION).where("fromUid", "==", currentUid).where("status", "==", "pending").limit(200).get(),
-      db.collection(REQUESTS_COLLECTION).where("toUid",   "==", currentUid).where("status", "==", "pending").limit(200).get()
-    ]).catch(function (err) { console.error("[Vaani] _buildSearchItemStates error:", err); return [null, null]; });
-
-    var requestedSet = new Set(), incomingSet = new Set();
-    if (results[0]) results[0].forEach(function (doc) { if (doc.data().toUid)   requestedSet.add(doc.data().toUid);   });
-    if (results[1]) results[1].forEach(function (doc) { if (doc.data().fromUid) incomingSet.add(doc.data().fromUid); });
+    if (!requestedSet.size && !incomingSet.size) {
+      var results = await Promise.all([
+        db.collection(REQUESTS_COLLECTION).where("fromUid", "==", currentUid).where("status", "==", "pending").limit(200).get(),
+        db.collection(REQUESTS_COLLECTION).where("toUid", "==", currentUid).where("status", "==", "pending").limit(200).get()
+      ]).catch(function (err) { console.error("[Vaani] _buildSearchItemStates error:", err); return [null, null]; });
+      if (results[0]) results[0].forEach(function (doc) { if (doc.data().toUid) requestedSet.add(doc.data().toUid); });
+      if (results[1]) results[1].forEach(function (doc) { if (doc.data().fromUid) incomingSet.add(doc.data().fromUid); });
+    }
 
     targetUids.forEach(function (uid) {
       if (uid === currentUid)         { stateByUid[uid] = "self";             return; }
       if (_connectedUidSet.has(uid))  { stateByUid[uid] = "connected";        return; }
-      if (requestedSet.has(uid))      { stateByUid[uid] = "request_sent";     return; }
       if (incomingSet.has(uid))       { stateByUid[uid] = "request_received"; return; }
+      if (requestedSet.has(uid))      { stateByUid[uid] = "request_sent";     return; }
       stateByUid[uid] = "not_connected";
     });
     return stateByUid;
@@ -1288,6 +1294,11 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       .sort(function (a, b) {
         return _timestampToMillis(b.createdAt) - _timestampToMillis(a.createdAt);
       });
+    _pendingIncomingUidSet.clear();
+    incomingRequests.forEach(function (request) {
+      var fromUid = String(request && request.fromUid ? request.fromUid : "");
+      if (fromUid) _pendingIncomingUidSet.add(fromUid);
+    });
     _renderIncomingRequests(incomingRequests);
   }
 
@@ -1307,6 +1318,11 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
           createdAt: request.createdAt || null
         };
       });
+    _pendingOutgoingUidSet.clear();
+    sentRequests.forEach(function (request) {
+      var toUid = String(request && request.toUid ? request.toUid : "");
+      if (toUid) _pendingOutgoingUidSet.add(toUid);
+    });
     _renderSentRequests(sentRequests);
   }
 
@@ -1508,16 +1524,32 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !currentUid) return;
     if (_unsubscribeRequestState) { _unsubscribeRequestState(); _unsubscribeRequestState = null; }
-    var offOutgoing = db.collection("users")
-      .doc(currentUid)
-      .collection(USER_REQUESTS_SENT_COLLECTION)
-      .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
+    var offOutgoing = db.collection(REQUESTS_COLLECTION)
+      .where("fromUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .onSnapshot(function (snapshot) {
+        _pendingOutgoingUidSet.clear();
+        snapshot.forEach(function (doc) {
+          var data = doc.data() || {};
+          var toUid = String(data.toUid || data.receiverId || "");
+          if (toUid && toUid !== currentUid) _pendingOutgoingUidSet.add(toUid);
+        });
+        _refreshActiveSearchDropdown();
+      }, function (err) {
         console.error("[Vaani] outgoing request-state listener error:", err);
       });
-    var offIncoming = db.collection("users")
-      .doc(currentUid)
-      .collection(USER_REQUESTS_RECEIVED_COLLECTION)
-      .onSnapshot(function () { _refreshActiveSearchDropdown(); }, function (err) {
+    var offIncoming = db.collection(REQUESTS_COLLECTION)
+      .where("toUid", "==", currentUid)
+      .where("status", "==", "pending")
+      .onSnapshot(function (snapshot) {
+        _pendingIncomingUidSet.clear();
+        snapshot.forEach(function (doc) {
+          var data = doc.data() || {};
+          var fromUid = String(data.fromUid || data.senderId || "");
+          if (fromUid && fromUid !== currentUid) _pendingIncomingUidSet.add(fromUid);
+        });
+        _refreshActiveSearchDropdown();
+      }, function (err) {
         console.error("[Vaani] incoming request-state listener error:", err);
       });
     _unsubscribeRequestState = function () { offOutgoing(); offIncoming(); };
@@ -1576,7 +1608,12 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
           if (await _isConnected(db, currentUid, targetUid)) return;
           var hasOutgoing = await _hasPendingConnectionRequest(db, currentUid, targetUid);
           var hasIncoming = await _hasPendingConnectionRequest(db, targetUid, currentUid);
-          if (!hasOutgoing && !hasIncoming) await _sendConnectionRequest(db, currentUid, targetUid);
+          if (!hasOutgoing && !hasIncoming) {
+            _pendingOutgoingUidSet.add(targetUid);
+            _pendingIncomingUidSet.delete(targetUid);
+            await _refreshActiveSearchDropdown();
+            await _sendConnectionRequest(db, currentUid, targetUid);
+          }
           await _refreshActiveSearchDropdown();
           return;
         }
