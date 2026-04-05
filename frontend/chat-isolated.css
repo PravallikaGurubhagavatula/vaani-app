@@ -606,6 +606,16 @@ html, body {
   padding: 8px 6px;
 }
 
+#vaaniChat .vc-request-item-sent {
+  justify-content: flex-start;
+}
+
+#vaaniChat .vc-request-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 #vaaniChat .vc-request-copy,
 #vaaniChat .vc-requests-empty {
   color: #9a9ab2;
