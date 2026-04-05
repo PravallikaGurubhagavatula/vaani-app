@@ -349,7 +349,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     return '<div class="vm-overlay" id="vmOverlay"></div>' +
       '<aside class="vm-panel" id="vmPanel" aria-label="Profile menu">' +
       '<div class="vm-profile"><div class="vm-avatar">' +
-      (photo ? '<img src="' + _esc(photo) + '" alt="Profile avatar">' : '<span>' + _esc(initial) + "</span>") +
+      (photo ? '<img class="avatar" src="' + _esc(photo) + '" alt="Profile avatar">' : '<span class="avatar-placeholder">' + _esc(initial) + "</span>") +
       '</div><div class="vm-meta"><div class="vm-username">@' + _esc(username) + "</div>" +
       '<div class="vm-email">' + _esc(user.email || "") + "</div></div></div>" +
       '<nav class="vm-nav">' + _menuItem("person", "My Profile", "profile") +
@@ -433,8 +433,8 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     var suggested = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
     root.innerHTML = '<div class="vg-screen vg-profile-screen"><div class="vg-card">' +
       '<div class="vg-avatar-wrap">' +
-      (user.photoURL ? '<img class="vg-profile-avatar" src="' + _esc(user.photoURL) + '" alt="avatar">'
-        : '<div class="vg-profile-avatar vg-avatar-fallback">' + _esc((firstName[0] || "?").toUpperCase()) + "</div>") +
+      (user.photoURL ? '<img class="vg-profile-avatar avatar" src="' + _esc(user.photoURL) + '" alt="avatar">'
+        : '<div class="vg-profile-avatar vg-avatar-fallback avatar-placeholder">' + _esc((firstName[0] || "?").toUpperCase()) + "</div>") +
       '</div><h2 class="vg-card-title">Create Your Profile</h2>' +
       '<p class="vg-card-sub">Hi ' + _esc(firstName || "there") + '! Choose a unique username.</p>' +
       '<div class="vg-field"><label class="vg-label" for="vgUsernameInput">Username</label>' +
@@ -486,8 +486,8 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
 
     root.innerHTML = '<section class="vc-shell" aria-label="Chat screen">' +
       '<button class="vc-avatar-btn" id="vcProfileBtn" aria-label="Open profile menu" title="Profile menu">' +
-      (photo ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img">'
-             : '<span class="vc-avatar-initials">' + _esc(initials) + "</span>") + "</button>" +
+      (photo ? '<img src="' + _esc(photo) + '" alt="avatar" class="vc-avatar-img avatar">'
+             : '<span class="vc-avatar-initials avatar-placeholder">' + _esc(initials) + "</span>") + "</button>" +
       '<div class="vc-home-view" id="vcHomeScreen">' +
       '<div class="vc-search-wrap" id="vcSearchWrap">' +
       '<input id="vcUserSearchInput" class="vc-search-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
@@ -946,8 +946,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var timeText = _formatTime(chat.updatedAt);
     var initials = ((chat.name || chat.username || "U").charAt(0) || "U").toUpperCase();
     var avatarHTML = chat.photoURL
-      ? '<img class="vc-chat-list-avatar-img" src="' + _esc(chat.photoURL) + '" alt="' + _esc(chat.username || "user") + ' avatar">'
-      : '<span class="vc-chat-list-avatar-fallback">' + _esc(initials) + "</span>";
+      ? '<img class="vc-chat-list-avatar-img avatar" src="' + _esc(chat.photoURL) + '" alt="' + _esc(chat.username || "user") + ' avatar">'
+      : '<span class="vc-chat-list-avatar-fallback avatar-placeholder">' + _esc(initials) + "</span>";
     item.innerHTML =
       '<div class="vc-chat-list-row">' +
         '<div class="vc-chat-list-avatar">' + avatarHTML + "</div>" +
@@ -1058,8 +1058,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       itemEl.className = "vc-search-item";
       itemEl.setAttribute("data-uid", uid); itemEl.setAttribute("data-state", state);
       itemEl.innerHTML = '<span class="vc-search-avatar">' +
-        (photo ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
-               : '<span class="vc-search-initial">' + _esc(initial) + "</span>") + "</span>" +
+        (photo ? '<img class="avatar" src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+               : '<span class="vc-search-initial avatar-placeholder">' + _esc(initial) + "</span>") + "</span>" +
         '<span class="vc-search-meta"><span class="vc-search-username">@' + _esc(username) + "</span>" +
         '<span class="vc-search-name">' + _esc(name) + "</span></span>" +
         '<span class="vc-search-action" data-uid="' + _esc(uid) + '" data-state="' + _esc(state) + '">' + actionHTML + "</span>";
@@ -1890,8 +1890,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     otherProfile = otherProfile || {};
     var username = otherProfile.username || "user", photo = otherProfile.photoURL || "";
     var initial  = (username.charAt(0) || "U").toUpperCase();
-    var avatarHTML = photo ? '<img src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
-                           : '<span class="vc-chat-initial">' + _esc(initial) + "</span>";
+    var avatarHTML = photo ? '<img class="avatar" src="' + _esc(photo) + '" alt="' + _esc(username) + ' avatar">'
+                           : '<span class="vc-chat-initial avatar-placeholder">' + _esc(initial) + "</span>";
     var sendIconSVG = '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
     var backIconSVG = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>';
 
