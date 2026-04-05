@@ -19,6 +19,13 @@ export function renderUserProfile(user) {
   return false;
 }
 
+export function dispatchProfileAction(action, user) {
+  if (window.vaaniProfile && typeof window.vaaniProfile.dispatchAction === "function") {
+    return window.vaaniProfile.dispatchAction(action, user);
+  }
+  return false;
+}
+
 (function () {
   "use strict";
 
@@ -110,6 +117,18 @@ export function renderUserProfile(user) {
     return null;
   }
 
+  function _dispatchProfileAction(action, user) {
+    var safeAction = String(action || "").trim();
+    if (!safeAction) return false;
+    document.dispatchEvent(new CustomEvent("vaani:profile-action", {
+      detail: {
+        action: safeAction,
+        user: user || null
+      }
+    }));
+    return true;
+  }
+
   async function _saveProfile(uid, data) {
     if (!uid) throw new Error("Missing user id.");
 
@@ -173,6 +192,14 @@ export function renderUserProfile(user) {
 
     saveProfile: async function (uid, data) {
       return _saveProfile(uid, data);
+    },
+
+    dispatchAction: function (action, user) {
+      return _dispatchProfileAction(action, user);
+    },
+
+    messageUser: function (user) {
+      return _dispatchProfileAction("message", user);
     },
 
     renderUserProfile: function (user) {

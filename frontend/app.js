@@ -2065,6 +2065,30 @@ function _onPageActivate(page) {
   if (page === "Chat" && window.vaaniChat) window.vaaniChat.open();
 }
 
+async function openChat(uid) {
+  var targetUid = String(uid || "").trim();
+  if (!targetUid) return;
+  navigateTo("Chat");
+  if (!window.vaaniChat || typeof window.vaaniChat.openChatWithUser !== "function") return;
+  try {
+    await window.vaaniChat.openChatWithUser(targetUid);
+  } catch (err) {
+    console.error("[Vaani] openChat failed:", err);
+    if (typeof showToast === "function") showToast("Could not open chat — please try again");
+  }
+}
+
+window.openChat = openChat;
+
+document.addEventListener("vaani:profile-action", function (event) {
+  var detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
+  if (detail.action !== "message") return;
+  var user = detail.user && typeof detail.user === "object" ? detail.user : {};
+  var uid = String(user.uid || "").trim();
+  if (!uid) return;
+  openChat(uid);
+});
+
 window.addEventListener("popstate", (e) => {
   const page = e.state?.page || "Home";
   PAGES.forEach(p => {
