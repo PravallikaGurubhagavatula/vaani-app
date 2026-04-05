@@ -1951,7 +1951,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
                            : '<span class="vc-chat-initial avatar-placeholder">' + _esc(initial) + "</span>";
     var sendIconSVG = '<svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
     var backIconSVG = '<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>';
-    var callIconSVG = '<svg viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.8 2.6a2 2 0 0 1-.5 2.2L9.2 10.8a16 16 0 0 0 4 4l1.3-1.3a2 2 0 0 1 2.2-.5c.8.4 1.7.7 2.6.8a2 2 0 0 1 1.7 2.1z"/></svg>';
     var menuIconSVG = '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>';
 
     chatScreen.innerHTML =
@@ -1962,7 +1961,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
           '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
           '<div class="vc-chat-hsub">Online • Connected</div></div>' +
           '<div class="vc-chat-hactions">' +
-            '<button class="vc-header-action-btn" id="chatCallBtn" aria-label="Call user">' + callIconSVG + "</button>" +
             '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
           "</div></div>" +
         '<div class="vc-chat-messages" id="messagesContainer"></div>' +
@@ -1983,10 +1981,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     var backBtn = document.getElementById("backBtn");
     if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
-    var callBtn = document.getElementById("chatCallBtn");
-    if (callBtn) callBtn.onclick = function () {
-      console.log("[Vaani] Call action tapped for:", username);
-    };
     var menuBtn = document.getElementById("chatMenuBtn");
     if (menuBtn) menuBtn.onclick = function () {
       console.log("[Vaani] Menu action tapped for:", username);
