@@ -50,6 +50,8 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   var _messages = [];
   var _inputMessage = "";
   var _messagesContainerRef = null;
+  var _shouldStickToBottom = true;
+  var _viewportCleanup = null;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
@@ -558,11 +560,77 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
   function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
 
-  function _scrollMessagesToBottom() {
+  function _isUserNearBottom(container, thresholdPx) {
+    var el = container || _messagesContainerRef;
+    if (!el) return true;
+    var threshold = typeof thresholdPx === "number" ? thresholdPx : 100;
+    var remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return remaining <= threshold;
+  }
+
+  function _scrollMessagesToBottom(force) {
     if (!_messagesContainerRef) return;
+    if (!force && !_shouldStickToBottom) return;
     window.requestAnimationFrame(function () {
       if (_messagesContainerRef) _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
     });
+  }
+
+  function _unbindKeyboardViewportSync() {
+    if (typeof _viewportCleanup === "function") {
+      _viewportCleanup();
+      _viewportCleanup = null;
+    }
+    document.documentElement.style.setProperty("--vaani-chat-vh", "100dvh");
+    document.documentElement.style.setProperty("--vaani-chat-keyboard-inset", "0px");
+  }
+
+  function _bindKeyboardViewportSync() {
+    _unbindKeyboardViewportSync();
+
+    var baseViewportHeight = Math.max(window.innerHeight || 0, (window.visualViewport && window.visualViewport.height) || 0);
+    var rafId = null;
+
+    function _applyViewportMetrics() {
+      var vv = window.visualViewport;
+      var viewportHeight = vv && vv.height ? vv.height : window.innerHeight;
+      var keyboardInset = 0;
+      if (vv) {
+        var visualBottom = vv.height + vv.offsetTop;
+        keyboardInset = Math.max(0, Math.round(baseViewportHeight - visualBottom));
+      }
+      document.documentElement.style.setProperty("--vaani-chat-vh", Math.round(viewportHeight) + "px");
+      document.documentElement.style.setProperty("--vaani-chat-keyboard-inset", keyboardInset + "px");
+    }
+
+    function _scheduleApply() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(function () {
+        rafId = null;
+        _applyViewportMetrics();
+      });
+    }
+
+    var vv = window.visualViewport;
+    window.addEventListener("resize", _scheduleApply);
+    window.addEventListener("orientationchange", _scheduleApply);
+    window.addEventListener("pageshow", _scheduleApply);
+    if (vv) {
+      vv.addEventListener("resize", _scheduleApply);
+      vv.addEventListener("scroll", _scheduleApply);
+    }
+    _applyViewportMetrics();
+
+    _viewportCleanup = function () {
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", _scheduleApply);
+      window.removeEventListener("orientationchange", _scheduleApply);
+      window.removeEventListener("pageshow", _scheduleApply);
+      if (vv) {
+        vv.removeEventListener("resize", _scheduleApply);
+        vv.removeEventListener("scroll", _scheduleApply);
+      }
+    };
   }
 
   function _teardownMessageListener() {
@@ -1760,7 +1828,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
     _optimisticMessages.push({ _optimisticId: tempId, text: inputMessage, senderId: currentUid, timestamp: new Date() });
-    _renderMessages();
+    _renderMessages(true);
 
     inputEl.disabled = true; if (sendBtn) sendBtn.disabled = true;
     inputEl.value = ""; _setInputMessage("");
@@ -1770,7 +1838,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       console.log("[Vaani] _sendMessage: write succeeded");
     } catch (err) {
       _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
-      _setInputMessage(inputMessage); inputEl.value = inputMessage; _renderMessages();
+      _setInputMessage(inputMessage); inputEl.value = inputMessage; _renderMessages(true);
       console.error("[Vaani] _sendMessage: write failed:", err);
       if (typeof window.showToast === "function") window.showToast("Message failed to send — please try again");
     } finally {
@@ -1779,15 +1847,18 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     }
   }
 
-  function _renderMessages() {
+  function _renderMessages(forceBottom) {
     var container = _messagesContainerRef; if (!container) return;
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    var stickToBottom = !!forceBottom || _isUserNearBottom(container);
+    var distanceFromBottom = container.scrollHeight - container.scrollTop;
+    _shouldStickToBottom = stickToBottom;
     container.innerHTML = "";
     var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
     if (!messages.length) {
       var emptyState = document.createElement("div");
       emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
-      container.appendChild(emptyState); _scrollMessagesToBottom(); return;
+      container.appendChild(emptyState); _scrollMessagesToBottom(true); return;
     }
     messages.forEach(function (msg) {
       var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
@@ -1796,7 +1867,14 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
       row.appendChild(bubble); container.appendChild(row);
     });
-    _scrollMessagesToBottom();
+    window.requestAnimationFrame(function () {
+      if (!_messagesContainerRef) return;
+      if (stickToBottom) {
+        _scrollMessagesToBottom(true);
+        return;
+      }
+      _messagesContainerRef.scrollTop = Math.max(0, _messagesContainerRef.scrollHeight - distanceFromBottom);
+    });
   }
 
   // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
@@ -1911,13 +1989,13 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         "</div></div>";
 
     _messagesContainerRef = document.getElementById("messagesContainer");
-    _setMessages([]); _setInputMessage(""); _renderMessages();
+    _setMessages([]); _setInputMessage(""); _shouldStickToBottom = true; _renderMessages(true);
 
     // Show chat panel only after DOM is ready
     var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
     if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
     if (window.vaaniChat) window.vaaniChat._currentView = "chat";
-    _scrollMessagesToBottom();
+    _scrollMessagesToBottom(true);
 
     var backBtn = document.getElementById("backBtn");
     if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
@@ -1933,9 +2011,21 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault(); if (messageInput.value.trim()) _sendMessage();
       });
+      messageInput.addEventListener("focus", function () {
+        _bindKeyboardViewportSync();
+        _scrollMessagesToBottom(false);
+      });
+      messageInput.addEventListener("blur", function () {
+        setTimeout(function () { _bindKeyboardViewportSync(); }, 80);
+      });
       messageInput.value = ""; messageInput.focus();
     }
     if (sendBtn) { sendBtn.addEventListener("click", function () { if (messageInput && messageInput.value.trim()) _sendMessage(); }); sendBtn.disabled = true; }
+    if (_messagesContainerRef) {
+      _messagesContainerRef.addEventListener("scroll", function () {
+        _shouldStickToBottom = _isUserNearBottom(_messagesContainerRef);
+      }, { passive: true });
+    }
     _toggleSendState();
 
     try {
@@ -1953,6 +2043,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _currentView: "home",
     _chatList: [],
     open: function () {
+  _bindKeyboardViewportSync();
   var root = _root();
   if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
     var auth = window.vaaniRouter.getAuth();
@@ -2021,7 +2112,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       return _openChatWithUser({ uid: targetUid });
     },
 
-    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
+    close: function () { _unbindKeyboardViewportSync(); _stopListening(); _clearSearchState(); _removeMenu(); },
 
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
