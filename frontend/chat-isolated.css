@@ -657,7 +657,7 @@ html, body {
 #vaaniChat .chat-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
 }
 
 #vaaniChat .chat-list {
@@ -1039,7 +1039,6 @@ body.vm-menu-open {
   min-height: 0;
   background: var(--bg, #09090f);
   overflow: hidden;
-  padding-bottom: var(--vaani-chat-keyboard-inset, 0px);
 }
 
 #vaaniChat .vc-chat-header {
@@ -1181,6 +1180,9 @@ body.vm-menu-open {
   z-index: 2;
   background: var(--bg, #09090f);
   padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(var(--vaani-chat-input-translate, 0px));
+  will-change: transform;
+  transition: transform 120ms ease-out;
 }
 
 #vaaniChat .vc-chat-input {
