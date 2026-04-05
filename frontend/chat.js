@@ -1612,6 +1612,34 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _unsubscribeRequestState = function () { offOutgoing(); offIncoming(); };
   }
 
+  async function _openChatWithUser(targetUser) {
+    var currentUser = window._vaaniCurrentUser || null;
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+      ? window.vaaniRouter.getDb() : null;
+    var uid = targetUser && targetUser.uid ? String(targetUser.uid) : "";
+    if (!currentUser || !currentUser.uid || !db || !uid) {
+      throw new Error("INVALID_CHAT_TARGET");
+    }
+    if (String(currentUser.uid) === uid) {
+      throw new Error("SELF_CHAT_NOT_ALLOWED");
+    }
+    var user = targetUser;
+    if (!user || typeof user !== "object" || !user.name) {
+      user = await _fetchOtherProfile(db, uid);
+      user.uid = uid;
+    }
+    var sortedPair = [String(currentUser.uid), uid].sort();
+    var chatId = sortedPair[0] + "_" + sortedPair[1];
+    await db.collection(CHATS_COLLECTION).doc(chatId).set({
+      participants: sortedPair,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    _activeChatId = chatId;
+    _openChatUI(chatId, user);
+    return chatId;
+  }
+
   function _bindUserSearch() {
     var searchWrap     = document.getElementById("vcSearchWrap");
     var searchInput    = document.getElementById("vcUserSearchInput");
@@ -1628,24 +1656,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       _searchDebounceTimer = setTimeout(function () { _fetchUsersByPrefix(query, searchDropdown); }, 300);
     });
 
-    async function handleMessageClick(user) {
-      try {
-        var currentUser = window._vaaniCurrentUser || null;
-        var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-        if (!currentUser || !user || !currentUser.uid || !user.uid || !db) { console.error("[Vaani] handleMessageClick: invalid params"); return; }
-        var sortedPair = [String(currentUser.uid), String(user.uid)].sort();
-        var chatId = sortedPair[0] + "_" + sortedPair[1];
-        console.log("[Vaani] handleMessageClick: chatId =", chatId);
-        await db.collection(CHATS_COLLECTION).doc(chatId).set({
-          participants: sortedPair, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        _activeChatId = chatId; _openChatUI(chatId, user);
-      } catch (error) {
-        console.error("[Vaani] handleMessageClick error:", error);
-        if (typeof window.showToast === "function") window.showToast("Could not open chat — please try again");
-      }
-    }
-
     searchDropdown.addEventListener("click", async function (event) {
       var actionBtn = event.target.closest(".vc-search-btn"); if (!actionBtn) return;
       var action = actionBtn.getAttribute("data-action") || "";
@@ -1658,7 +1668,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       try {
         if (action === "message") {
           var profile = await _fetchOtherProfile(db, targetUid); profile.uid = targetUid;
-          closeDropdown(); await handleMessageClick(profile);
+          closeDropdown(); await _openChatWithUser(profile);
           return;
         }
         if (action === "connect") {
@@ -2002,6 +2012,12 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     }
   }
 },
+
+    openChatWithUser: async function (uid) {
+      var targetUid = String(uid || "").trim();
+      if (!targetUid) throw new Error("INVALID_CHAT_TARGET");
+      return _openChatWithUser({ uid: targetUid });
+    },
 
     close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
 
