@@ -670,30 +670,37 @@ function _saveChatListCache(uid, data) {
   console.log("[Vaani] _createChatListListener: attaching for uid:", currentUid);
   console.log("[CHAT] Listener attached");
 
-  _unsubscribeChatList = db.collection(CONNECTIONS_COLLECTION)
-    .where("users", "array-contains", currentUid)
-    .orderBy("lastMessageAt", "desc")
-    .limit(50)
+  _unsubscribeChatList = db.collection(CHATS_COLLECTION)
+    .where("participants", "array-contains", currentUid)
+    .orderBy("updatedAt", "desc")
+    .limit(20)
     .onSnapshot(function (snapshot) {
       console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
 
-      var byConnectionId = Object.create(null);
+      var byOtherUid = Object.create(null);
       snapshot.forEach(function (doc) {
         var data = doc.data() || {};
-        var users = Array.isArray(data.users) ? data.users : [];
-        var otherUid = users.find(function (uid) { return uid && uid !== currentUid; }) || null;
+        var participants = Array.isArray(data.participants) ? data.participants : [];
+        var otherUid = participants.find(function (uid) { return uid && uid !== currentUid; }) || null;
         if (!otherUid) return;
-        byConnectionId[doc.id] = {
-          id: doc.id,
-          chatId: doc.id,
-          otherUid: String(otherUid),
-          lastMessage: typeof data.lastMessage === "string" ? data.lastMessage : "",
-          timestamp: data.lastMessageAt || data.createdAt || null
+
+        var canonicalId = [String(currentUid), String(otherUid)].sort().join("_");
+        var candidate = {
+          id: doc.id, chatId: doc.id, otherUid: otherUid,
+          lastMessage: data.lastMessage || "", timestamp: data.updatedAt || data.createdAt || null,
+          isCanonical: doc.id === canonicalId
         };
+
+        var prev = byOtherUid[otherUid];
+        if (!prev) { byOtherUid[otherUid] = candidate; return; }
+
+        if (candidate.isCanonical && !prev.isCanonical) { byOtherUid[otherUid] = candidate; }
+        else if (!candidate.isCanonical && prev.isCanonical) { }
+        else if (_timestampToMillis(candidate.timestamp) > _timestampToMillis(prev.timestamp)) { byOtherUid[otherUid] = candidate; }
       });
 
-      var conversations = Object.keys(byConnectionId).map(function (connectionId) {
-        var conv = byConnectionId[connectionId];
+      var conversations = Object.keys(byOtherUid).map(function (uid) {
+        var conv = byOtherUid[uid];
         var cachedProfile = _userProfileCache[conv.otherUid] || null;
         return {
           id: conv.id, chatId: conv.chatId, otherUid: conv.otherUid,
@@ -728,16 +735,14 @@ function _saveChatListCache(uid, data) {
       _renderChatList();
       _saveChatListCache(currentUid, conversations);
 
-      var missingUids = conversations
-        .map(function (item) { return item.otherUid; })
-        .filter(function (uid) { return uid && !_userProfileCache[uid]; });
+      var missingUids = Object.keys(byOtherUid).filter(function (uid) { return !_userProfileCache[uid]; });
       if (!missingUids.length) return;
 
       Promise.all(missingUids.map(function (uid) {
         return _getUserProfileCached(db, uid);
       })).then(function () {
-        var hydratedConversations = Object.keys(byConnectionId).map(function (connectionId) {
-          var conv = byConnectionId[connectionId];
+        var hydratedConversations = Object.keys(byOtherUid).map(function (uid) {
+          var conv = byOtherUid[uid];
           var profile = _userProfileCache[conv.otherUid] || {};
           return {
             id: conv.id,
@@ -891,9 +896,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     var item = document.createElement("button");
     item.type = "button";
     item.className = "vc-chat-list-item";
-    if (_activeChatId && chat.chatId && String(_activeChatId) === String(chat.chatId)) {
-      item.classList.add("vc-chat-list-item-active");
-    }
 
     var timeText = _formatTime(chat.updatedAt);
     item.innerHTML =
@@ -934,15 +936,10 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         return;
       }
 
-      db.collection(CONNECTIONS_COLLECTION).doc(chatId)
-        .set({
-          users: [currentUid, String(chat.otherUid)].sort(),
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          lastMessage: null,
-          lastMessageAt: null
-        }, { merge: true })
+      db.collection(CHATS_COLLECTION).doc(chatId)
+        .set({ participants: [currentUid, String(chat.otherUid)].sort(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
         .catch(function (err) {
-          console.warn("[Vaani] Chat list click: connection upsert failed (non-fatal):", err);
+          console.warn("[Vaani] Chat list click: chat doc upsert failed (non-fatal):", err);
         });
 
       _openChatUI(chatId, selectedUser);
@@ -1122,9 +1119,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     if (await _isConnected(db, uidA, uidB)) return;
     await db.collection(CONNECTIONS_COLLECTION).doc(connectionId).set({
       users: connectionId.split("_"),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      lastMessage: null,
-      lastMessageAt: null
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
   }
 
@@ -1159,12 +1154,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         var connectionRef = db.collection(CONNECTIONS_COLLECTION).doc(connectionId);
         var connectionSnap = await tx.get(connectionRef);
         if (!connectionSnap.exists) {
-          tx.set(connectionRef, {
-            users: sortedUsers,
-            createdAt: nowTs,
-            lastMessage: null,
-            lastMessageAt: null
-          });
+          tx.set(connectionRef, { users: sortedUsers, createdAt: nowTs });
         }
 
         tx.update(requestRef, { status: "accepted", respondedAt: nowTs });
@@ -1174,6 +1164,15 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         tx.set(db.collection("users").doc(toRequestUid).collection(USER_REQUESTS_RECEIVED_COLLECTION).doc(requestId), {
           fromUid: fromRequestUid, status: "accepted", respondedAt: nowTs
         }, { merge: true });
+
+        var chatId = _generateChatId(fromRequestUid, toRequestUid);
+        if (chatId) {
+          tx.set(db.collection(CHATS_COLLECTION).doc(chatId), {
+            participants: sortedUsers,
+            updatedAt: nowTs,
+            createdAt: nowTs
+          }, { merge: true });
+        }
 
         var receiverProfile = _userProfileCache[toRequestUid] || {};
         var receiverName = receiverProfile.username || receiverProfile.displayName || "A user";
@@ -1548,11 +1547,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         var sortedPair = [String(currentUser.uid), String(user.uid)].sort();
         var chatId = sortedPair[0] + "_" + sortedPair[1];
         console.log("[Vaani] handleMessageClick: chatId =", chatId);
-        await db.collection(CONNECTIONS_COLLECTION).doc(chatId).set({
-          users: sortedPair,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          lastMessage: null,
-          lastMessageAt: null
+        await db.collection(CHATS_COLLECTION).doc(chatId).set({
+          participants: sortedPair, createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
         _activeChatId = chatId; _openChatUI(chatId, user);
       } catch (error) {
@@ -1617,18 +1613,16 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   async function sendMessage(chatId, text, currentUid, otherUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !chatId || !text || !currentUid || !otherUid) return;
-    await db.collection(MESSAGES_COLLECTION).add({
-      connectionId: String(chatId),
-      senderId: String(currentUid),
-      text: String(text),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      seen: false
+    // participants must be sorted to match the Firestore rule check
+    var participants = [String(currentUid), String(otherUid)].sort();
+    await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
+      text: text, senderId: currentUid, receiverId: otherUid,
+      participants: participants, chatId: chatId,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
     });
-    await db.collection(CONNECTIONS_COLLECTION).doc(String(chatId)).set({
-      users: [String(currentUid), String(otherUid)].sort(),
-      lastMessage: String(text),
-      lastMessageAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    await db.collection(CHATS_COLLECTION).doc(chatId).update({
+      lastMessage: text, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
   }
 
   async function _sendMessage() {
@@ -1714,11 +1708,10 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _activeMessageListenerKey = listenerKey;
 
     var firstFire = true; // always render on first snapshot to clear loading state
-    console.log("[Vaani] listenToMessages: attaching to messages by connectionId", chatId);
+    console.log("[Vaani] listenToMessages: attaching to chats/" + chatId + "/messages");
 
-    _unsubscribeMessages = db.collection(MESSAGES_COLLECTION)
-      .where("connectionId", "==", chatId)
-      .orderBy("createdAt", "asc")
+    _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
+      .orderBy("timestamp", "asc")
       .onSnapshot(function (snapshot) {
         if (_activeMessageListenerKey !== listenerKey) {
           console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId); return;
@@ -1728,8 +1721,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         snapshot.docs.forEach(function (doc) {
           var d = doc.data() || {};
           sigParts.push(doc.id, String(d.text || ""), String(d.senderId || ""),
-            String(d.createdAt && typeof d.createdAt.toMillis === "function" ? d.createdAt.toMillis() : ""),
-            String(Boolean(d.seen)));
+            String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
         });
         var nextSig = sigParts.join("|");
         if (!firstFire && nextSig === _activeMessagesSignature) {
@@ -1755,41 +1747,13 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     otherUid = String(otherUid);
     var sortedPair = [currentUid, otherUid].sort();
     var chatId = sortedPair[0] + "_" + sortedPair[1];
-    var chatRef = db.collection(CONNECTIONS_COLLECTION).doc(chatId);
+    var chatRef = db.collection(CHATS_COLLECTION).doc(chatId);
     try {
       var snap = await chatRef.get();
       if (snap.exists) { console.log("[Vaani] _getOrCreateChat: existing chatId =", chatId); return chatId; }
-      await chatRef.set({
-        users: sortedPair,
-        lastMessage: null,
-        lastMessageAt: null,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
+      await chatRef.set({ participants: sortedPair, lastMessage: "", createdAt: firebase.firestore.FieldValue.serverTimestamp(), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       console.log("[Vaani] _getOrCreateChat: created chatId =", chatId); return chatId;
     } catch (err) { console.error("[Vaani] _getOrCreateChat failed:", err); return null; }
-  }
-
-  async function _markConnectionMessagesSeen(connectionId) {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
-    if (!db || !connectionId || !currentUid) return;
-    try {
-      var unseenSnapshot = await db.collection(MESSAGES_COLLECTION)
-        .where("connectionId", "==", String(connectionId))
-        .where("seen", "==", false)
-        .limit(100)
-        .get();
-      if (unseenSnapshot.empty) return;
-      var batch = db.batch();
-      unseenSnapshot.forEach(function (doc) {
-        var data = doc.data() || {};
-        if (String(data.senderId || "") === currentUid) return;
-        batch.update(doc.ref, { seen: true });
-      });
-      await batch.commit();
-    } catch (err) {
-      console.warn("[Vaani] Failed to mark messages as seen:", err);
-    }
   }
 
   // ── FIX 5: _openChatUI — set state directly, don't call _setSelectedChatUser ──
@@ -1814,7 +1778,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
   _renderChatUI(user || {});
   _listenToMessages(chatId);
-  _markConnectionMessagesSeen(chatId);
 }
 
   function _renderChatUI(otherProfile) {
