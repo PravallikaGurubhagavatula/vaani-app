@@ -762,3 +762,144 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+
+/* ── PRODUCTION RESPONSIVE SYSTEM (GLOBAL) ───────────────────────── */
+:root {
+  --fluid-space-1: clamp(0.35rem, 1.2vw, 0.6rem);
+  --fluid-space-2: clamp(0.55rem, 1.8vw, 0.9rem);
+  --fluid-space-3: clamp(0.8rem, 2.2vw, 1.2rem);
+  --fluid-space-4: clamp(1rem, 2.8vw, 1.6rem);
+  --touch-target: clamp(44px, 8vw, 52px);
+  --readable-body: clamp(0.875rem, 1.8vw, 1rem);
+  --readable-title: clamp(1.15rem, 3vw, 1.7rem);
+}
+
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-size: var(--readable-body);
+}
+
+.page {
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+.page-title,
+.hero-title,
+.fc-title,
+.stg-label,
+.hist-orig,
+.hist-trans,
+.phrase-orig,
+.phrase-trans {
+  font-size: clamp(0.95rem, 2.3vw, 1.5rem);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.page-sub,
+.hero-sub,
+.fc-desc,
+.mic-hint,
+.mic-sub-hint,
+.phrase-en,
+.status-text,
+.stg-about,
+.rc-text {
+  font-size: clamp(0.82rem, 1.9vw, 1.05rem);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+button,
+input,
+select,
+textarea,
+.icon-btn,
+.btn-primary,
+.btn-ghost,
+.mode-btn,
+.swap-btn,
+.ac-btn,
+.hist-btn,
+.sm-btn,
+.google-btn,
+.signout-btn,
+.stg-btn,
+.cat-btn,
+.phrase-btn {
+  min-height: 44px;
+}
+
+.icon-btn,
+.swap-btn,
+.sm-btn,
+.mic-btn,
+.mic-btn-sm {
+  min-width: 44px;
+}
+
+.glass-card,
+.result-card,
+.hist-card,
+.stg-section,
+.feature-card,
+.phrase-card,
+.upload-zone,
+.img-preview,
+.empty-state {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+#pageChat.active {
+  top: max(var(--nav-h), env(safe-area-inset-top, 0px));
+  height: calc(100dvh - max(var(--nav-h), env(safe-area-inset-top, 0px)));
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .navbar {
+    height: clamp(3rem, 12vh, 3.5rem);
+  }
+
+  :root {
+    --nav-h: clamp(3rem, 12vh, 3.5rem);
+  }
+
+  .page-header {
+    padding-top: var(--fluid-space-2);
+    padding-bottom: var(--fluid-space-2);
+  }
+
+  .home-hero {
+    padding-top: var(--fluid-space-3);
+    padding-bottom: var(--fluid-space-3);
+  }
+}
+
+@media (max-width: 360px) {
+  .feature-card,
+  .phrase-card,
+  .hist-card,
+  .stg-section,
+  .glass-card {
+    padding: clamp(0.7rem, 4vw, 0.9rem);
+  }
+}
