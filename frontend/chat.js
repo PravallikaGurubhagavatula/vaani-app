@@ -493,6 +493,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<input id="vcUserSearchInput" class="vc-search-input search-bar" type="text" autocomplete="off" spellcheck="false" placeholder="Search users by username">' +
       '<div class="vc-search-dropdown" id="vcSearchDropdown"></div></div></div>' +
       '<div class="vc-home-view" id="vcHomeScreen">' +
+      '<div class="requests">' +
       '<div class="vc-requests-wrap">' +
       '<button class="vc-requests-toggle" id="vcRequestsToggle" type="button">Requests <span class="vc-requests-badge" id="vcRequestsBadge">0</span></button>' +
       '<div class="vc-requests-panel" id="vcRequestsPanel">' +
@@ -500,7 +501,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<div class="vc-requests-wrap">' +
       '<button class="vc-requests-toggle" id="vcSentRequestsToggle" type="button">Requests Sent <span class="vc-requests-badge" id="vcSentRequestsBadge">Requested: 0</span></button>' +
       '<div class="vc-requests-panel" id="vcSentRequestsPanel">' +
-      '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div>' +
+      '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div></div>' +
       '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
       '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
 
