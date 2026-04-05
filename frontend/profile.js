@@ -12,6 +12,13 @@ export async function getUserProfile(uid) {
   return null;
 }
 
+export function renderUserProfile(user) {
+  if (window.vaaniProfile && typeof window.vaaniProfile.renderUserProfile === "function") {
+    return window.vaaniProfile.renderUserProfile(user);
+  }
+  return false;
+}
+
 (function () {
   "use strict";
 
@@ -166,6 +173,32 @@ export async function getUserProfile(uid) {
 
     saveProfile: async function (uid, data) {
       return _saveProfile(uid, data);
+    },
+
+    renderUserProfile: function (user) {
+      var root = document.getElementById("vaaniChat") || document.getElementById("profile-root");
+      if (!root) return false;
+
+      // Always replace the main container before rendering profile state.
+      root.innerHTML = "";
+
+      if (!user || typeof user !== "object") {
+        root.innerHTML = '<div class="vg-screen vg-loading-screen"><p>User profile not available</p></div>';
+        return false;
+      }
+
+      if (window.vaaniChat && typeof window.vaaniChat._renderChat === "function") {
+        var current = (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function" && window.vaaniRouter.getAuth())
+          ? window.vaaniRouter.getAuth().currentUser
+          : null;
+        if (current) {
+          window.vaaniChat._renderChat(current, user);
+          return true;
+        }
+      }
+
+      root.innerHTML = '<div class="vg-screen vg-loading-screen"><p>User profile not available</p></div>';
+      return false;
     },
 
     create: async function (user, username, city) {
