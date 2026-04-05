@@ -35,6 +35,7 @@
   var _unsubscribeChatList = null;
   var _activeChatListListenerUid = null;
   var _connectedUidSet = new Set();
+  var _connectionUsersByDocId = Object.create(null);
   var _userProfileCache = Object.create(null);
   var _renderedChatListSignature = "";
   var _forceRenderChatList = false;
@@ -61,6 +62,8 @@
   var NOTIFICATIONS_COLLECTION = "notifications";
   var USER_REQUESTS_SENT_COLLECTION = "requestsSent";
   var USER_REQUESTS_RECEIVED_COLLECTION = "requestsReceived";
+  var _incomingRequestsById = Object.create(null);
+  var _sentRequestsById = Object.create(null);
 
   function _root() {
     return document.getElementById(CHAT_ROOT_ID);
@@ -577,21 +580,41 @@
     if (!db || !currentUid) return;
     if (_unsubscribeConnections) { _unsubscribeConnections(); _unsubscribeConnections = null; }
     _connectedUidSet.clear();
+    _connectionUsersByDocId = Object.create(null);
 
     _unsubscribeConnections = db.collection(CONNECTIONS_COLLECTION)
       .where("users", "array-contains", currentUid)
       .onSnapshot(function (snapshot) {
-        _connectedUidSet.clear();
-        snapshot.forEach(function (doc) {
-          (doc.data().users || []).forEach(function (uid) { if (uid && uid !== currentUid) _connectedUidSet.add(uid); });
+        var changed = false;
+        snapshot.docChanges().forEach(function (change) {
+          var doc = change.doc;
+          var users = (doc.data() && Array.isArray(doc.data().users)) ? doc.data().users : [];
+          if (change.type === "removed") {
+            delete _connectionUsersByDocId[doc.id];
+            changed = true;
+            return;
+          }
+          _connectionUsersByDocId[doc.id] = users.filter(function (uid) { return uid && uid !== currentUid; });
+          changed = true;
         });
+        if (!changed) return;
+
+        _connectedUidSet.clear();
+        Object.keys(_connectionUsersByDocId).forEach(function (docId) {
+          (_connectionUsersByDocId[docId] || []).forEach(function (uid) { _connectedUidSet.add(uid); });
+        });
+
         var next = Array.from(_connectedUidSet).sort().join("|");
         var prev = _fetchConnections._lastSignature || "";
         _fetchConnections._lastSignature = next;
         console.log("[Vaani] connections updated —", _connectedUidSet.size, "connected");
         _refreshActiveSearchDropdown();
         if (window.vaaniChat && window.vaaniChat._currentView === "home" && next !== prev) _renderChatList();
-      }, function (err) { console.error("[Vaani] connections listener error:", err); _connectedUidSet.clear(); });
+      }, function (err) {
+        console.error("[Vaani] connections listener error:", err);
+        _connectedUidSet.clear();
+        _connectionUsersByDocId = Object.create(null);
+      });
   }
 
    function _loadChatListCache(uid) {
@@ -1258,59 +1281,121 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     }).join("");
   }
 
+  function _syncIncomingRequestsUI() {
+    incomingRequests = Object.keys(_incomingRequestsById)
+      .map(function (requestId) { return _incomingRequestsById[requestId]; })
+      .filter(function (request) { return request && String(request.status || "pending").toLowerCase() === "pending"; })
+      .sort(function (a, b) {
+        return _timestampToMillis(b.createdAt) - _timestampToMillis(a.createdAt);
+      });
+    _renderIncomingRequests(incomingRequests);
+  }
+
+  function _syncSentRequestsUI() {
+    sentRequests = Object.keys(_sentRequestsById)
+      .map(function (requestId) { return _sentRequestsById[requestId]; })
+      .filter(function (request) { return request && String(request.status || "pending").toLowerCase() === "pending"; })
+      .sort(function (a, b) {
+        return _timestampToMillis(b.createdAt) - _timestampToMillis(a.createdAt);
+      })
+      .map(function (request) {
+        return {
+          id: request.id,
+          toUid: request.toUid,
+          toUsername: request.toUsername || "user",
+          statusLabel: "Pending",
+          createdAt: request.createdAt || null
+        };
+      });
+    _renderSentRequests(sentRequests);
+  }
+
   async function _fetchIncomingRequests(currentUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !currentUid) return;
     if (_unsubscribeIncomingRequests) { _unsubscribeIncomingRequests(); _unsubscribeIncomingRequests = null; }
+    _incomingRequestsById = Object.create(null);
+    incomingRequests = [];
+    _renderIncomingRequests([]);
 
     _unsubscribeIncomingRequests = db.collection(REQUESTS_COLLECTION)
-      .where("toUid", "==", currentUid).where("status", "==", "pending").orderBy("createdAt", "desc")
+      .where("toUid", "==", currentUid).orderBy("createdAt", "desc")
       .onSnapshot(async function (snapshot) {
-        var pending = [];
-        var seenRequestIds = new Set();
-        for (var i = 0; i < snapshot.docs.length; i++) {
-          var doc = snapshot.docs[i]; var data = doc.data() || {};
+        var tasks = snapshot.docChanges().map(async function (change) {
+          var doc = change.doc;
+          if (change.type === "removed") {
+            delete _incomingRequestsById[doc.id];
+            return;
+          }
+          var data = doc.data() || {};
           var requestId = doc.id;
+          var status = String(data.status || "pending").toLowerCase();
           var senderUid = String(data.fromUid || data.senderId || "");
-          if (!requestId || seenRequestIds.has(requestId) || !senderUid) continue;
-          seenRequestIds.add(requestId);
+          if (!requestId || !senderUid) return;
+          if (status !== "pending") {
+            delete _incomingRequestsById[requestId];
+            return;
+          }
+          var username = String(data.senderUsername || "").trim();
+          var displayName = "";
           try {
-            var fromProfile = await db.collection("users").doc(senderUid).get();
-            var fromData = fromProfile.exists ? fromProfile.data() : {};
-            pending.push({
-              id: requestId,
-              fromUid: senderUid,
-              toUid: data.toUid || data.receiverId || "",
-              fromUsername: data.senderUsername || fromData.username || "user",
-              fromName: fromData.name || fromData.displayName || ""
-            });
+            var fromProfile = await _getUserProfileCached(db, senderUid);
+            if (!username) username = fromProfile && fromProfile.username ? fromProfile.username : "user";
+            displayName = fromProfile && fromProfile.displayName ? fromProfile.displayName : "";
           } catch (err) {
             console.error("[Vaani] Failed to load incoming request profile:", err);
-            pending.push({ id: requestId, fromUid: senderUid, toUid: data.toUid || data.receiverId || "", fromUsername: data.senderUsername || "user", fromName: "" });
+            if (!username) username = "user";
           }
+          _incomingRequestsById[requestId] = {
+            id: requestId,
+            fromUid: senderUid,
+            toUid: data.toUid || data.receiverId || "",
+            fromUsername: username || "user",
+            fromName: displayName || "",
+            status: status,
+            createdAt: data.createdAt || data.timestamp || null
+          };
+        });
+
+        try {
+          await Promise.all(tasks);
+        } finally {
+          _syncIncomingRequestsUI();
         }
-        incomingRequests = pending; _renderIncomingRequests(incomingRequests);
-      }, function (err) { console.error("[Vaani] incoming requests listener error:", err); incomingRequests = []; _renderIncomingRequests([]); });
+      }, function (err) {
+        console.error("[Vaani] incoming requests listener error:", err);
+        _incomingRequestsById = Object.create(null);
+        incomingRequests = [];
+        _renderIncomingRequests([]);
+      });
   }
 
   async function _fetchSentRequests(currentUid) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !currentUid) return;
     if (_unsubscribeSentRequests) { _unsubscribeSentRequests(); _unsubscribeSentRequests = null; }
+    _sentRequestsById = Object.create(null);
+    sentRequests = [];
+    _renderSentRequests([]);
 
     _unsubscribeSentRequests = db.collection(REQUESTS_COLLECTION)
       .where("fromUid", "==", currentUid)
       .orderBy("createdAt", "desc")
       .onSnapshot(async function (snapshot) {
-        var pending = [];
-        var seenRequestIds = new Set();
-        for (var i = 0; i < snapshot.docs.length; i++) {
-          var doc = snapshot.docs[i];
+        var tasks = snapshot.docChanges().map(async function (change) {
+          var doc = change.doc;
+          if (change.type === "removed") {
+            delete _sentRequestsById[doc.id];
+            return;
+          }
           var data = doc.data() || {};
           var requestId = doc.id;
           var status = String(data.status || "").toLowerCase();
-          if (!requestId || seenRequestIds.has(requestId) || status !== "pending") continue;
-          seenRequestIds.add(requestId);
+          if (!requestId) return;
+          if (status !== "pending") {
+            delete _sentRequestsById[requestId];
+            return;
+          }
 
           var receiverUid = String(data.toUid || data.receiverId || "");
           var receiverUsername = String(data.receiverUsername || "").trim();
@@ -1323,18 +1408,22 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
               receiverUsername = "user";
             }
           }
-          pending.push({
+          _sentRequestsById[requestId] = {
             id: requestId,
             toUid: receiverUid,
             toUsername: receiverUsername || "user",
-            statusLabel: "Pending",
+            status: "pending",
             createdAt: data.createdAt || data.timestamp || null
-          });
+          };
+        });
+        try {
+          await Promise.all(tasks);
+        } finally {
+          _syncSentRequestsUI();
         }
-        sentRequests = pending;
-        _renderSentRequests(sentRequests);
       }, function (err) {
         console.error("[Vaani] sent requests listener error:", err);
+        _sentRequestsById = Object.create(null);
         sentRequests = [];
         _renderSentRequests([]);
       });
