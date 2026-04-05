@@ -1180,8 +1180,7 @@ body.vm-menu-open {
   height: calc(100dvh - var(--nav-h, 0px) - var(--vc-chat-header-safe-height) - var(--vc-chat-input-safe-height));
   overflow-y: auto;
   margin: 0;
-  padding: 8px 16px;
-  margin-top: 0;
+  padding: 0 16px 8px;
   padding-bottom: 8px;
   display: flex;
   flex-direction: column;
@@ -1287,7 +1286,6 @@ body.vm-menu-open {
   -webkit-overflow-scrolling: touch;
   padding-top: 0;
   padding-bottom: 8px;
-  margin-top: 0;
   margin-bottom: 0;
 }
 
