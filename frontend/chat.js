@@ -1,4 +1,4 @@
-import { getUserProfile } from "./profile.js";
+import { getUserProfile, renderUserProfile } from "./profile.js";
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -377,8 +377,20 @@ import { getUserProfile } from "./profile.js";
     if (overlay) overlay.addEventListener("click", closeMenu);
 
     wrapper.querySelectorAll(".vm-item").forEach(function (item) {
-      item.addEventListener("click", function () {
+      item.addEventListener("click", async function () {
         var action = item.dataset.action; closeMenu();
+        if (action === "profile") {
+          var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid
+            ? String(window._vaaniCurrentUser.uid)
+            : "";
+          if (!currentUid) {
+            renderUserProfile(null);
+            return;
+          }
+          var userProfile = await getUserProfile(currentUid);
+          renderUserProfile(userProfile || null);
+          return;
+        }
         if (action === "settings" && typeof window.navigateTo === "function") { window.navigateTo("Settings"); return; }
         if (typeof window.showToast === "function") {
           var labelNode = item.querySelector("span");
