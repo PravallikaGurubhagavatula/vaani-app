@@ -51,7 +51,6 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   var _inputMessage = "";
   var _messagesContainerRef = null;
   var _shouldStickToBottom = true;
-  var _viewportCleanup = null;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
@@ -574,72 +573,6 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     window.requestAnimationFrame(function () {
       if (_messagesContainerRef) _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
     });
-  }
-
-  function _unbindKeyboardViewportSync() {
-    if (typeof _viewportCleanup === "function") {
-      _viewportCleanup();
-      _viewportCleanup = null;
-    }
-    document.documentElement.style.setProperty("--vaani-chat-vh", "100dvh");
-    document.documentElement.style.setProperty("--vaani-chat-input-translate", "0px");
-  }
-
-  function _bindKeyboardViewportSync() {
-    _unbindKeyboardViewportSync();
-
-    var vv = window.visualViewport;
-    var maxViewportHeight = Math.max(window.innerHeight || 0, (vv && vv.height) || 0);
-    var rafId = null;
-
-    function _applyViewportMetrics() {
-      var viewportHeight = vv && vv.height ? vv.height : window.innerHeight;
-      var keyboardInset = 0;
-      if (vv) {
-        var visualBottom = (vv.height || 0) + (vv.offsetTop || 0);
-        var keyboardLikelyClosed =
-          Math.abs(vv.offsetTop || 0) < 1 &&
-          Math.max(0, (window.innerHeight || 0) - (vv.height || 0)) < 160;
-        if (keyboardLikelyClosed) {
-          maxViewportHeight = Math.max(maxViewportHeight, window.innerHeight || 0, vv.height || 0);
-        }
-        keyboardInset = Math.max(0, Math.round(maxViewportHeight - visualBottom));
-      }
-      if (keyboardInset < 4) keyboardInset = 0;
-      document.documentElement.style.setProperty("--vaani-chat-vh", Math.round(viewportHeight) + "px");
-      document.documentElement.style.setProperty(
-        "--vaani-chat-input-translate",
-        keyboardInset > 0 ? ("-" + keyboardInset + "px") : "0px"
-      );
-    }
-
-    function _scheduleApply() {
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(function () {
-        rafId = null;
-        _applyViewportMetrics();
-      });
-    }
-
-    window.addEventListener("resize", _scheduleApply);
-    window.addEventListener("orientationchange", _scheduleApply);
-    window.addEventListener("pageshow", _scheduleApply);
-    if (vv) {
-      vv.addEventListener("resize", _scheduleApply);
-      vv.addEventListener("scroll", _scheduleApply);
-    }
-    _applyViewportMetrics();
-
-    _viewportCleanup = function () {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener("resize", _scheduleApply);
-      window.removeEventListener("orientationchange", _scheduleApply);
-      window.removeEventListener("pageshow", _scheduleApply);
-      if (vv) {
-        vv.removeEventListener("resize", _scheduleApply);
-        vv.removeEventListener("scroll", _scheduleApply);
-      }
-    };
   }
 
   function _teardownMessageListener() {
@@ -2021,11 +1954,8 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
         event.preventDefault(); if (messageInput.value.trim()) _sendMessage();
       });
       messageInput.addEventListener("focus", function () {
-        _bindKeyboardViewportSync();
-        _scrollMessagesToBottom(false);
-      });
-      messageInput.addEventListener("blur", function () {
-        setTimeout(function () { _bindKeyboardViewportSync(); }, 80);
+        _scrollMessagesToBottom(true);
+        setTimeout(function () { _scrollMessagesToBottom(true); }, 300);
       });
       messageInput.value = ""; messageInput.focus();
     }
@@ -2052,7 +1982,6 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _currentView: "home",
     _chatList: [],
     open: function () {
-  _bindKeyboardViewportSync();
   var root = _root();
   if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
     var auth = window.vaaniRouter.getAuth();
@@ -2121,7 +2050,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       return _openChatWithUser({ uid: targetUid });
     },
 
-    close: function () { _unbindKeyboardViewportSync(); _stopListening(); _clearSearchState(); _removeMenu(); },
+    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); },
 
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,
