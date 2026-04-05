@@ -18,6 +18,9 @@ html, body {
 #vaaniChat {
   --vc-header-z: 1200;
   --vc-chat-header-height: 64px;
+  --vc-chat-header-safe-height: calc(var(--vc-chat-header-height) + env(safe-area-inset-top, 0px));
+  --vc-chat-input-bar-height: 62px;
+  --vc-chat-input-safe-height: calc(var(--vc-chat-input-bar-height) + env(safe-area-inset-bottom, 0px));
   --vc-keyboard-offset: 0px;
   width: 100%;
   max-width: 720px;
@@ -1052,7 +1055,8 @@ body.vm-menu-open {
   background: var(--bg, #09090f);
   overflow: hidden;
   position: relative;
-  padding-top: calc(var(--vc-chat-header-height) + env(safe-area-inset-top, 0px));
+  padding-top: var(--vc-chat-header-safe-height);
+  padding-bottom: calc(var(--vc-chat-input-safe-height) + var(--vc-keyboard-offset, 0px));
 }
 
 #vaaniChat .vc-chat-header {
@@ -1060,16 +1064,18 @@ body.vm-menu-open {
   align-items: center;
   gap: 10px;
   box-sizing: border-box;
-  height: calc(var(--vc-chat-header-height) + env(safe-area-inset-top, 0px));
+  height: var(--vc-chat-header-safe-height);
   padding: env(safe-area-inset-top, 0px) 16px 0;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
   position: fixed;
   top: var(--nav-h, 0px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(100vw, 720px);
-  z-index: 9999;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 720px;
+  z-index: 1500;
   background: var(--bg, #09090f);
 }
 
@@ -1123,6 +1129,7 @@ body.vm-menu-open {
 
 #vaaniChat .vc-chat-hinfo {
   min-width: 0;
+  flex: 1;
 }
 
 #vaaniChat .vc-chat-hname {
@@ -1136,15 +1143,46 @@ body.vm-menu-open {
   font-size: 11px;
 }
 
+#vaaniChat .vc-chat-hactions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#vaaniChat .vc-header-action-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #e8e8f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#vaaniChat .vc-header-action-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 #vaaniChat .vc-chat-messages {
-  flex: 1;
+  flex: none;
   min-height: 0;
-  height: calc(100% - var(--vc-chat-input-bar-height, 62px));
+  height: calc(100dvh - var(--nav-h, 0px) - var(--vc-chat-header-safe-height) - var(--vc-chat-input-safe-height));
   overflow-y: auto;
   margin: 0;
-  padding: 0 16px 8px;
+  padding: 8px 16px;
   margin-top: 0;
-  padding-bottom: calc(8px + var(--vc-keyboard-offset, 0px));
+  padding-bottom: 8px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1210,16 +1248,18 @@ body.vm-menu-open {
   gap: 8px;
   width: 100%;
   padding: 10px 16px;
-  --vc-chat-input-bar-height: 62px;
   border-top: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
   box-sizing: border-box;
   background: var(--bg, #09090f);
   padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  position: sticky;
-  bottom: 0;
-  z-index: calc(var(--vc-header-z) - 1);
-  margin-bottom: var(--vc-keyboard-offset, 0px);
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--vc-keyboard-offset, 0px);
+  margin: 0 auto;
+  max-width: 720px;
+  z-index: 1400;
 }
 
 /* Compatibility aliases for production chat layout contract */
