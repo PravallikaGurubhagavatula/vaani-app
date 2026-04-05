@@ -22,7 +22,7 @@ html, body {
   margin: 0 auto;
   font-family: 'Outfit', sans-serif;
   background: var(--bg, #09090f);
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -37,10 +37,12 @@ html, body {
 
 .vc-chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
   display: flex;
   flex-direction: column;
+  -webkit-overflow-scrolling: touch;
 }
 
 .vc-chat-view-wrap,
@@ -426,7 +428,7 @@ html, body {
   flex-direction: column;
   gap: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 
 #vaaniChat .vc-chat-view-wrap {
@@ -1038,7 +1040,7 @@ body.vm-menu-open {
   width: 100%;
   min-height: 0;
   background: var(--bg, #09090f);
-  overflow: hidden;
+  overflow: visible;
 }
 
 #vaaniChat .vc-chat-header {
