@@ -2022,6 +2022,9 @@ function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.
 const PAGES     = ["Home","Single","Conversation","Chat","Travel","History","Favourites","Settings"];
 const _navStack = [];
 
+function _buildNavState(page) {
+  return page === "Chat" ? { page, chatView: "home" } : { page };
+}
 
 function _syncChatViewportLock(page) {
   const isChat = page === "Chat";
@@ -2041,10 +2044,10 @@ function navigateTo(page) {
   const currentHash = location.hash.replace("#", "").toLowerCase();
   const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
   if (currentPage !== page) {
-    history.pushState({ page }, "", `#${page.toLowerCase()}`);
+    history.pushState(_buildNavState(page), "", `#${page.toLowerCase()}`);
     _navStack.push(page);
   } else {
-    history.replaceState({ page }, "", `#${page.toLowerCase()}`);
+    history.replaceState(_buildNavState(page), "", `#${page.toLowerCase()}`);
     if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
   }
   // Close chat listener when leaving
@@ -2070,6 +2073,9 @@ window.addEventListener("popstate", (e) => {
   });
   _syncChatViewportLock(page);
   closeMenu(); _onPageActivate(page);
+  if (page === "Chat" && window.vaaniChat && typeof window.vaaniChat.handleHistoryState === "function") {
+    window.vaaniChat.handleHistoryState(e.state || { page: "Chat", chatView: "home" });
+  }
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
 });
@@ -2134,7 +2140,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const hash        = location.hash.replace("#", "").toLowerCase();
   const initialPage = PAGES.find(p => p.toLowerCase() === hash) || "Home";
-  history.replaceState({ page: initialPage }, "", `#${initialPage.toLowerCase()}`);
+  history.replaceState(_buildNavState(initialPage), "", `#${initialPage.toLowerCase()}`);
   _navStack.push(initialPage);
   PAGES.forEach(p => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
