@@ -1965,7 +1965,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     chatScreen.innerHTML =
       '<div class="vc-chat-view chat-wrapper">' +
         '<div class="chat-container">' +
-          '<div class="vc-chat-header">' +
+          '<div class="vc-chat-header chat-header">' +
             '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
             '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
             '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
