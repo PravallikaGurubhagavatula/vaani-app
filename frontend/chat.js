@@ -414,10 +414,10 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     _stopListening(); _clearSearchState(); _removeMenu();
     root.innerHTML = '<div class="vg-screen vg-login-screen"><div class="vg-card">' +
       '<div class="vg-card-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>' +
-      '<h2 class="vg-card-title">Join the Conversation</h2>' +
+      '<h2 class="vg-card-title">Start Chatting</h2>' +
       '<p class="vg-card-sub">Sign in to access your Vaani chat workspace.</p>' +
       '<button class="vg-google-btn" id="vgSignInBtn">' + _googleLogoSvg() + "Continue with Google</button>" +
-      '<p class="vg-hint">Translation features work without signing in ✓</p></div></div>';
+      '<p class="vg-hint">Translation features work without signing in.</p></div></div>';
 
     var signInBtn = document.getElementById("vgSignInBtn");
     if (!signInBtn) return;
