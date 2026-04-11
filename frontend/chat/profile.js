@@ -37,6 +37,9 @@ export function dispatchProfileAction(action, user) {
     unsub: null,
     host: null,
   };
+  var _presenceBoundUid = "";
+  var _presenceActivityTimer = null;
+  var _presenceActivityEventsBound = false;
 
   function _formatLastSeen(ts) {
     if (!ts) return "—";
@@ -102,6 +105,9 @@ export function dispatchProfileAction(action, user) {
 
   function _normalizeProfileData(data) {
     var safeData = data && typeof data === "object" ? data : {};
+    var showStatus = safeData.status && typeof safeData.status.showStatus === "boolean"
+      ? safeData.status.showStatus
+      : !(safeData.status && safeData.status.visibility === false);
     return {
       name: String(safeData.name || "").trim(),
       username: String(safeData.username || "").trim().toLowerCase(),
@@ -117,7 +123,7 @@ export function dispatchProfileAction(action, user) {
       status: {
         isOnline: !!(safeData.status && safeData.status.isOnline),
         isTyping: !!(safeData.status && safeData.status.isTyping),
-        visibility: safeData.status && typeof safeData.status.visibility === "boolean" ? safeData.status.visibility : true,
+        showStatus: showStatus,
         lastSeen: safeData.status ? safeData.status.lastSeen : null,
       },
     };
@@ -188,7 +194,7 @@ export function dispatchProfileAction(action, user) {
       status: {
         isOnline: !!(cleaned.status && cleaned.status.isOnline),
         isTyping: !!(cleaned.status && cleaned.status.isTyping),
-        visibility: cleaned.status && typeof cleaned.status.visibility === "boolean" ? cleaned.status.visibility : true,
+        showStatus: cleaned.status && typeof cleaned.status.showStatus === "boolean" ? cleaned.status.showStatus : true,
         lastSeen: cleaned.status && cleaned.status.lastSeen ? cleaned.status.lastSeen : firebase.firestore.FieldValue.serverTimestamp(),
       },
     };
@@ -240,7 +246,7 @@ export function dispatchProfileAction(action, user) {
     var editBtn = document.getElementById("vmpEditBtn");
     var saveBtn = document.getElementById("vmpSaveBtn");
     var cancelBtn = document.getElementById("vmpCancelBtn");
-    var toggle = document.getElementById("vmpVisibilityToggle");
+    var toggle = document.getElementById("statusVisibility");
     var photoBtn = document.getElementById("vmpPhotoBtn");
     var changePhotoBtn = document.getElementById("vmpChangePhotoBtn");
     var photoInput = document.getElementById("vmpPhotoInput");
@@ -275,7 +281,7 @@ export function dispatchProfileAction(action, user) {
         try {
           await _getDb().collection(COLLECTION).doc(uid).set({
             status: {
-              visibility: !!toggle.checked,
+              showStatus: !!toggle.checked,
               lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
             }
           }, { merge: true });
@@ -317,7 +323,7 @@ export function dispatchProfileAction(action, user) {
       status: {
         isOnline: !!status.isOnline,
         isTyping: !!status.isTyping,
-        visibility: typeof status.visibility === "boolean" ? status.visibility : true,
+        showStatus: typeof status.showStatus === "boolean" ? status.showStatus : true,
         lastSeen: _formatLastSeen(status.lastSeen),
       }
     });
@@ -336,6 +342,7 @@ export function dispatchProfileAction(action, user) {
     var host = document.getElementById("vcProfileScreen");
     var db = _getDb();
     if (!currentUid || !host || !db) return false;
+    _bindPresence(currentUid);
 
     _setProfileViewMode("profile");
     _myProfileState.host = host;
@@ -433,7 +440,7 @@ export function dispatchProfileAction(action, user) {
         status: {
           isOnline: true,
           isTyping: false,
-          visibility: true,
+          showStatus: true,
           lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
         }
       });
@@ -447,6 +454,51 @@ export function dispatchProfileAction(action, user) {
 
   window.saveProfile = saveProfile;
   window.getUserProfile = getUserProfile;
+
+  async function _setPresence(uid, isOnline) {
+    if (!uid) return;
+    var db = _getDb();
+    if (!db || !firebase || !firebase.firestore || !firebase.firestore.FieldValue) return;
+    try {
+      await db.collection(COLLECTION).doc(uid).set({
+        status: {
+          isOnline: !!isOnline,
+          lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+        }
+      }, { merge: true });
+    } catch (_) {}
+  }
+
+  function _scheduleInactivity(uid) {
+    if (!uid) return;
+    if (_presenceActivityTimer) clearTimeout(_presenceActivityTimer);
+    _presenceActivityTimer = setTimeout(function () {
+      _setPresence(uid, false);
+    }, 5 * 60 * 1000);
+  }
+
+  function _bindPresence(uid) {
+    if (!uid || _presenceBoundUid === uid) return;
+    _presenceBoundUid = uid;
+    _setPresence(uid, true);
+    _scheduleInactivity(uid);
+
+    if (_presenceActivityEventsBound) return;
+    _presenceActivityEventsBound = true;
+    ["mousemove", "keydown", "touchstart", "scroll", "click"].forEach(function (eventName) {
+      window.addEventListener(eventName, function () {
+        _setPresence(_presenceBoundUid, true);
+        _scheduleInactivity(_presenceBoundUid);
+      }, { passive: true });
+    });
+    window.addEventListener("beforeunload", function () {
+      _setPresence(_presenceBoundUid, false);
+    });
+    window.addEventListener("load", function () {
+      _setPresence(_presenceBoundUid, true);
+    });
+  }
+
   window.showProfileOnboarding = function (uid) {
     var auth = _getAuth();
     var user = auth && auth.currentUser ? auth.currentUser : null;
@@ -461,5 +513,14 @@ export function dispatchProfileAction(action, user) {
   };
 
   console.log("[Vaani Profile] profile.js v4.0 loaded ✓");
+
+  if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
+    var auth = window.vaaniRouter.getAuth();
+    if (auth && typeof auth.onAuthStateChanged === "function") {
+      auth.onAuthStateChanged(function (user) {
+        if (user && user.uid) _bindPresence(String(user.uid));
+      });
+    }
+  }
 
 })();
