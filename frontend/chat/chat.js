@@ -448,7 +448,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<div class="vg-input-wrap"><span class="vg-input-prefix">@</span>' +
       '<input id="vgUsernameInput" class="vg-input" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="yourname_01" value="' + _esc(suggested) + '"></div>' +
       '<span class="vg-field-hint" id="vgUsernameHint">Must include letters + numbers. Underscore (_) allowed.</span></div>' +
-      '<button class="vg-primary-btn" id="vgCreateProfileBtn" disabled>Create Profile</button>' +
+      '<button class="vg-primary-btn create-profile-btn" id="vgCreateProfileBtn" type="button">Create Profile</button>' +
       '<button class="vg-ghost-btn" id="vgSignOutBtn">Sign out</button></div></div>';
 
     var input = document.getElementById("vgUsernameInput");
@@ -458,13 +458,15 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     function validate() {
       if (!input || !hint || !createBtn) return;
       var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(input.value) : null;
-      if (err) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; createBtn.disabled = true; }
-      else     { hint.textContent = "✓ Username looks good"; hint.className = "vg-field-hint vg-hint-success"; createBtn.disabled = false; }
+      createBtn.dataset.valid = err ? "false" : "true";
+      if (err) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; }
+      else     { hint.textContent = "✓ Username looks good"; hint.className = "vg-field-hint vg-hint-success"; }
     }
     if (input) { input.addEventListener("input", validate); validate(); }
 
     if (createBtn) {
       createBtn.addEventListener("click", async function () {
+        console.log("[Vaani] Create Profile button clicked");
         var username = input ? input.value.trim() : "";
         var err = window.vaaniProfile && window.vaaniProfile.validateUsername ? window.vaaniProfile.validateUsername(username) : null;
         if (err) { if (hint) { hint.textContent = err; hint.className = "vg-field-hint vg-hint-error"; } return; }

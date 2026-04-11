@@ -73,6 +73,11 @@ html, body {
   padding: 24px 20px;
 }
 
+#vaaniChat .vg-profile-screen,
+#vaaniChat .vg-profile-screen .vg-card {
+  position: relative;
+}
+
 #vaaniChat .vg-loading-screen {
   gap: 14px;
   color: var(--text3, #66667a);
@@ -304,6 +309,12 @@ html, body {
   border: 0;
   color: #fff;
   background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
+
+#vaaniChat .create-profile-btn {
+  position: relative;
+  z-index: 10;
+  pointer-events: auto;
 }
 
 #vaaniChat .vg-secondary-btn {
