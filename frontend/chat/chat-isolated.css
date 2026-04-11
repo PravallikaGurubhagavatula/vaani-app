@@ -1499,6 +1499,7 @@ body.vm-menu-open {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg-primary, var(--bg, #09090f));
   padding: 8px 16px 12px;
   min-height: 0;
 }
@@ -1507,7 +1508,8 @@ body.vm-menu-open {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 6px;
+  padding-top: 4px;
+  padding-right: 8px;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -1515,7 +1517,8 @@ body.vm-menu-open {
 
 #vaaniChat .profile-container {
   width: 100%;
-  max-width: 560px;
+  max-width: 600px;
+  margin: 0 auto;
   min-width: 0;
 }
 
@@ -1538,6 +1541,7 @@ body.vm-menu-open {
 
 #vaaniChat .profile-card,
 #vaaniChat .vmp-card {
+  width: 100%;
   margin-bottom: 16px;
   padding: 20px;
   border-radius: 16px;
@@ -1564,19 +1568,20 @@ body.vm-menu-open {
   position: sticky;
   top: 0;
   margin-top: 0;
-  z-index: 5;
+  margin-bottom: 8px;
+  z-index: 10;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 12px 8px;
+  padding: 12px 0;
   border-radius: 14px;
-  background: var(--bg, #09090f);
+  background: var(--bg-primary, var(--bg, #09090f));
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(6px);
 }
 
 #vaaniChat .vmp-card {
-  background: var(--bg2, #0e0e1a);
+  background: var(--card-bg, var(--bg2, #0e0e1a));
   border: 1px solid rgba(255, 255, 255, 0.1);
   transition: transform .2s ease;
 }
@@ -1650,5 +1655,6 @@ body.vm-menu-open {
   #vaaniChat .profile-panel { padding: 8px 10px; }
   #vaaniChat .profile-container {
     max-width: 100%;
+    padding: 0 12px;
   }
 }
