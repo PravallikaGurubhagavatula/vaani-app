@@ -47,6 +47,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   var _activeChatId = null;
   var _visualViewportResizeHandler = null;
   var _selectedChatUser = null;
+  var _panelView = "home";
   var _loading = true;
   var _messages = [];
   var _inputMessage = "";
@@ -389,6 +390,10 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
             renderUserProfile(null);
             return;
           }
+          if (window.vaaniProfile && typeof window.vaaniProfile.openMyProfile === "function") {
+            window.vaaniProfile.openMyProfile();
+            return;
+          }
           var userProfile = await getUserProfile(currentUid);
           renderUserProfile(userProfile || null);
           return;
@@ -505,7 +510,8 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<div class="vc-requests-panel" id="vcSentRequestsPanel">' +
       '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div></div>' +
       '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
-      '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div></section>';
+      '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div>' +
+      '<div class="vc-profile-view-wrap" id="vcProfileScreen" style="display:none;"></div></section>';
 
     var profileBtn = document.getElementById("vcProfileBtn");
     if (profileBtn) profileBtn.addEventListener("click", function () {
@@ -536,19 +542,31 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   function _syncViewWithSelection() {
     var home = document.getElementById("vcHomeScreen");
     var chat = document.getElementById("vcChatScreen");
+    var profile = document.getElementById("vcProfileScreen");
     var topBar = document.querySelector(".vc-top-bar");
-    if (!home || !chat) return;
-    if (_selectedChatUser) {
+    if (!home || !chat || !profile) return;
+
+    if (_panelView === "chat" && _selectedChatUser) {
       home.style.display = "none";
       chat.style.display = "block";
+      profile.style.display = "none";
       if (topBar) topBar.style.display = "none";
+    } else if (_panelView === "profile") {
+      home.style.display = "none";
+      chat.style.display = "none";
+      profile.style.display = "block";
+      if (topBar) topBar.style.display = "flex";
     } else {
       home.style.display = "block";
       chat.style.display = "none";
+      profile.style.display = "none";
       chat.innerHTML = "";
+      if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") {
+        window.vaaniProfile.closeMyProfile();
+      }
       if (topBar) topBar.style.display = "flex";
     }
-    if (window.vaaniChat) window.vaaniChat._currentView = _selectedChatUser ? "chat" : "home";
+    if (window.vaaniChat) window.vaaniChat._currentView = _panelView === "profile" ? "profile" : (_selectedChatUser ? "chat" : "home");
   }
 
   function _setSelectedChatUser(user) {
@@ -559,6 +577,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       } catch (e) {}
     }
     _selectedChatUser = user || null;
+    _panelView = _selectedChatUser ? "chat" : "home";
     if (!_selectedChatUser) {
       _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
       _teardownMessageListener();
@@ -2106,7 +2125,13 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       return _openChatWithUser({ uid: targetUid });
     },
 
-    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); },
+    close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") window.vaaniProfile.closeMyProfile(); },
+
+    setPanelView: function (mode) {
+      _panelView = mode === "profile" ? "profile" : (mode === "chat" ? "chat" : "home");
+      if (_panelView !== "chat") _selectedChatUser = null;
+      _syncViewWithSelection();
+    },
 
     _renderLogin:  _renderLogin,
     _renderProfile: _renderProfile,

@@ -1,9 +1,8 @@
 /* ================================================================
-   Vaani — profile.js  v3.0
-   ================================================================
-   First-time profile onboarding data API.
-   Uses the same Firebase app instance as auth.js and chat.js.
+   Vaani — profile.js  v4.0
 ================================================================ */
+
+import { profilePageTemplate, profilePageSkeleton } from "./components/ProfilePage.js";
 
 export async function getUserProfile(uid) {
   if (window.vaaniProfile && typeof window.vaaniProfile.get === "function") {
@@ -30,8 +29,26 @@ export function dispatchProfileAction(action, user) {
   "use strict";
 
   var COLLECTION = "users";
+  var _myProfileState = {
+    isEditing: false,
+    profile: null,
+    status: null,
+    originalProfile: null,
+    unsub: null,
+    host: null,
+  };
 
-  /* ── Get DB from the router (same instance, no new app needed) ── */
+  function _formatLastSeen(ts) {
+    if (!ts) return "—";
+    try {
+      var date = typeof ts.toDate === "function" ? ts.toDate() : new Date(ts);
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+      return date.toLocaleString();
+    } catch (_) {
+      return "—";
+    }
+  }
+
   function _getDb() {
     if (window.vaaniRouter && typeof window.vaaniRouter.getDb === "function") {
       return window.vaaniRouter.getDb();
@@ -46,7 +63,6 @@ export function dispatchProfileAction(action, user) {
     return null;
   }
 
-  /* ── Username validation ─────────────────────────────────────── */
   function _validateUsername(raw) {
     var v = (raw || "").trim();
     if (!v) return "Username is required.";
@@ -56,7 +72,7 @@ export function dispatchProfileAction(action, user) {
       return "Only letters, numbers and underscores allowed.";
     }
 
-    return null; // valid
+    return null;
   }
 
   function _toArray(value) {
@@ -91,10 +107,20 @@ export function dispatchProfileAction(action, user) {
       username: String(safeData.username || "").trim().toLowerCase(),
       city: String(safeData.city || "").trim(),
       bio: String(safeData.bio || "").trim(),
+      location: String(safeData.location || safeData.city || "").trim(),
+      skills: _toArray(safeData.skills),
+      interests: _toArray(safeData.interests),
+      photoURL: String(safeData.photoURL || "").trim(),
       languages: _toArray(safeData.languages),
       fluentLanguages: _toArray(safeData.fluentLanguages),
       localExpertise: _toArray(safeData.localExpertise),
       links: _toLinksObject(safeData.links),
+      status: {
+        isOnline: !!(safeData.status && safeData.status.isOnline),
+        isTyping: !!(safeData.status && safeData.status.isTyping),
+        visibility: safeData.status && typeof safeData.status.visibility === "boolean" ? safeData.status.visibility : true,
+        lastSeen: safeData.status ? safeData.status.lastSeen : null,
+      },
     };
   }
 
@@ -113,7 +139,6 @@ export function dispatchProfileAction(action, user) {
     if (!data.name) return "Name is required.";
     var usernameError = _validateUsername(data.username);
     if (usernameError) return usernameError;
-    if (!data.city) return "City is required.";
     return null;
   }
 
@@ -151,13 +176,23 @@ export function dispatchProfileAction(action, user) {
       name: cleaned.name,
       username: cleaned.username,
       usernameLower: usernameLower,
-      city: cleaned.city,
+      city: cleaned.location || cleaned.city || "",
+      location: cleaned.location || cleaned.city || "",
       bio: cleaned.bio,
+      skills: cleaned.skills,
+      interests: cleaned.interests,
+      photoURL: cleaned.photoURL,
       languages: cleaned.languages,
       fluentLanguages: cleaned.fluentLanguages,
       localExpertise: cleaned.localExpertise,
       links: cleaned.links,
       lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+      status: {
+        isOnline: !!(cleaned.status && cleaned.status.isOnline),
+        isTyping: !!(cleaned.status && cleaned.status.isTyping),
+        visibility: cleaned.status && typeof cleaned.status.visibility === "boolean" ? cleaned.status.visibility : true,
+        lastSeen: cleaned.status && cleaned.status.lastSeen ? cleaned.status.lastSeen : firebase.firestore.FieldValue.serverTimestamp(),
+      },
     };
 
     if (!existing.exists || !existing.data().joinedDate) {
@@ -168,13 +203,174 @@ export function dispatchProfileAction(action, user) {
     return Object.assign({}, existing.exists ? existing.data() : {}, payload);
   }
 
-  /* ── Public API ──────────────────────────────────────────────── */
-  window.vaaniProfile = {
+  function _readFormState() {
+    var next = Object.assign({}, _myProfileState.profile || {});
+    var name = document.getElementById("vmpName");
+    var username = document.getElementById("vmpUsername");
+    var bio = document.getElementById("vmpBio");
+    var skills = document.getElementById("vmpSkills");
+    var interests = document.getElementById("vmpInterests");
+    var location = document.getElementById("vmpLocation");
 
-    /**
-     * get(uid)
-     * Returns profile or null. No auth needed (read is public).
-     */
+    next.name = name ? name.value.trim() : next.name;
+    next.username = username ? username.value.trim().toLowerCase() : next.username;
+    next.bio = bio ? bio.value.trim() : next.bio;
+    next.skills = skills ? _toArray(skills.value) : next.skills;
+    next.interests = interests ? _toArray(interests.value) : next.interests;
+    next.location = location ? location.value.trim() : next.location;
+    return next;
+  }
+
+  function _setProfileViewMode(mode) {
+    if (window.vaaniChat && typeof window.vaaniChat.setPanelView === "function") {
+      window.vaaniChat.setPanelView(mode);
+    }
+  }
+
+  async function _uploadPhoto(uid, file) {
+    if (!file) return;
+    if (!firebase || typeof firebase.storage !== "function") {
+      throw new Error("Firebase Storage is not available.");
+    }
+    var storage = firebase.storage();
+    var ref = storage.ref("profilePics/" + uid);
+    await ref.put(file);
+    var url = await ref.getDownloadURL();
+    await _getDb().collection(COLLECTION).doc(uid).set({ photoURL: url }, { merge: true });
+    return url;
+  }
+
+  function _bindMyProfileEvents(uid) {
+    var editBtn = document.getElementById("vmpEditBtn");
+    var saveBtn = document.getElementById("vmpSaveBtn");
+    var cancelBtn = document.getElementById("vmpCancelBtn");
+    var toggle = document.getElementById("vmpVisibilityToggle");
+    var photoBtn = document.getElementById("vmpPhotoBtn");
+    var changePhotoBtn = document.getElementById("vmpChangePhotoBtn");
+    var photoInput = document.getElementById("vmpPhotoInput");
+
+    if (editBtn) {
+      editBtn.addEventListener("click", function () {
+        _myProfileState.isEditing = true;
+        _renderMyProfile();
+      });
+    }
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async function () {
+        var next = _readFormState();
+        try {
+          await saveProfile(uid, Object.assign({}, next, { status: _myProfileState.status || {} }));
+          _myProfileState.isEditing = false;
+          if (typeof window.showToast === "function") window.showToast("Profile saved");
+        } catch (err) {
+          if (typeof window.showToast === "function") window.showToast(err.message || "Could not save profile.");
+        }
+      });
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", function () {
+        _myProfileState.isEditing = false;
+        _myProfileState.profile = Object.assign({}, _myProfileState.originalProfile || _myProfileState.profile || {});
+        _renderMyProfile();
+      });
+    }
+    if (toggle) {
+      toggle.addEventListener("change", async function () {
+        try {
+          await _getDb().collection(COLLECTION).doc(uid).set({
+            status: {
+              visibility: !!toggle.checked,
+              lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+            }
+          }, { merge: true });
+        } catch (_) {
+          if (typeof window.showToast === "function") window.showToast("Could not update status visibility.");
+        }
+      });
+    }
+
+    function openPicker() {
+      if (photoInput) photoInput.click();
+    }
+
+    if (photoBtn) photoBtn.addEventListener("click", openPicker);
+    if (changePhotoBtn) changePhotoBtn.addEventListener("click", openPicker);
+
+    if (photoInput) {
+      photoInput.addEventListener("change", async function (event) {
+        var file = event && event.target && event.target.files && event.target.files[0];
+        if (!file) return;
+        try {
+          await _uploadPhoto(uid, file);
+          if (typeof window.showToast === "function") window.showToast("Photo updated");
+        } catch (err) {
+          if (typeof window.showToast === "function") window.showToast(err.message || "Photo upload failed.");
+        } finally {
+          photoInput.value = "";
+        }
+      });
+    }
+  }
+
+  function _renderMyProfile() {
+    if (!_myProfileState.host || !_myProfileState.profile) return;
+    var status = _myProfileState.status || {};
+    _myProfileState.host.innerHTML = profilePageTemplate({
+      isEditing: _myProfileState.isEditing,
+      profile: _myProfileState.profile,
+      status: {
+        isOnline: !!status.isOnline,
+        isTyping: !!status.isTyping,
+        visibility: typeof status.visibility === "boolean" ? status.visibility : true,
+        lastSeen: _formatLastSeen(status.lastSeen),
+      }
+    });
+    _bindMyProfileEvents(_myProfileState.profile.uid);
+  }
+
+  function _cleanupMyProfileWatcher() {
+    if (_myProfileState.unsub) {
+      _myProfileState.unsub();
+      _myProfileState.unsub = null;
+    }
+  }
+
+  function openMyProfile() {
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    var host = document.getElementById("vcProfileScreen");
+    var db = _getDb();
+    if (!currentUid || !host || !db) return false;
+
+    _setProfileViewMode("profile");
+    _myProfileState.host = host;
+    _myProfileState.isEditing = false;
+    host.innerHTML = profilePageSkeleton();
+
+    _cleanupMyProfileWatcher();
+    _myProfileState.unsub = db.collection(COLLECTION).doc(currentUid).onSnapshot(function (doc) {
+      var data = doc.exists ? doc.data() : {};
+      var normalized = _normalizeProfileData(data);
+      normalized.uid = currentUid;
+      _myProfileState.profile = normalized;
+      _myProfileState.originalProfile = Object.assign({}, normalized);
+      _myProfileState.status = normalized.status || {};
+      _renderMyProfile();
+    }, function () {
+      host.innerHTML = '<div class="vg-screen vg-loading-screen"><p>Could not load profile.</p></div>';
+    });
+
+    return true;
+  }
+
+  function closeMyProfile() {
+    _cleanupMyProfileWatcher();
+    _myProfileState.host = null;
+    _myProfileState.profile = null;
+    _myProfileState.originalProfile = null;
+    _myProfileState.isEditing = false;
+  }
+
+  window.vaaniProfile = {
     get: async function (uid) {
       var db = _getDb();
       if (!db) {
@@ -202,11 +398,13 @@ export function dispatchProfileAction(action, user) {
       return _dispatchProfileAction("message", user);
     },
 
+    openMyProfile: openMyProfile,
+    closeMyProfile: closeMyProfile,
+
     renderUserProfile: function (user) {
       var root = document.getElementById("vaaniChat") || document.getElementById("profile-root");
       if (!root) return false;
 
-      // Always replace the main container before rendering profile state.
       root.innerHTML = "";
 
       if (!user || typeof user !== "object") {
@@ -236,11 +434,16 @@ export function dispatchProfileAction(action, user) {
         name: user.displayName || "",
         username: username,
         city: city || "Unknown",
+        status: {
+          isOnline: true,
+          isTyping: false,
+          visibility: true,
+          lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+        }
       });
       return profile;
     },
 
-    /** Exposed for live UI validation */
     validateUsername: _validateUsername,
     normalizeProfileData: _normalizeProfileData,
     validateRequired: _validateRequired,
@@ -261,6 +464,6 @@ export function dispatchProfileAction(action, user) {
     throw new Error("Chat module not ready for onboarding.");
   };
 
-  console.log("[Vaani Profile] profile.js v3.0 loaded ✓");
+  console.log("[Vaani Profile] profile.js v4.0 loaded ✓");
 
 })();
