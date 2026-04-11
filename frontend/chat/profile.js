@@ -317,7 +317,24 @@ export function dispatchProfileAction(action, user) {
       if (photoInput) photoInput.click();
     }
 
-    if (photoBtn) photoBtn.addEventListener("click", openPicker);
+    function openPhotoIfAvailable() {
+      var url = (_myProfileState.profile && _myProfileState.profile.photoURL) || "";
+      if (!url) {
+        if (typeof window.showToast === "function") window.showToast("No profile photo available.");
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+
+    if (photoBtn) {
+      photoBtn.addEventListener("click", function () {
+        if (_myProfileState.isEditing) {
+          openPhotoIfAvailable();
+          return;
+        }
+        openPicker();
+      });
+    }
     if (changePhotoBtn) changePhotoBtn.addEventListener("click", openPicker);
 
     if (photoInput) {
