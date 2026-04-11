@@ -105,13 +105,23 @@ window.signInWithGoogle = async function () {
 // ── SIGN OUT ──────────────────────────────────────────────────────
 
 window.signOutUser = async function () {
+  if (window.__vaaniSignOutPromise) return window.__vaaniSignOutPromise;
+  if (typeof window._vaaniPrepareForSignOut === "function") {
+    window._vaaniPrepareForSignOut();
+  }
+
+  const op = signOut(auth);
+  window.__vaaniSignOutPromise = op;
+
   try {
-    await signOut(auth);
+    await op;
     // onAuthStateChanged fires with null → app.js handles all cleanup
   } catch (err) {
     console.error("[Vaani Auth] Sign-out error →", err.code, ":", err.message);
     if (typeof window.showToast === "function") {
       window.showToast("Sign-out failed. Please try again.");
     }
+  } finally {
+    window.__vaaniSignOutPromise = null;
   }
 };

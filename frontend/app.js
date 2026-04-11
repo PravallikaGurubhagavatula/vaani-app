@@ -1909,6 +1909,7 @@ function renderFavourites() {
 const SESSION_KEY = "vaani_user_session";
 const _authBootstrapStartedAt = Date.now();
 let _bootSessionUser = null;
+let _signOutRequested = false;
 
 function _persistUserSession(user) {
   if (user) {
@@ -1953,6 +1954,19 @@ function _applyUserToUI(user) {
   if (avatar) avatar.src           = user.photoURL    || "";
   if (name)   name.textContent     = user.displayName || user.email || "User";
 }
+
+function _prepareForSignOut() {
+  _signOutRequested = true;
+  _bootSessionUser = null;
+  window._vaaniCurrentUser = null;
+  window.VAANI_AUTH_READY = true;
+  _persistUserSession(null);
+  _applyUserToUI(null);
+  closeMenu();
+  navigateTo("Home");
+}
+
+window._vaaniPrepareForSignOut = _prepareForSignOut;
 
 // ══════════════════════════════════════════════════════════════════
 // SETTINGS
@@ -2187,7 +2201,7 @@ if (typeof window.signOutUser === "undefined") {
 }
 
 window._vaaniOnAuthChange = function (user) {
-  if (!user && _bootSessionUser && (Date.now() - _authBootstrapStartedAt) < 3500) {
+  if (!user && !_signOutRequested && _bootSessionUser && (Date.now() - _authBootstrapStartedAt) < 3500) {
     window._vaaniCurrentUser = _bootSessionUser;
     window.VAANI_AUTH_READY  = false;
     _applyUserToUI(_bootSessionUser);
@@ -2196,6 +2210,7 @@ window._vaaniOnAuthChange = function (user) {
   }
 
   _bootSessionUser = null;
+  _signOutRequested = false;
   window._vaaniCurrentUser = user || null;
   window.VAANI_AUTH_READY  = true;
   console.log("[Vaani] Auth →", user ? `signed in: ${user.email}` : "signed out");
