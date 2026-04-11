@@ -1085,6 +1085,37 @@ body.vm-menu-open {
   stroke-linejoin: round;
 }
 
+[data-theme="light"] .vm-overlay {
+  background: rgba(15, 23, 42, 0.24);
+}
+
+[data-theme="light"] .vm-panel {
+  background: #f8f8ff;
+  border-right-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] .vm-profile {
+  border-bottom-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme="light"] .vm-username {
+  color: #111827;
+}
+
+[data-theme="light"] .vm-email {
+  color: #6b7280;
+}
+
+[data-theme="light"] .vm-item {
+  color: #1f2937;
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px solid rgba(79, 70, 229, 0.14);
+}
+
+[data-theme="light"] .vm-item svg {
+  stroke: #4b5563;
+}
+
 /* ── Chat view ──────────────────────────────────────────────────── */
 #vaaniChat .vc-chat-view {
   display: flex;
