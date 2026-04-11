@@ -747,3 +747,14 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+:root{--chat-icon-grad-start:#9f7aea;--chat-icon-grad-end:#6d28d9;--chat-icon-back:#7c3aed;--chat-icon-dot:#f8f5ff;--chat-icon-dot-soft:#ddd6fe}
+[data-theme="light"]{--chat-icon-grad-start:#8b5cf6;--chat-icon-grad-end:#6d28d9;--chat-icon-back:#7c3aed;--chat-icon-dot:#faf8ff;--chat-icon-dot-soft:#ede9fe}
+
+.va-chat-icon{width:18px;height:18px;overflow:visible;filter:drop-shadow(0 1px 2px rgba(17,10,40,.35)) drop-shadow(0 0 7px rgba(139,92,246,.22));}
+.va-chat-icon .va-chat-icon-front{fill:url(#vaChatGrad);stroke:none}
+.va-chat-icon .va-chat-icon-back{fill:var(--chat-icon-back);opacity:.9;stroke:none}
+.va-chat-icon .va-chat-icon-dot{fill:var(--chat-icon-dot);stroke:none}
+.va-chat-icon .va-chat-icon-dot-secondary{fill:var(--chat-icon-dot-soft);stroke:none}
+.icon-btn .va-chat-icon{width:17px;height:17px}
+.mi-icon .va-chat-icon{width:15px;height:15px}
+.fc-icon .va-chat-icon{width:18px;height:18px}
