@@ -2086,8 +2086,11 @@ function stgResetAll()     { if (!confirm("Reset ALL app data? Cannot be undone.
 const PAGES     = ["Home","Single","Conversation","Chat","Travel","History","Favourites","Settings"];
 const _navStack = [];
 
-function _buildNavState(page) {
-  return page === "Chat" ? { page, chatView: "home" } : { page };
+function _buildNavState(page, chatView, depth) {
+  var d = depth !== undefined ? depth : (page === "Home" ? 0 : 1);
+  return page === "Chat"
+    ? { page, chatView: chatView || "home", _depth: d }
+    : { page, _depth: d };
 }
 
 function _syncChatViewportLock(page) {
@@ -2107,13 +2110,16 @@ function navigateTo(page) {
   closeMenu();
   const currentHash = location.hash.replace("#", "").toLowerCase();
   const currentPage = PAGES.find(p => p.toLowerCase() === currentHash) || "Home";
+    const navDepth = page === "Home" ? 0 : 1;
   if (currentPage !== page) {
-    history.pushState(_buildNavState(page), "", `#${page.toLowerCase()}`);
+    history.pushState(_buildNavState(page, "home", navDepth), "", `#${page.toLowerCase()}`);
     _navStack.push(page);
+    if (window.VaaniNav) window.VaaniNav.animateForward("page" + page);
   } else {
-    history.replaceState(_buildNavState(page), "", `#${page.toLowerCase()}`);
+    history.replaceState(_buildNavState(page, "home", navDepth), "", `#${page.toLowerCase()}`);
     if (!_navStack.length || _navStack[_navStack.length - 1] !== page) _navStack.push(page);
   }
+  if (window.VaaniNav) window.VaaniNav.sync();
   // Close chat listener when leaving
   if (page !== "Chat" && window.vaaniChat) window.vaaniChat.close();
   _onPageActivate(page);
@@ -2162,7 +2168,7 @@ window.addEventListener("popstate", (e) => {
   _syncChatViewportLock(page);
   closeMenu(); _onPageActivate(page);
   if (page === "Chat" && window.vaaniChat && typeof window.vaaniChat.handleHistoryState === "function") {
-    window.vaaniChat.handleHistoryState(e.state || { page: "Chat", chatView: "home" });
+        window.vaaniChat.handleHistoryState(e.state || { page: "Chat", chatView: "home", _depth: 1 });
   }
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
@@ -2244,8 +2250,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`page${p}`)?.classList.toggle("active", p === initialPage);
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
-  _syncChatViewportLock(initialPage);
+    _syncChatViewportLock(initialPage);
   _onPageActivate(initialPage);
+  if (window.VaaniNav) window.VaaniNav.sync();
 
   const cachedSession = _restoreUserSession();
   if (cachedSession) {
