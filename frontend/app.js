@@ -1959,7 +1959,7 @@ function _applyUserToUI(user) {
 function renderSettingsPage() {
   const container = document.getElementById("settingsContainer");
   if (!container) return;
-  const theme    = localStorage.getItem("vaani_theme") || "dark";
+  const theme    = getCurrentTheme();
   const fromPref = localStorage.getItem("vaani_lang_fromLang") || "te";
   const toPref   = localStorage.getItem("vaani_lang_toLang")   || "ta";
   let dialectInfo = "";
@@ -2009,7 +2009,55 @@ function stgSaveLang(field, val) {
   const el = document.getElementById(field);
   if (el && LANG_CONFIG[val]) el.value = val;
 }
-function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("vaani_theme", t); }
+
+const THEME_STORAGE_KEY = "vaani_theme";
+let _themeState = null;
+
+function getCurrentTheme() {
+  if (_themeState === "dark" || _themeState === "light") return _themeState;
+  const docTheme = document.documentElement.getAttribute("data-theme");
+  if (docTheme === "dark" || docTheme === "light") {
+    _themeState = docTheme;
+    return _themeState;
+  }
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  _themeState = savedTheme === "light" ? "light" : "dark";
+  return _themeState;
+}
+
+function _syncThemeControls(theme) {
+  document.querySelectorAll('input[name="stgTheme"]').forEach(input => {
+    input.checked = input.value === theme;
+  });
+
+  const themeToggleBtn = document.getElementById("themeToggleBtn");
+  if (themeToggleBtn) {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    const label = `Switch to ${nextTheme} theme`;
+    themeToggleBtn.title = label;
+    themeToggleBtn.setAttribute("aria-label", label);
+    themeToggleBtn.setAttribute("aria-pressed", theme === "dark" ? "false" : "true");
+  }
+}
+
+function applyTheme(t) {
+  const theme = t === "light" ? "light" : "dark";
+  if (theme === _themeState) {
+    _syncThemeControls(theme);
+    return;
+  }
+  _themeState = theme;
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  _syncThemeControls(theme);
+  window.dispatchEvent(new CustomEvent("vaani:theme-change", { detail: { theme } }));
+}
+
+window.addEventListener("storage", (e) => {
+  if (e.key !== THEME_STORAGE_KEY || !e.newValue) return;
+  applyTheme(e.newValue);
+});
+
 function stgClearHistory() { if (!confirm("Clear all translation history?")) return; localStorage.removeItem("vaani_history"); showToast("History cleared"); renderHistory(); }
 function stgClearFavs()    { if (!confirm("Clear all favourites?")) return; localStorage.removeItem("vaani_favs"); showToast("Favourites cleared"); renderFavourites(); }
 function stgClearTravel()  { if (!confirm("Clear all custom travel phrases?")) return; localStorage.removeItem("vaani_travel_custom"); _tCache = {}; showToast("Custom travel phrases cleared"); }
@@ -2106,7 +2154,7 @@ window.addEventListener("popstate", (e) => {
 
 function toggleMenu()  { document.getElementById("sideMenu")?.classList.toggle("open"); document.getElementById("menuOverlay")?.classList.toggle("open"); }
 function closeMenu()   { document.getElementById("sideMenu")?.classList.remove("open"); document.getElementById("menuOverlay")?.classList.remove("open"); }
-function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+function toggleTheme() { applyTheme(getCurrentTheme() === "dark" ? "light" : "dark"); }
 
 // ── TOAST ─────────────────────────────────────────────────────────
 let _toastTimer = null;
@@ -2157,7 +2205,7 @@ function _refreshAuthSensitivePages() {
 // ══════════════════════════════════════════════════════════════════
 
 document.addEventListener("DOMContentLoaded", () => {
-  applyTheme(localStorage.getItem("vaani_theme") || "dark");
+  applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || "dark");
   initLanguageSelects();
   _initTimelineControls("");
   if (window.speechSynthesis) _loadVoices().catch(() => {});
