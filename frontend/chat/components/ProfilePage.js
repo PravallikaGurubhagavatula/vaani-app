@@ -5,14 +5,14 @@ import { profileAboutTemplate } from './ProfileAbout.js';
 import { profileSkeletonTemplate } from './ProfileSkeleton.js';
 
 export function profilePageSkeleton() {
-  return '<div class="profile-panel"><div class="vmp-shell profile-card">' + profileSkeletonTemplate() + '</div></div>';
+  return '<div class="profile-panel"><div class="profile-content"><div class="profile-container"><div class="vmp-shell">' + profileSkeletonTemplate() + '</div></div></div></div>';
 }
 
 export function profilePageTemplate(state) {
-  return '<div class="profile-panel"><div class="vmp-shell profile-card">' +
+  return '<div class="profile-panel"><div class="profile-content"><div class="profile-container"><div class="vmp-shell">' +
     profileHeaderTemplate(state.isEditing) +
     profileInfoTemplate(state.profile, state.isEditing) +
     profileStatusTemplate(state.status) +
     profileAboutTemplate(state.profile, state.isEditing) +
-    '</div></div>';
+    '</div></div></div></div>';
 }
