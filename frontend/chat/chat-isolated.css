@@ -1715,6 +1715,18 @@ body.vm-menu-open {
 #vaaniChat .vmp-input { border: 1px solid rgba(255,255,255,.13); background: #13131f; color: var(--text, #e8e8f6); border-radius: 10px; padding: 10px; font-family: 'Outfit', sans-serif; }
 #vaaniChat .vmp-actions { display: flex; gap: 8px; margin-top: 14px; }
 
+[data-theme="light"] #vaaniChat .vmp-card {
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] #vaaniChat .vmp-input {
+  background: var(--bg3, #ededf8);
+  border-color: rgba(15, 23, 42, 0.16);
+  color: var(--text, #0e0e1a);
+  -webkit-text-fill-color: var(--text, #0e0e1a);
+  caret-color: var(--text, #0e0e1a);
+}
+
 #vaaniChat .vmp-skeleton-wrap { display: grid; gap: 12px; }
 #vaaniChat .vmp-skeleton {
   border-radius: 12px;
