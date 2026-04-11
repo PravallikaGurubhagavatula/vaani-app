@@ -541,24 +541,43 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     _setSelectedChatUser(null);
   }
 
-  function _syncViewWithSelection() {
+    var _lastPushedChatView = null;
+
+  function _syncViewWithSelection(fromPopstate) {
     var topBar = document.querySelector(".vc-top-bar");
     if (_panelView === "chat" && _selectedChatUser) {
       _setActivePanel("chat");
       if (topBar) topBar.style.display = "none";
+      if (!fromPopstate && _lastPushedChatView !== "chat") {
+        _lastPushedChatView = "chat";
+        var d = (history.state && history.state._depth) || 1;
+        history.pushState({ page: "Chat", chatView: "chat", _depth: d + 1 }, "", "#chat");
+        if (window.VaaniNav) window.VaaniNav.sync();
+        var el = document.getElementById("vcChatScreen");
+        if (el) { el.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void el.offsetWidth; el.classList.add("vn-chat-slide-in"); }
+      }
     } else if (_panelView === "profile") {
       _setActivePanel("profile");
       if (topBar) topBar.style.display = "flex";
+      if (!fromPopstate && _lastPushedChatView !== "profile") {
+        _lastPushedChatView = "profile";
+        var dp = (history.state && history.state._depth) || 2;
+        history.pushState({ page: "Chat", chatView: "profile", _depth: dp + 1 }, "", "#chat");
+        if (window.VaaniNav) window.VaaniNav.sync();
+        var pr = document.getElementById("vcProfileScreen");
+        if (pr) { pr.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void pr.offsetWidth; pr.classList.add("vn-chat-slide-in"); }
+      }
     } else {
       var chat = document.getElementById("vcChatScreen");
       _setActivePanel("home");
       if (chat) chat.innerHTML = "";
-      if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") {
+      if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function")
         window.vaaniProfile.closeMyProfile();
-      }
       if (topBar) topBar.style.display = "flex";
+      _lastPushedChatView = null;
     }
-    if (window.vaaniChat) window.vaaniChat._currentView = _panelView === "profile" ? "profile" : (_selectedChatUser ? "chat" : "home");
+    if (window.vaaniChat)
+      window.vaaniChat._currentView = _panelView === "profile" ? "profile" : (_selectedChatUser ? "chat" : "home");
   }
 
   function _setSelectedChatUser(user) {
@@ -2128,10 +2147,25 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") window.vaaniProfile.closeMyProfile(); },
 
-    setPanelView: function (mode) {
-      _panelView = mode === "profile" ? "profile" : (mode === "chat" ? "chat" : "home");
-      if (_panelView !== "chat") _selectedChatUser = null;
-      _syncViewWithSelection();
+        handleHistoryState: function (state) {
+      var chatView = (state && state.chatView) || "home";
+      var isBack = (state && state._depth || 0) <= ((history.state && history.state._depth) || 0);
+      if (chatView === "chat" && _selectedChatUser) {
+        _panelView = "chat";
+        _syncViewWithSelection(true);
+        var el = document.getElementById("vcChatScreen");
+        if (el) { el.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void el.offsetWidth; el.classList.add(isBack ? "vn-chat-slide-back" : "vn-chat-slide-in"); }
+      } else if (chatView === "profile") {
+        _panelView = "profile";
+        _syncViewWithSelection(true);
+        var pr = document.getElementById("vcProfileScreen");
+        if (pr) { pr.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void pr.offsetWidth; pr.classList.add(isBack ? "vn-chat-slide-back" : "vn-chat-slide-in"); }
+      } else {
+        _panelView = "home";
+        _selectedChatUser = null;
+        _syncViewWithSelection(true);
+      }
+      _lastPushedChatView = chatView === "home" ? null : chatView;
     },
 
     _renderLogin:  _renderLogin,
