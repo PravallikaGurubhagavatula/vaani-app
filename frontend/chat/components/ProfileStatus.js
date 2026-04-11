@@ -5,21 +5,23 @@ function esc(value) {
 }
 
 export function derivePresenceLabel(status) {
-  if (!status || status.visibility === false) return 'Offline';
-  if (status.isTyping) return 'Typing';
+  if (!status || status.showStatus === false) return '';
   if (status.isOnline) return 'Online';
+  if (status.lastSeen) return 'Last seen ' + String(status.lastSeen);
   return 'Offline';
 }
 
 export function profileStatusTemplate(status) {
   var label = derivePresenceLabel(status);
-  var visible = !(status && status.visibility === false);
-  var lastSeen = status && status.lastSeen ? String(status.lastSeen) : '—';
+  var showStatus = !(status && status.showStatus === false);
+  var statusClass = status && status.isOnline ? 'online' : 'offline';
+  var statusMarkup = showStatus
+    ? '<span class="status ' + statusClass + '">' + esc(label || 'Offline') + '</span>'
+    : '';
 
   return '<section class="vmp-card">' +
     '<div class="vmp-section-title">Live Status</div>' +
-    '<div class="vmp-status-row"><span>Status</span><strong>' + esc(label) + '</strong></div>' +
-    '<div class="vmp-status-row"><span>Last seen</span><span>' + esc(lastSeen) + '</span></div>' +
-    '<label class="vmp-toggle"><input type="checkbox" id="vmpVisibilityToggle" ' + (visible ? 'checked' : '') + '><span>Show my status</span></label>' +
+    '<div class="vmp-status-row"><span>Status</span>' + statusMarkup + '</div>' +
+    '<div class="status-toggle"><span>Show my status</span><label class="switch"><input type="checkbox" id="statusVisibility" ' + (showStatus ? 'checked' : '') + '><span class="slider"></span></label></div>' +
     '</section>';
 }
