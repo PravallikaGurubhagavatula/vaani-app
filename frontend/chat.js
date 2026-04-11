@@ -316,6 +316,11 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
   }
 
+
+
+  function _chatIconSvg() {
+    return '<svg class="va-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vaChatGrad" x1="4" y1="3" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="var(--chat-icon-grad-start, #8b5cf6)"/><stop offset="1" stop-color="var(--chat-icon-grad-end, #6d28d9)"/></linearGradient></defs><path class="va-chat-icon-back" d="M9.1 12.9h5.4c2.2 0 3.9 1.7 3.9 3.9v1.1c0 .5-.4.9-.9.9h-5.6L9 20.9v-2.4a4 4 0 0 1 0-5.6z"/><path class="va-chat-icon-front" d="M4.3 4.8h9.7c2.1 0 3.8 1.7 3.8 3.8v2c0 2.1-1.7 3.8-3.8 3.8H9.8L6.2 17v-2.6H4.3c-2.1 0-3.8-1.7-3.8-3.8v-2c0-2.1 1.7-3.8 3.8-3.8z"/><circle class="va-chat-icon-dot" cx="7.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="10.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="13.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot-secondary" cx="12.9" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="15.3" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="17.7" cy="16.5" r=".8"/></svg>';
+  }
   function _googleLogoSvg() {
     return '<svg class="vg-g-logo" viewBox="0 0 24 24" fill="none">' +
       '<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>' +
@@ -413,7 +418,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     var root = _root(); if (!root) return;
     _stopListening(); _clearSearchState(); _removeMenu();
     root.innerHTML = '<div class="vg-screen vg-login-screen"><div class="vg-card">' +
-      '<div class="vg-card-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>' +
+      '<div class="vg-card-icon">'+ _chatIconSvg() +'</div>' +
       '<h2 class="vg-card-title">Start Chatting</h2>' +
       '<p class="vg-card-sub">Sign in to access your Vaani chat workspace.</p>' +
       '<button class="vg-google-btn" id="vgSignInBtn">' + _googleLogoSvg() + "Continue with Google</button>" +

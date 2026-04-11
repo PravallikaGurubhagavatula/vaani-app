@@ -39,7 +39,7 @@
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     </button>
     <button class="icon-btn" id="vcNavBtn" onclick="navigateTo('Chat')" title="Chat" style="position:relative">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <svg class="va-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vaChatGrad" x1="4" y1="3" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="var(--chat-icon-grad-start, #8b5cf6)"/><stop offset="1" stop-color="var(--chat-icon-grad-end, #6d28d9)"/></linearGradient></defs><path class="va-chat-icon-back" d="M9.1 12.9h5.4c2.2 0 3.9 1.7 3.9 3.9v1.1c0 .5-.4.9-.9.9h-5.6L9 20.9v-2.4a4 4 0 0 1 0-5.6z"/><path class="va-chat-icon-front" d="M4.3 4.8h9.7c2.1 0 3.8 1.7 3.8 3.8v2c0 2.1-1.7 3.8-3.8 3.8H9.8L6.2 17v-2.6H4.3c-2.1 0-3.8-1.7-3.8-3.8v-2c0-2.1 1.7-3.8 3.8-3.8z"/><circle class="va-chat-icon-dot" cx="7.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="10.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="13.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot-secondary" cx="12.9" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="15.3" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="17.7" cy="16.5" r=".8"/></svg>
       <span class="cu-nav-badge" id="chatNavBadge" style="display:none"></span>
     </button>
     <button class="icon-btn menu-toggle" onclick="toggleMenu()" title="Menu">
@@ -71,11 +71,11 @@
       <span class="mi-label">Single Mode</span><span class="mi-dot"></span>
     </a>
     <a class="menu-item" id="menuConversation" onclick="navigateTo('Conversation')">
-      <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="mi-icon"><svg class="va-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vaChatGrad" x1="4" y1="3" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="var(--chat-icon-grad-start, #8b5cf6)"/><stop offset="1" stop-color="var(--chat-icon-grad-end, #6d28d9)"/></linearGradient></defs><path class="va-chat-icon-back" d="M9.1 12.9h5.4c2.2 0 3.9 1.7 3.9 3.9v1.1c0 .5-.4.9-.9.9h-5.6L9 20.9v-2.4a4 4 0 0 1 0-5.6z"/><path class="va-chat-icon-front" d="M4.3 4.8h9.7c2.1 0 3.8 1.7 3.8 3.8v2c0 2.1-1.7 3.8-3.8 3.8H9.8L6.2 17v-2.6H4.3c-2.1 0-3.8-1.7-3.8-3.8v-2c0-2.1 1.7-3.8 3.8-3.8z"/><circle class="va-chat-icon-dot" cx="7.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="10.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="13.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot-secondary" cx="12.9" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="15.3" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="17.7" cy="16.5" r=".8"/></svg></span>
       <span class="mi-label">Conversation Mode</span><span class="mi-dot"></span>
     </a>
     <a class="menu-item" id="menuChat" onclick="navigateTo('Chat')">
-      <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="mi-icon"><svg class="va-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vaChatGrad" x1="4" y1="3" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="var(--chat-icon-grad-start, #8b5cf6)"/><stop offset="1" stop-color="var(--chat-icon-grad-end, #6d28d9)"/></linearGradient></defs><path class="va-chat-icon-back" d="M9.1 12.9h5.4c2.2 0 3.9 1.7 3.9 3.9v1.1c0 .5-.4.9-.9.9h-5.6L9 20.9v-2.4a4 4 0 0 1 0-5.6z"/><path class="va-chat-icon-front" d="M4.3 4.8h9.7c2.1 0 3.8 1.7 3.8 3.8v2c0 2.1-1.7 3.8-3.8 3.8H9.8L6.2 17v-2.6H4.3c-2.1 0-3.8-1.7-3.8-3.8v-2c0-2.1 1.7-3.8 3.8-3.8z"/><circle class="va-chat-icon-dot" cx="7.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="10.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="13.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot-secondary" cx="12.9" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="15.3" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="17.7" cy="16.5" r=".8"/></svg></span>
       <span class="mi-label">Chat</span>
       <span class="cu-nav-badge" id="chatMenuBadge" style="display:none;position:static;margin-left:auto"></span>
       <span class="mi-dot"></span>
@@ -145,7 +145,7 @@
         <div class="fc-arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>
       <div class="feature-card" onclick="navigateTo('Conversation')">
-        <div class="fc-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <div class="fc-icon"><svg class="va-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="vaChatGrad" x1="4" y1="3" x2="18" y2="18" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="var(--chat-icon-grad-start, #8b5cf6)"/><stop offset="1" stop-color="var(--chat-icon-grad-end, #6d28d9)"/></linearGradient></defs><path class="va-chat-icon-back" d="M9.1 12.9h5.4c2.2 0 3.9 1.7 3.9 3.9v1.1c0 .5-.4.9-.9.9h-5.6L9 20.9v-2.4a4 4 0 0 1 0-5.6z"/><path class="va-chat-icon-front" d="M4.3 4.8h9.7c2.1 0 3.8 1.7 3.8 3.8v2c0 2.1-1.7 3.8-3.8 3.8H9.8L6.2 17v-2.6H4.3c-2.1 0-3.8-1.7-3.8-3.8v-2c0-2.1 1.7-3.8 3.8-3.8z"/><circle class="va-chat-icon-dot" cx="7.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="10.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot" cx="13.3" cy="9.6" r=".95"/><circle class="va-chat-icon-dot-secondary" cx="12.9" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="15.3" cy="16.5" r=".8"/><circle class="va-chat-icon-dot-secondary" cx="17.7" cy="16.5" r=".8"/></svg></div>
         <div class="fc-body"><div class="fc-title">Conversation Mode</div><div class="fc-desc">Two-way live translation between two people</div></div>
         <div class="fc-arrow"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
       </div>
