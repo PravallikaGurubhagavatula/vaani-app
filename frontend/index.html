@@ -39,7 +39,10 @@
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     </button>
     <button class="icon-btn" id="vcNavBtn" onclick="navigateTo('Chat')" title="Chat" style="position:relative">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <svg class="chat-duo-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path class="chat-bubble-back" d="M10.4 4C9.07 4 8 5.07 8 6.4v4.7c0 1.33 1.07 2.4 2.4 2.4h4.35L18 16v-2.5h1.6c1.33 0 2.4-1.07 2.4-2.4V6.4C22 5.07 20.93 4 19.6 4h-9.2Z"/>
+        <path class="chat-bubble-front" d="M4.4 7.5C3.07 7.5 2 8.57 2 9.9v6.2c0 1.33 1.07 2.4 2.4 2.4h6.35L14 21v-2.5h3.2c1.33 0 2.4-1.07 2.4-2.4V9.9c0-1.33-1.07-2.4-2.4-2.4H4.4Z"/>
+      </svg>
       <span class="cu-nav-badge" id="chatNavBadge" style="display:none"></span>
     </button>
     <button class="icon-btn menu-toggle" onclick="toggleMenu()" title="Menu">
@@ -75,7 +78,12 @@
       <span class="mi-label">Conversation Mode</span><span class="mi-dot"></span>
     </a>
     <a class="menu-item" id="menuChat" onclick="navigateTo('Chat')">
-      <span class="mi-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+      <span class="mi-icon">
+        <svg class="chat-duo-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="chat-bubble-back" d="M10.4 4C9.07 4 8 5.07 8 6.4v4.7c0 1.33 1.07 2.4 2.4 2.4h4.35L18 16v-2.5h1.6c1.33 0 2.4-1.07 2.4-2.4V6.4C22 5.07 20.93 4 19.6 4h-9.2Z"/>
+          <path class="chat-bubble-front" d="M4.4 7.5C3.07 7.5 2 8.57 2 9.9v6.2c0 1.33 1.07 2.4 2.4 2.4h6.35L14 21v-2.5h3.2c1.33 0 2.4-1.07 2.4-2.4V9.9c0-1.33-1.07-2.4-2.4-2.4H4.4Z"/>
+        </svg>
+      </span>
       <span class="mi-label">Chat</span>
       <span class="cu-nav-badge" id="chatMenuBadge" style="display:none;position:static;margin-left:auto"></span>
       <span class="mi-dot"></span>
