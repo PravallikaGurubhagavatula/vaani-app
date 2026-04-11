@@ -2144,71 +2144,14 @@ async function openChat(uid) {
 
 window.openChat = openChat;
 
-const currentUser = {
-  name: "Pravallika",
-  username: "pravallika",
-  languages: ["Telugu", "English"],
-  fluentLanguages: ["Telugu"],
-  city: "Hyderabad",
-  state: "Telangana",
-  joinedDate: "2024-01-01",
-  bio: "Building Vaani 🚀",
-  localExpertise: ["Food", "Travel"],
-  links: {}
-};
-
-function openProfile() {
-  var profileRoot = document.getElementById("profile-root");
-  if (!profileRoot) return;
-  profileRoot.style.display = "block";
-  if (typeof renderUserProfile === "function") {
-    renderUserProfile(currentUser);
-  } else {
-    console.warn("[Vaani] renderUserProfile is not available.");
-  }
-}
-
-window.openProfile = openProfile;
-
-(function setupProfileIntegration() {
-  var profileBtn = document.getElementById("profile-btn");
-  if (profileBtn) {
-    profileBtn.addEventListener("click", openProfile);
-  }
-
-  var profileRoot = document.getElementById("profile-root");
-  if (!profileRoot) return;
-
-  profileRoot.addEventListener("vaani:profile-action", function (event) {
-    var detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
-    var action = String(detail.action || "").trim();
-    var user = detail.user && typeof detail.user === "object" ? detail.user : {};
-    var uid = String(user.uid || "").trim();
-
-    if (action === "message") {
-      if (uid) {
-        openChat(uid);
-      } else {
-        console.log("[Vaani] profile message action triggered", user);
-      }
-      return;
-    }
-
-    if (action === "block") {
-      console.log("[Vaani] profile block action", user);
-      return;
-    }
-
-    if (action === "report") {
-      console.log("[Vaani] profile report action", user);
-      return;
-    }
-
-    if (action === "mute") {
-      console.log("[Vaani] profile mute action", user);
-    }
-  });
-})();
+document.addEventListener("vaani:profile-action", function (event) {
+  var detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
+  if (detail.action !== "message") return;
+  var user = detail.user && typeof detail.user === "object" ? detail.user : {};
+  var uid = String(user.uid || "").trim();
+  if (!uid) return;
+  openChat(uid);
+});
 
 window.addEventListener("popstate", (e) => {
   const page = e.state?.page || "Home";
