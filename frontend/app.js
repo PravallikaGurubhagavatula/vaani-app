@@ -1907,6 +1907,8 @@ function renderFavourites() {
 // ══════════════════════════════════════════════════════════════════
 
 const SESSION_KEY = "vaani_user_session";
+const _authBootstrapStartedAt = Date.now();
+let _bootSessionUser = null;
 
 function _persistUserSession(user) {
   if (user) {
@@ -2185,6 +2187,15 @@ if (typeof window.signOutUser === "undefined") {
 }
 
 window._vaaniOnAuthChange = function (user) {
+  if (!user && _bootSessionUser && (Date.now() - _authBootstrapStartedAt) < 3500) {
+    window._vaaniCurrentUser = _bootSessionUser;
+    window.VAANI_AUTH_READY  = false;
+    _applyUserToUI(_bootSessionUser);
+    _refreshAuthSensitivePages();
+    return;
+  }
+
+  _bootSessionUser = null;
   window._vaaniCurrentUser = user || null;
   window.VAANI_AUTH_READY  = true;
   console.log("[Vaani] Auth →", user ? `signed in: ${user.email}` : "signed out");
@@ -2219,6 +2230,14 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === initialPage);
   });
   _syncChatViewportLock(initialPage);
+  _onPageActivate(initialPage);
+
+  const cachedSession = _restoreUserSession();
+  if (cachedSession) {
+    _bootSessionUser = cachedSession;
+    window._vaaniCurrentUser = cachedSession;
+    _applyUserToUI(cachedSession);
+  }
 
   _refreshAuthSensitivePages();
 
