@@ -413,7 +413,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     var root = _root(); if (!root) return;
     _stopListening(); _clearSearchState(); _removeMenu();
     root.innerHTML = '<div class="vg-screen vg-login-screen"><div class="vg-card">' +
-      '<div class="vg-card-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>' +
+      '<div class="vg-card-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="0.8"/><circle cx="12" cy="10" r="0.8"/><circle cx="15" cy="10" r="0.8"/></svg></div>' +
       '<h2 class="vg-card-title">Start Chatting</h2>' +
       '<p class="vg-card-sub">Sign in to access your Vaani chat workspace.</p>' +
       '<button class="vg-google-btn" id="vgSignInBtn">' + _googleLogoSvg() + "Continue with Google</button>" +
