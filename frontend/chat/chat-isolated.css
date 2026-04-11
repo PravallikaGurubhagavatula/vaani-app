@@ -1494,7 +1494,10 @@ body.vm-menu-open {
   justify-content: center;
   align-items: flex-start;
   width: 100%;
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   height: auto;
 }
 
