@@ -20,7 +20,7 @@
   <link href="https://fonts.googleapis.com/css2?family=ADLaM+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260322a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
-  <link rel="stylesheet" href="chat-isolated.css?v=4">
+  <link rel="stylesheet" href="chat/chat-isolated.css?v=4">
 </head>
 <body>
 
@@ -432,10 +432,10 @@
  
 <!-- Identity system (must load before chat.js) -->
 <script src="auth.js?v=1"></script>
-<script type="module" src="profile.js?v=3"></script>
+<script type="module" src="chat/profile.js?v=3"></script>
  
 <!-- Chat (gated — requires auth + profile) -->
-<script type="module" src="chat.js?v=5"></script>
+<script type="module" src="chat/chat.js?v=5"></script>
  
 <!-- Firebase ESM module — main app auth
      type="module" makes this automatically deferred.
