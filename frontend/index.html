@@ -39,11 +39,22 @@
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     </button>
     <button class="icon-btn" id="vcNavBtn" onclick="navigateTo('Chat')" title="Chat" style="position:relative">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
+<!--     <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         <circle cx="7.5" cy="10" r="0.5"/>
         <circle cx="12" cy="10" r="0.5"/>
         <circle cx="16.5" cy="10" r="0.5"/>
+      </svg> -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <!-- Back message -->
+        <path d="M4 6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-3 3V6z" opacity="0.5"/>
+        <!-- Front message -->
+        <path d="M8 10a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-8l-3 3v-11z"/>
+        
+        <!-- Dots (front bubble only) -->
+        <circle cx="13" cy="13" r="0.7"/>
+        <circle cx="16" cy="13" r="0.7"/>
+        <circle cx="19" cy="13" r="0.7"/>
       </svg>
       <span class="cu-nav-badge" id="chatNavBadge" style="display:none"></span>
     </button>
