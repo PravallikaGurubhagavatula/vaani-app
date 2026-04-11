@@ -40,6 +40,7 @@ export function dispatchProfileAction(action, user) {
   var _presenceBoundUid = "";
   var _presenceActivityTimer = null;
   var _presenceActivityEventsBound = false;
+  var _presenceOnlineState = null;
 
   function _formatLastSeen(ts) {
     if (!ts) return "—";
@@ -145,6 +146,27 @@ export function dispatchProfileAction(action, user) {
     var usernameError = _validateUsername(data.username);
     if (usernameError) return usernameError;
     return null;
+  }
+
+  function _profileEditSnapshot(data) {
+    var safe = data && typeof data === "object" ? data : {};
+    var links = _toLinksObject(safe.links);
+    var linkKeys = Object.keys(links).sort();
+    var orderedLinks = {};
+    linkKeys.forEach(function (key) { orderedLinks[key] = links[key]; });
+
+    return JSON.stringify({
+      name: String(safe.name || "").trim(),
+      username: String(safe.username || "").trim().toLowerCase(),
+      bio: String(safe.bio || "").trim(),
+      location: String(safe.location || safe.city || "").trim(),
+      interests: _toArray(safe.interests),
+      photoURL: String(safe.photoURL || "").trim(),
+      links: orderedLinks,
+      languages: _toArray(safe.languages),
+      fluentLanguages: _toArray(safe.fluentLanguages),
+      localExpertise: _toArray(safe.localExpertise),
+    });
   }
 
   function _dispatchProfileAction(action, user) {
@@ -354,9 +376,16 @@ export function dispatchProfileAction(action, user) {
       var data = doc.exists ? doc.data() : {};
       var normalized = _normalizeProfileData(data);
       normalized.uid = currentUid;
+
+      var hasEditableChange = _profileEditSnapshot(normalized) !== _profileEditSnapshot(_myProfileState.profile || {});
+      _myProfileState.status = normalized.status || {};
+
+      if (_myProfileState.isEditing && !hasEditableChange) {
+        return;
+      }
+
       _myProfileState.profile = normalized;
       _myProfileState.originalProfile = Object.assign({}, normalized);
-      _myProfileState.status = normalized.status || {};
       _renderMyProfile();
     }, function () {
       host.innerHTML = '<div class="vg-screen vg-loading-screen"><p>Could not load profile.</p></div>';
@@ -371,6 +400,7 @@ export function dispatchProfileAction(action, user) {
     _myProfileState.profile = null;
     _myProfileState.originalProfile = null;
     _myProfileState.isEditing = false;
+    _presenceOnlineState = null;
   }
 
   window.vaaniProfile = {
@@ -457,16 +487,23 @@ export function dispatchProfileAction(action, user) {
 
   async function _setPresence(uid, isOnline) {
     if (!uid) return;
+    var nextOnline = !!isOnline;
+    if (_presenceOnlineState === nextOnline) return;
+
     var db = _getDb();
     if (!db || !firebase || !firebase.firestore || !firebase.firestore.FieldValue) return;
+    _presenceOnlineState = nextOnline;
+
+    var statusPayload = { isOnline: nextOnline };
+    if (!nextOnline) {
+      statusPayload.lastSeen = firebase.firestore.FieldValue.serverTimestamp();
+    }
+
     try {
-      await db.collection(COLLECTION).doc(uid).set({
-        status: {
-          isOnline: !!isOnline,
-          lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
-        }
-      }, { merge: true });
-    } catch (_) {}
+      await db.collection(COLLECTION).doc(uid).set({ status: statusPayload }, { merge: true });
+    } catch (_) {
+      _presenceOnlineState = null;
+    }
   }
 
   function _scheduleInactivity(uid) {
