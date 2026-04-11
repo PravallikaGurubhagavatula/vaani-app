@@ -108,7 +108,6 @@ export function dispatchProfileAction(action, user) {
       city: String(safeData.city || "").trim(),
       bio: String(safeData.bio || "").trim(),
       location: String(safeData.location || safeData.city || "").trim(),
-      skills: _toArray(safeData.skills),
       interests: _toArray(safeData.interests),
       photoURL: String(safeData.photoURL || "").trim(),
       languages: _toArray(safeData.languages),
@@ -179,7 +178,6 @@ export function dispatchProfileAction(action, user) {
       city: cleaned.location || cleaned.city || "",
       location: cleaned.location || cleaned.city || "",
       bio: cleaned.bio,
-      skills: cleaned.skills,
       interests: cleaned.interests,
       photoURL: cleaned.photoURL,
       languages: cleaned.languages,
@@ -208,14 +206,12 @@ export function dispatchProfileAction(action, user) {
     var name = document.getElementById("vmpName");
     var username = document.getElementById("vmpUsername");
     var bio = document.getElementById("vmpBio");
-    var skills = document.getElementById("vmpSkills");
     var interests = document.getElementById("vmpInterests");
     var location = document.getElementById("vmpLocation");
 
     next.name = name ? name.value.trim() : next.name;
     next.username = username ? username.value.trim().toLowerCase() : next.username;
     next.bio = bio ? bio.value.trim() : next.bio;
-    next.skills = skills ? _toArray(skills.value) : next.skills;
     next.interests = interests ? _toArray(interests.value) : next.interests;
     next.location = location ? location.value.trim() : next.location;
     return next;
