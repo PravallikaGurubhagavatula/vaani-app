@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="style.css?v=20260322a">
   <link rel="stylesheet" href="permission-guide.css?v=20250325b">
   <link rel="stylesheet" href="chat-isolated.css?v=4">
+  <link rel="stylesheet" href="./profile/user-profile.css">
 </head>
 <body>
 
@@ -52,6 +53,9 @@
   <span class="cu-nav-badge" id="chatNavBadge" style="display:none"></span>
 
 </button>
+    <button class="icon-btn" id="profile-btn" title="Profile" aria-label="Open profile">
+      <svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+    </button>
     <button class="icon-btn menu-toggle" onclick="toggleMenu()" title="Menu">
       <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
@@ -393,6 +397,8 @@
   <div id="settingsContainer"></div>
 </div>
 
+<div id="profile-root" style="display: none;"></div>
+
 <!-- ══ TOAST ════════════════════════════════════════════════════════ -->
 <div id="toast" class="toast"></div>
 
@@ -427,6 +433,7 @@
 <script src="contextTranslator.js?v=2"></script>
 <script src="llmEnhancer.js?v=2"></script>
 <script src="humanTranslator.js?v=1"></script>
+<script src="./profile/user-profile.js"></script>
 <script src="app.js?v=20250325b"></script>
 <script src="translationIntegration.js?v=3"></script>
  
