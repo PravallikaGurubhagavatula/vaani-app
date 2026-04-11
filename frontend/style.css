@@ -30,11 +30,6 @@ html{scroll-behavior:smooth}
 body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;padding-top:var(--nav-h);transition:background var(--transition),color var(--transition);overflow-x:hidden;-webkit-font-smoothing:antialiased}
 html.vaani-chat-locked,body.vaani-chat-locked{overflow:hidden;overscroll-behavior:none}
 svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;pointer-events:none}
-.chat-duo-icon{stroke:none !important;fill:none}
-.chat-duo-icon .chat-bubble-back{fill:#9985ff}
-.chat-duo-icon .chat-bubble-front{fill:#7c5cff}
-[data-theme="light"] .chat-duo-icon .chat-bubble-back{fill:#8f78ff}
-[data-theme="light"] .chat-duo-icon .chat-bubble-front{fill:#7354ff}
 button{cursor:pointer;font-family:'Outfit',sans-serif;border:none;outline:none}
 select{font-family:'Outfit',sans-serif}
 button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent-border);outline-offset:2px;border-radius:4px}
@@ -68,10 +63,8 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 .menu-item.active{background:var(--accent-subtle);border-left-color:var(--accent)}
 .mi-icon{width:32px;height:32px;border-radius:var(--radius-xs);background:var(--card);border:1px solid var(--card-border);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all var(--transition)}
 .mi-icon svg{width:14px;height:14px;stroke:var(--menu-icon)}
-.mi-icon svg.chat-duo-icon{stroke:none !important}
 .menu-item.active .mi-icon{background:var(--accent-subtle);border-color:var(--accent-border)}
 .menu-item.active .mi-icon svg{stroke:var(--accent-light)}
-.menu-item.active .mi-icon svg.chat-duo-icon{stroke:none !important}
 .mi-label{font-size:13px;color:var(--menu-muted);font-weight:500;flex:1;transition:color var(--transition)}
 .menu-item.active .mi-label{color:var(--accent-light);font-weight:500}
 .mi-dot{width:4px;height:4px;border-radius:50%;background:var(--accent);opacity:0;transition:opacity var(--transition)}
