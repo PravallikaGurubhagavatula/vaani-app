@@ -27,7 +27,7 @@
 /* ── BASE ── */
 html,body{height:100%;margin:0}
 html{scroll-behavior:smooth}
-body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;transition:background var(--transition),color var(--transition);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;padding-top:var(--nav-h);transition:background var(--transition),color var(--transition);overflow-x:hidden;-webkit-font-smoothing:antialiased}
 html.vaani-chat-locked,body.vaani-chat-locked{overflow:hidden;overscroll-behavior:none}
 svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;pointer-events:none}
 button{cursor:pointer;font-family:'Outfit',sans-serif;border:none;outline:none}
@@ -35,7 +35,7 @@ select{font-family:'Outfit',sans-serif}
 button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent-border);outline-offset:2px;border-radius:4px}
 
 /* ── NAVBAR ── */
-.navbar{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:var(--nav-h);background:rgba(9,9,15,0.88);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--card-border);transition:background var(--transition)}
+.navbar{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:var(--nav-h);background:rgba(9,9,15,0.88);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--card-border);transition:background var(--transition)}
 [data-theme="light"] .navbar{background:rgba(244,244,252,0.9)}
 .nav-brand{font-family:'ADLaM Display',sans-serif;font-size:22px;color:var(--accent-light);cursor:pointer;letter-spacing:-0.5px;user-select:none;display:flex;align-items:center;gap:8px;transition:opacity var(--transition)}
 .nav-brand:hover{opacity:0.85}
