@@ -1354,3 +1354,95 @@ body.vm-menu-open {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* ── Theme responsiveness: chat light mode parity ───────────────────────── */
+#vaaniChat,
+#vaaniChat .vg-card,
+#vaaniChat .vg-input-wrap,
+#vaaniChat .vg-input-solid,
+#vaaniChat .vc-search-input,
+#vaaniChat .vc-search-dropdown,
+#vaaniChat .vc-chat-list-item,
+#vaaniChat .vc-requests-toggle,
+#vaaniChat .vc-requests-panel,
+#vaaniChat .vc-chat-header,
+#vaaniChat .vc-chat-input-bar,
+#vaaniChat .vc-msg-bubble,
+#vaaniChat .vc-chat-input {
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+[data-theme="light"] #vaaniChat .vg-card {
+  background: var(--bg2, #ffffff);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme="light"] #vaaniChat .vg-google-btn {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.14);
+  color: var(--text, #0e0e1a);
+}
+
+[data-theme="light"] #vaaniChat .vg-input-wrap,
+[data-theme="light"] #vaaniChat .vg-input-solid,
+[data-theme="light"] #vaaniChat .vc-search-input,
+[data-theme="light"] #vaaniChat .vc-chat-list-item,
+[data-theme="light"] #vaaniChat .vc-requests-toggle,
+[data-theme="light"] #vaaniChat .vc-chat-input {
+  background: var(--bg3, #ededf8);
+  border-color: rgba(15, 23, 42, 0.14);
+  color: var(--text, #0e0e1a);
+  -webkit-text-fill-color: var(--text, #0e0e1a);
+  caret-color: var(--text, #0e0e1a);
+}
+
+[data-theme="light"] #vaaniChat .vc-search-input::placeholder,
+[data-theme="light"] #vaaniChat .vc-request-copy,
+[data-theme="light"] #vaaniChat .vc-requests-empty,
+[data-theme="light"] #vaaniChat .vc-chat-empty,
+[data-theme="light"] #vaaniChat .vc-chat-list-empty,
+[data-theme="light"] #vaaniChat .vc-search-empty,
+[data-theme="light"] #vaaniChat .vc-chat-list-time,
+[data-theme="light"] #vaaniChat .vc-chat-list-meta {
+  color: var(--text2, #5a5a72);
+}
+
+[data-theme="light"] #vaaniChat .vc-search-dropdown,
+[data-theme="light"] #vaaniChat .vc-requests-panel {
+  background: var(--bg2, #ffffff);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] #vaaniChat .vc-search-item:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] #vaaniChat .vc-chat-header,
+[data-theme="light"] #vaaniChat .vc-chat-input-bar {
+  background: var(--bg, #f4f4fc);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] #vaaniChat .vc-back-btn,
+[data-theme="light"] #vaaniChat .vc-header-action-btn {
+  color: var(--text, #0e0e1a);
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+[data-theme="light"] #vaaniChat .vc-chat-hname,
+[data-theme="light"] #vaaniChat .vc-search-username,
+[data-theme="light"] #vaaniChat .vc-chat-list-item {
+  color: var(--text, #0e0e1a);
+}
+
+[data-theme="light"] #vaaniChat .vc-chat-hsub,
+[data-theme="light"] #vaaniChat .vc-search-name,
+[data-theme="light"] #vaaniChat .vc-chat-list-last {
+  color: var(--text2, #5a5a72);
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-bubble {
+  background: #ffffff;
+  color: var(--text, #0e0e1a);
+  border-color: rgba(15, 23, 42, 0.14);
+}
