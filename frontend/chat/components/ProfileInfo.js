@@ -10,8 +10,10 @@ export function profileInfoTemplate(profile, isEditing) {
   var photoURL = profile.photoURL || '';
   var fallback = (name.charAt(0) || username.charAt(0) || 'U').toUpperCase();
 
+  var photoButtonTitle = isEditing ? 'Open photo' : 'Change photo';
+
   return '<section class="vmp-card vmp-info">' +
-    '<button type="button" class="vmp-photo-btn" id="vmpPhotoBtn" title="Change photo">' +
+    '<button type="button" class="vmp-photo-btn" id="vmpPhotoBtn" title="' + esc(photoButtonTitle) + '">' +
       (photoURL
         ? '<img src="' + esc(photoURL) + '" class="vmp-photo" alt="Profile photo">'
         : '<span class="vmp-photo-fallback">' + esc(fallback) + '</span>') +
