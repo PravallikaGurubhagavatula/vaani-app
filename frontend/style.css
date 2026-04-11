@@ -357,7 +357,7 @@ button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px s
 /* ── HISTORY / FAVOURITES ── */
 .list-wrap{display:flex;flex-direction:column;gap:10px}
 .hist-card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);padding:16px;animation:fadeIn 0.3s ease}
-.hist-card.fav-card{border-color:rgba(234,179,8,0.2)}
+.hist-card.fav-card{border-color:var(--card-border)}
 .hist-langs{font-size:10px;color:var(--text2);opacity:.92;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;margin-bottom:8px}
 .hist-orig{font-size:14px;color:var(--text);margin-bottom:5px;font-weight:500}
 .hist-trans{font-size:14px;color:var(--translated-text);margin-bottom:10px;font-weight:600}
