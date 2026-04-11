@@ -228,7 +228,7 @@
     root.innerHTML =
       '<div class="vg-screen vg-login-screen">' +
         '<div class="vg-card">' +
-          '<h2 class="vg-card-title">Join the Conversation</h2>' +
+          '<h2 class="vg-card-title">Start Chatting</h2>' +
           '<button class="vg-google-btn" onclick="window.vaaniRouter.signIn()">Sign in with Google</button>' +
         '</div>' +
       '</div>';
