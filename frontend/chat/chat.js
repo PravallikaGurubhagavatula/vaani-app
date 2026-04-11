@@ -2147,6 +2147,12 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 
     close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") window.vaaniProfile.closeMyProfile(); },
 
+                setPanelView: function (mode) {
+      _panelView = mode === "profile" ? "profile" : (mode === "chat" ? "chat" : "home");
+      if (_panelView !== "chat") _selectedChatUser = null;
+      _syncViewWithSelection(false);
+    },
+
         handleHistoryState: function (state) {
       var chatView = (state && state.chatView) || "home";
       var isBack = (state && state._depth || 0) <= ((history.state && history.state._depth) || 0);
