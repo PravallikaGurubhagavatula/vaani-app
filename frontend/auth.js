@@ -282,10 +282,10 @@
     /** Called by chat.js sign-out button */
     signOut: async function () {
       try {
-        if (_auth) await _auth.signOut();
-        // Sync sign-out to the ESM firebase.js instance as well
         if (typeof window.signOutUser === "function") {
-          window.signOutUser().catch(function () {});
+          await window.signOutUser();
+        } else if (_auth) {
+          await _auth.signOut();
         }
       } catch (err) {
         console.warn("[Vaani Router] Sign-out error:", err.message);
