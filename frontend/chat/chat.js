@@ -542,27 +542,17 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   }
 
   function _syncViewWithSelection() {
-    var home = document.getElementById("vcHomeScreen");
-    var chat = document.getElementById("vcChatScreen");
-    var profile = document.getElementById("vcProfileScreen");
     var topBar = document.querySelector(".vc-top-bar");
-    if (!home || !chat || !profile) return;
-
     if (_panelView === "chat" && _selectedChatUser) {
-      home.style.display = "none";
-      chat.style.display = "block";
-      profile.style.display = "none";
+      _setActivePanel("chat");
       if (topBar) topBar.style.display = "none";
     } else if (_panelView === "profile") {
-      home.style.display = "none";
-      chat.style.display = "none";
-      profile.style.display = "block";
+      _setActivePanel("profile");
       if (topBar) topBar.style.display = "flex";
     } else {
-      home.style.display = "block";
-      chat.style.display = "none";
-      profile.style.display = "none";
-      chat.innerHTML = "";
+      var chat = document.getElementById("vcChatScreen");
+      _setActivePanel("home");
+      if (chat) chat.innerHTML = "";
       if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") {
         window.vaaniProfile.closeMyProfile();
       }
@@ -586,6 +576,16 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       _teardownViewportSync();
     }
     _syncViewWithSelection();
+  }
+
+  function _setActivePanel(panel) {
+    var home = document.getElementById("vcHomeScreen");
+    var chat = document.getElementById("vcChatScreen");
+    var profile = document.getElementById("vcProfileScreen");
+    if (!home || !chat || !profile) return;
+    home.style.display = panel === "home" ? "block" : "none";
+    chat.style.display = panel === "chat" ? "flex" : "none";
+    profile.style.display = panel === "profile" ? "flex" : "none";
   }
 
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
@@ -2007,8 +2007,7 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
     _setMessages([]); _setInputMessage(""); _shouldStickToBottom = true; _renderMessages(true);
 
     // Show chat panel only after DOM is ready
-    var home = document.getElementById("vcHomeScreen"), chat = document.getElementById("vcChatScreen");
-    if (home) home.style.display = "none"; if (chat) chat.style.display = "block";
+    _setActivePanel("chat");
     if (window.vaaniChat) window.vaaniChat._currentView = "chat";
     _scrollMessagesToBottom(true);
 
