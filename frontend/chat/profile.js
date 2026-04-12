@@ -2,7 +2,10 @@
    Vaani — profile.js  v4.0
 ================================================================ */
 
+import { detectPlatform } from "./components/ProfileAbout.js";
 import { profilePageTemplate, profilePageSkeleton } from "./components/ProfilePage.js";
+// then after the import:
+window.detectPlatform = detectPlatform;
 
 export async function getUserProfile(uid) {
   if (window.vaaniProfile && typeof window.vaaniProfile.get === "function") {
@@ -121,6 +124,7 @@ export function dispatchProfileAction(action, user) {
       fluentLanguages: _toArray(safeData.fluentLanguages),
       localExpertise: _toArray(safeData.localExpertise),
       links: _toLinksObject(safeData.links),
+       socialLinks: Array.isArray(safeData.socialLinks) ? safeData.socialLinks : [],
       status: {
         isOnline: !!(safeData.status && safeData.status.isOnline),
         isTyping: !!(safeData.status && safeData.status.isTyping),
@@ -163,6 +167,7 @@ export function dispatchProfileAction(action, user) {
       interests: _toArray(safe.interests),
       photoURL: String(safe.photoURL || "").trim(),
       links: orderedLinks,
+       socialLinks: Array.isArray(safe.socialLinks) ? safe.socialLinks : [],
       languages: _toArray(safe.languages),
       fluentLanguages: _toArray(safe.fluentLanguages),
       localExpertise: _toArray(safe.localExpertise),
@@ -242,6 +247,18 @@ export function dispatchProfileAction(action, user) {
     next.bio = bio ? bio.value.trim() : next.bio;
     next.interests = interests ? _toArray(interests.value) : next.interests;
     next.location = location ? location.value.trim() : next.location;
+     // inside _readFormState(), after:
+//   next.location = location ? location.value.trim() : next.location;
+
+var socialInputs = document.querySelectorAll('.vmp-social-input');
+if (socialInputs.length > 0) {
+  next.socialLinks = Array.from(socialInputs)
+    .map(function(inp) { return inp.value.trim(); })
+    .filter(Boolean)
+    .map(function(url) {
+      return { url: url, type: window.detectPlatform ? window.detectPlatform(url) : 'custom' };
+    });
+}
     return next;
   }
 
@@ -298,6 +315,45 @@ export function dispatchProfileAction(action, user) {
         _renderMyProfile();
       });
     }
+
+     // ── Social Links: dynamic add/remove ─────────────────────────────
+var host = _myProfileState.host;
+
+function _bindSocialEditorEvents() {
+  var list = document.getElementById('vmpSocialList');
+  var addBtn = document.getElementById('vmpAddSocialBtn');
+
+  if (addBtn) {
+    addBtn.addEventListener('click', function() {
+      if (!list) return;
+      var idx = list.querySelectorAll('.vmp-social-row').length;
+      var row = document.createElement('div');
+      row.className = 'vmp-social-row';
+      row.dataset.idx = idx;
+      row.innerHTML =
+        '<input class="vmp-input vmp-social-input" value="" placeholder="https://instagram.com/username">' +
+        '<button type="button" class="vmp-social-remove" data-idx="' + idx + '" title="Remove">×</button>';
+      list.appendChild(row);
+      var newInput = row.querySelector('.vmp-social-input');
+      if (newInput) newInput.focus();
+      _bindRemoveButtons(list);
+    });
+  }
+
+  if (list) _bindRemoveButtons(list);
+}
+
+function _bindRemoveButtons(list) {
+  list.querySelectorAll('.vmp-social-remove').forEach(function(btn) {
+    btn.onclick = function() {
+      var row = btn.closest('.vmp-social-row');
+      if (row) row.remove();
+    };
+  });
+}
+
+_bindSocialEditorEvents();
+     
     if (toggle) {
       toggle.addEventListener("change", async function () {
         try {
@@ -483,6 +539,7 @@ export function dispatchProfileAction(action, user) {
       var profile = await saveProfile(user.uid, {
         name: user.displayName || "",
         username: username,
+         socialLinks: cleaned.socialLinks || [],
         city: city || "Unknown",
         status: {
           isOnline: true,
