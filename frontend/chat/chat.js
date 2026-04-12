@@ -672,36 +672,35 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   }
 
   function _getUserProfileCached(db, uid) {
-    if (!uid) {
-      return Promise.resolve({
-        name: "User",
-        username: "user",
-        photoURL: "",
-        fluentLanguages: [],
-        fluentLanguagesShort: ""
-      });
-    }
-    if (_userProfileCache[uid]) return Promise.resolve(_userProfileCache[uid]);
-    return getUserProfile(uid)
-      .then(function (data) {
-        var safe = data && typeof data === "object" ? data : {};
-        var username = String(safe.username || "").trim();
-        var name = String(safe.name || "").trim();
-        var profile = {
-          name: name || username || "User",
-          username: username || "user",
-          photoURL: safe.photoURL || safe.avatar || "",
-          fluentLanguages: Array.isArray(safe.fluentLanguages) ? safe.fluentLanguages : [],
-          fluentLanguagesShort: _shortFluentLanguages(safe.fluentLanguages)
-        };
-        _userProfileCache[uid] = profile;
-        return profile;
-      })
-      .catch(function () {
-        var fallback = { name: "User", username: "user", photoURL: "", fluentLanguages: [], fluentLanguagesShort: "" };
-        _userProfileCache[uid] = fallback; return fallback;
-      });
+  if (!uid) {
+    return Promise.resolve({
+      name: "User", username: "user", photoURL: "",
+      fluentLanguages: [], fluentLanguagesShort: ""
+    });
   }
+  if (_userProfileCache[uid]) return Promise.resolve(_userProfileCache[uid]);
+  // Fetch directly from Firestore to get ALL fields (bio, links, etc.)
+  return db.collection("users").doc(uid).get()
+    .then(function(doc) {
+      var safe = doc.exists ? (doc.data() || {}) : {};
+      var username = String(safe.username || "").trim();
+      var name = String(safe.name || safe.displayName || "").trim();
+      var profile = Object.assign({}, safe, {
+        name: name || username || "User",
+        username: username || "user",
+        photoURL: safe.photoURL || safe.avatar || "",
+        fluentLanguages: Array.isArray(safe.fluentLanguages) ? safe.fluentLanguages : [],
+        fluentLanguagesShort: _shortFluentLanguages(safe.fluentLanguages)
+      });
+      _userProfileCache[uid] = profile;
+      return profile;
+    })
+    .catch(function() {
+      var fallback = { name: "User", username: "user", photoURL: "", fluentLanguages: [], fluentLanguagesShort: "" };
+      _userProfileCache[uid] = fallback;
+      return fallback;
+    });
+}
 
   function _timestampToMillis(ts) { return ts && typeof ts.toMillis === "function" ? ts.toMillis() : 0; }
 
@@ -1063,10 +1062,19 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
 // Add inside the item.innerHTML, make the avatar a separate clickable zone:
 var avatarEl = item.querySelector('.vc-chat-list-avatar');
 if (avatarEl) {
+  avatarEl.style.cursor = 'pointer';
   avatarEl.addEventListener('click', function(e) {
-    e.stopPropagation(); // don't open chat, just show modal
+    e.stopPropagation();
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === 'function'
+      ? window.vaaniRouter.getDb() : null;
+    if (!db || !chat.otherUid) return;
+    console.log("Opening profile:", chat.otherUid);
     _getUserProfileCached(db, chat.otherUid).then(function(p) {
+      if (!p) return;
+      console.log("Profile fetched:", p);
       openProfileModal(Object.assign({ uid: chat.otherUid }, p));
+    }).catch(function(err) {
+      console.error("Profile fetch error:", err);
     });
   });
 }
@@ -2051,10 +2059,16 @@ var chatAvatar = chatScreen.querySelector('.vc-chat-avatar');
 if (chatAvatar && _selectedChatUser) {
   chatAvatar.style.cursor = 'pointer';
   chatAvatar.addEventListener('click', function() {
-    var db = window.vaaniRouter && window.vaaniRouter.getDb ? window.vaaniRouter.getDb() : null;
-    if (!db) return;
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === 'function'
+      ? window.vaaniRouter.getDb() : null;
+    if (!db || !_selectedChatUser || !_selectedChatUser.uid) return;
+    console.log("Opening profile:", _selectedChatUser.uid);
     _getUserProfileCached(db, _selectedChatUser.uid).then(function(p) {
+      if (!p) return;
+      console.log("Profile fetched:", p);
       openProfileModal(Object.assign({ uid: _selectedChatUser.uid }, p));
+    }).catch(function(err) {
+      console.error("Chat header profile fetch error:", err);
     });
   });
 }
