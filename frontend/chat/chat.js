@@ -82,6 +82,13 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     return el.innerHTML;
   }
 
+  function _upgradePhotoURL(url) {
+  if (!url) return url;
+  // Google profile photos: bump s96-c → s400-c for HD
+  return url.replace(/=s\d+-c($|\?)/, '=s400-c$1')
+             .replace(/(\/photo\.jpg)\?sz=\d+/, '$1?sz=400');
+}
+   
   function _safeTimestampValue(value) {
     if (!value) return null;
     if (typeof value.toMillis === "function") return value;
@@ -491,6 +498,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     _clearSearchState(); _injectMenu(user, profile);
 
     var photo    = user.photoURL || "";
+     var photo = _upgradePhotoURL(user.photoURL || '');
     var initials = ((profile.username || "U").charAt(0) || "U").toUpperCase();
 
     root.innerHTML = '<section class="vc-shell" aria-label="Chat screen">' +
@@ -689,6 +697,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
         name: name || username || "User",
         username: username || "user",
         photoURL: safe.photoURL || safe.avatar || "",
+         photoURL: _upgradePhotoURL(safe.photoURL || safe.avatar || ''),
         fluentLanguages: Array.isArray(safe.fluentLanguages) ? safe.fluentLanguages : [],
         fluentLanguagesShort: _shortFluentLanguages(safe.fluentLanguages)
       });
@@ -2222,23 +2231,28 @@ if (chatAvatar && _selectedChatUser) {
 /* ========================================================= */ 
    // ── Profile Modal ─────────────────────────────────────────────
 function _detectSocialPlatform(url) {
-  if (!url) return null;
+  if (!url) return 'website';
   var u = String(url).toLowerCase();
-  if (u.includes('instagram.com'))  return 'instagram';
-  if (u.includes('linkedin.com'))   return 'linkedin';
+  if (u.includes('instagram.com'))                    return 'instagram';
+  if (u.includes('linkedin.com'))                     return 'linkedin';
   if (u.includes('twitter.com') || u.includes('x.com')) return 'twitter';
-  if (u.includes('threads.net'))    return 'threads';
-  if (u.includes('snapchat.com'))   return 'snapchat';
+  if (u.includes('threads.net'))                      return 'threads';
+  if (u.includes('snapchat.com'))                     return 'snapchat';
+  if (u.includes('github.com'))                       return 'github';
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
   return 'website';
 }
 
 function _socialIcon(platform) {
   var icons = {
-    instagram: '<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>',
-    linkedin:  '<svg viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>',
-    twitter:   '<svg class="pm-social-x" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
-    threads:   '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>',
-    website:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'
+    instagram: '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>',
+    linkedin:  '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2" fill="currentColor" stroke="none"/></svg>',
+    twitter:   '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+    threads:   '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c2.76 0 5.26-1.12 7.07-2.93"/><path d="M8 12c0-2.21 1.79-4 4-4s4 1.79 4 4v1c0 2.21-1.79 4-4 4"/><circle cx="12" cy="13" r="1"/></svg>',
+    snapchat:  '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M12 2C8 2 6 5 6 8v1c-1 0-2 .5-2 1.5S5 12 6 12c-.5 2-2 3-3 3.5 1 .5 3 1 4 1 .5 1 1.5 1.5 5 1.5s4.5-.5 5-1.5c1 0 3-.5 4-1-1-.5-2.5-1.5-3-3.5 1 0 2-.5 2-1.5S19 10 18 10V8c0-3-2-6-6-6z"/></svg>',
+    github:    '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>',
+    youtube:   '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.41 19.6C5.12 20 12 20 12 20s6.88 0 8.59-.46a2.78 2.78 0 0 0 1.95-1.95A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill="currentColor" stroke="none"/></svg>',
+    website:   '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" fill="none"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'
   };
   return icons[platform] || icons.website;
 }
@@ -2249,42 +2263,55 @@ function openProfileModal(profile) {
   var existing = document.getElementById('vaaniProfileModal');
   if (existing) existing.remove();
 
-  var theme = document.documentElement.getAttribute('data-theme') || 'dark';
-  var name      = _esc(profile.displayName || profile.name || profile.username || 'User');
-  var username  = _esc(profile.username || 'user');
-  var photoURL  = profile.photoURL || '';
-  var bio       = _esc(profile.bio || '');
-  var langs     = Array.isArray(profile.fluentLanguages) ? profile.fluentLanguages : [];
-  var links     = profile.links && typeof profile.links === 'object' ? profile.links : {};
-  var initial   = (name.charAt(0) || 'U').toUpperCase();
+  var name     = _esc(profile.displayName || profile.name || profile.username || 'User');
+  var username = _esc(profile.username || 'user');
+  var photoURL = _upgradePhotoURL(profile.photoURL || '');
+  var bio      = _esc(profile.bio || '');
+  var langs    = Array.isArray(profile.fluentLanguages) ? profile.fluentLanguages : [];
+  var initial  = ((profile.displayName || profile.name || profile.username || 'U').charAt(0)).toUpperCase();
 
-  // Avatar HTML
+  // ── Collect social URLs from EITHER format ──────────────────
+  // Format A: socialLinks = [{url, type}, ...] (ProfileAbout.js)
+  // Format B: links = {key: url, ...} (legacy object)
+  var socialURLs = [];
+  if (Array.isArray(profile.socialLinks)) {
+    profile.socialLinks.forEach(function(l) { if (l && l.url) socialURLs.push(String(l.url)); });
+  }
+  if (profile.links && typeof profile.links === 'object' && !Array.isArray(profile.links)) {
+    Object.values(profile.links).forEach(function(u) { if (u) socialURLs.push(String(u)); });
+  }
+  // deduplicate
+  socialURLs = socialURLs.filter(function(u, i, a) { return u && a.indexOf(u) === i; }).slice(0, 6);
+
+  // ── Avatar HTML ──────────────────────────────────────────────
   var avatarHTML = photoURL
-    ? '<img src="' + _esc(photoURL) + '" alt="' + name + ' avatar" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
+    ? '<img src="' + _esc(photoURL) + '" alt="' + name + '" style="width:96px;height:96px;border-radius:50%;object-fit:cover;image-rendering:auto;border:3px solid rgba(255,255,255,0.15);" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
       '<div class="pm-img-fallback" style="display:none;">' + initial + '</div>'
     : '<div class="pm-img-fallback">' + initial + '</div>';
 
-  // Lang tags
+  // ── Lang tags ────────────────────────────────────────────────
   var langHTML = langs.slice(0, 4).map(function(l) {
     return '<span class="pm-lang">' + _esc(l) + '</span>';
   }).join('');
 
-  // Social links (auto-detect platform)
-  var socialHTML = Object.values(links).filter(Boolean).slice(0, 5).map(function(url) {
+  // ── Social icons ─────────────────────────────────────────────
+  var socialHTML = socialURLs.map(function(url) {
     var platform = _detectSocialPlatform(url);
-    return '<a class="pm-social' + (platform === 'twitter' ? ' pm-social-x' : '') + '" href="' + _esc(url) + '" target="_blank" rel="noopener" title="' + platform + '">' +
+    var isX = platform === 'twitter';
+    return '<a class="pm-social' + (isX ? ' pm-social-x' : '') + '" href="' + _esc(url) + '" target="_blank" rel="noopener noreferrer" title="' + _esc(platform) + '">' +
       _socialIcon(platform) + '</a>';
   }).join('');
 
+  // ── Build overlay ────────────────────────────────────────────
   var overlay = document.createElement('div');
   overlay.id = 'vaaniProfileModal';
   overlay.className = 'pm-overlay';
-  if (theme === 'light') overlay.setAttribute('data-theme', 'light');
 
   overlay.innerHTML =
     '<div class="pm-card" role="dialog" aria-label="' + name + '\'s profile">' +
       '<button class="pm-close" aria-label="Close profile">' +
-        '<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">' +
+          '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
       '</button>' +
       '<div class="pm-img-wrap">' + avatarHTML +
         '<div class="pm-identity">' +
@@ -2295,39 +2322,34 @@ function openProfileModal(profile) {
       '<div class="pm-body">' +
         (bio ? '<div class="pm-bio">' + bio + '</div>' : '') +
         (langHTML ? '<div class="pm-langs">' + langHTML + '</div>' : '') +
-        (socialHTML ? '<div class="pm-divider"></div><div class="pm-socials">' + socialHTML + '</div>' : '') +
-        '<button class="pm-msg-btn" id="pmMsgBtn">' +
-          '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
-          'Message' +
-        '</button>' +
+        '<div class="pm-actions">' +
+          '<button class="pm-msg-btn" id="pmMsgBtn">' +
+            '<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.8" fill="none">' +
+              '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+            'Message' +
+          '</button>' +
+          (socialHTML
+            ? '<div class="pm-divider"></div><div class="pm-socials">' + socialHTML + '</div>'
+            : '') +
+        '</div>' +
       '</div>' +
     '</div>';
 
   document.body.appendChild(overlay);
 
-  // Close on backdrop click
-  overlay.addEventListener('click', function(e) {
-    if (e.target === overlay) _closeProfileModal();
-  });
-
-  // Close button
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) _closeProfileModal(); });
   overlay.querySelector('.pm-close').addEventListener('click', _closeProfileModal);
 
-  // ESC key
   function onKeyDown(e) {
     if (e.key === 'Escape') { _closeProfileModal(); document.removeEventListener('keydown', onKeyDown); }
   }
   document.addEventListener('keydown', onKeyDown);
 
-  // Message button
   var msgBtn = overlay.querySelector('#pmMsgBtn');
   if (msgBtn) {
     msgBtn.addEventListener('click', function() {
       _closeProfileModal();
-      if (profile.uid) {
-        var db = window.vaaniRouter && window.vaaniRouter.getDb ? window.vaaniRouter.getDb() : null;
-        if (db) _openChatWithUser(profile);
-      }
+      if (profile.uid) _openChatWithUser(profile);
     });
   }
 }
