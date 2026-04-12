@@ -2298,3 +2298,483 @@ body.vm-menu-open {
 .pm-social{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.09);color:#94a3b8;text-decoration:none;transition:transform 0.15s ease,background 0.15s,color 0.15s,border-color 0.15s;cursor:pointer}
 .pm-social:hover{background:rgba(124,58,237,0.22);color:#c4b5fd;transform:scale(1.12);border-color:rgba(124,58,237,0.4)}
 .pm-social.pm-social-x svg{stroke:none;fill:currentColor}
+
+
+/* ================================================================
+   Vaani — Profile Modal v5.0  (append to chat-isolated.css)
+   ─────────────────────────────────────────────────────────────
+   • Completely replaces the old pm-* modal system
+   • Clean vmp-modal-* namespace
+   • Supports dark + light themes via data-theme attribute
+   • No inline styles. No border-radius: 50% on avatars.
+   ================================================================ */
+
+
+/* ── 0. KILL THE OLD SYSTEM ──────────────────────────────────── */
+/* Suppress any residual pm-* elements that may still be in the DOM */
+.pm-overlay,
+.pm-card,
+.pm-img-wrap,
+.pm-img-fallback,
+.pm-identity,
+.pm-identity-name,
+.pm-identity-user,
+.pm-body,
+.pm-bio,
+.pm-langs,
+.pm-lang,
+.pm-divider,
+.pm-socials,
+.pm-social,
+.pm-msg-btn,
+.pm-close,
+.pm-actions {
+  all: unset !important;
+  display: none !important;
+}
+
+
+/* ── 1. MODAL OVERLAY ────────────────────────────────────────── */
+.vmp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+
+  /* Backdrop */
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+
+  /* Animate in/out */
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.vmp-modal-overlay.vmp-modal-visible {
+  opacity: 1;
+}
+
+.vmp-modal-overlay.vmp-modal-closing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-theme="light"] .vmp-modal-overlay {
+  background: rgba(15, 23, 42, 0.3);
+}
+
+
+/* ── 2. CARD ─────────────────────────────────────────────────── */
+.vmp-modal-card {
+  position: relative;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  padding: 24px 20px 20px;
+  border-radius: 20px;
+  text-align: center;
+
+  /* Dark theme defaults */
+  background: #111827;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 4px 6px rgba(0, 0, 0, 0.3),
+    0 20px 60px rgba(0, 0, 0, 0.5);
+
+  /* Card entrance animation */
+  transform: scale(0.92) translateY(12px);
+  transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.vmp-modal-overlay.vmp-modal-visible .vmp-modal-card {
+  transform: scale(1) translateY(0);
+}
+
+[data-theme="light"] .vmp-modal-card {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow:
+    0 4px 6px rgba(15, 23, 42, 0.06),
+    0 20px 60px rgba(15, 23, 42, 0.16);
+}
+
+
+/* ── 3. CLOSE BUTTON ─────────────────────────────────────────── */
+.vmp-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.vmp-modal-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+[data-theme="light"] .vmp-modal-close {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(15, 23, 42, 0.04);
+  color: #6b7280;
+}
+
+[data-theme="light"] .vmp-modal-close:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+
+/* ── 4. AVATAR ───────────────────────────────────────────────── */
+.vmp-modal-avatar {
+  width: 130px;
+  height: 130px;
+  border-radius: 16px;          /* ⚠️ NOT 50% — per spec */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e1040, #0b0f19);
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.vmp-modal-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 0;             /* override any inherited radius */
+}
+
+.vmp-modal-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  font-size: 44px;
+  font-weight: 700;
+  font-family: 'Outfit', sans-serif;
+  border-radius: 0;
+  user-select: none;
+}
+
+[data-theme="light"] .vmp-modal-avatar {
+  background: linear-gradient(135deg, #e8e0ff, #d4c5ff);
+}
+
+
+/* ── 5. NAME & USERNAME ──────────────────────────────────────── */
+.vmp-modal-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #f1f5f9;
+  font-family: 'Outfit', sans-serif;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  max-width: 240px;
+  word-break: break-word;
+}
+
+.vmp-modal-username {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: 'Outfit', sans-serif;
+  margin-bottom: 0;
+}
+
+[data-theme="light"] .vmp-modal-name {
+  color: #111827;
+}
+
+[data-theme="light"] .vmp-modal-username {
+  color: #6b7280;
+}
+
+
+/* ── 6. BIO ──────────────────────────────────────────────────── */
+.vmp-modal-bio {
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: 'Outfit', sans-serif;
+  margin: 10px 0 0;
+  padding: 0 4px;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+[data-theme="light"] .vmp-modal-bio {
+  color: #4b5563;
+}
+
+
+/* ── 7. LANGUAGE PILLS ───────────────────────────────────────── */
+.vmp-modal-langs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.vmp-modal-lang {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  background: rgba(124, 58, 237, 0.15);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  color: #c4b5fd;
+}
+
+[data-theme="light"] .vmp-modal-lang {
+  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(124, 58, 237, 0.22);
+  color: #6d28d9;
+}
+
+
+/* ── 8. DIVIDER ──────────────────────────────────────────────── */
+.vmp-modal-divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 14px 0;
+  flex-shrink: 0;
+}
+
+[data-theme="light"] .vmp-modal-divider {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+
+/* ── 9. MESSAGE BUTTON ───────────────────────────────────────── */
+.vmp-modal-msg-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, #7c3aed, #9333ea);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 4px 18px rgba(124, 58, 237, 0.3);
+}
+
+.vmp-modal-msg-btn:hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(124, 58, 237, 0.4);
+}
+
+.vmp-modal-msg-btn:active {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.vmp-modal-msg-btn svg {
+  flex-shrink: 0;
+}
+
+
+/* ── 10. SOCIAL ICONS ────────────────────────────────────────── */
+.vmp-modal-socials {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.vmp-modal-social-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.vmp-modal-social-btn:hover {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #c4b5fd;
+  transform: translateY(-2px);
+}
+
+.vmp-modal-social-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* X/Twitter — filled icon, no stroke */
+.vmp-social-twitter svg {
+  fill: currentColor;
+  stroke: none;
+}
+
+[data-theme="light"] .vmp-modal-social-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+  color: #6b7280;
+}
+
+[data-theme="light"] .vmp-modal-social-btn:hover {
+  background: rgba(124, 58, 237, 0.1);
+  border-color: rgba(124, 58, 237, 0.3);
+  color: #7c3aed;
+}
+
+
+/* ── 11. PROFILE INFO CARD (My Profile page) ─────────────────── */
+/* Used by ProfileInfo.js — replaces old vmp-info / vmp-img-wrap layout */
+
+.vmp-info-card {
+  width: 100%;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--card-bg, var(--bg2, #0e0e1a));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.vmp-avatar-block {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1e1040, #0b0f19);
+  flex-shrink: 0;
+}
+
+.vmp-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 0;
+}
+
+.vmp-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  font-size: 44px;
+  font-weight: 700;
+  font-family: 'Outfit', sans-serif;
+  border-radius: 0;
+  user-select: none;
+}
+
+/* Edit-photo overlay (editing mode only) */
+.vmp-avatar-edit-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: transparent;
+}
+
+.vmp-avatar-edit-overlay:hover {
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+}
+
+.vmp-avatar-edit-overlay svg {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.vmp-avatar-edit-overlay:hover svg {
+  opacity: 1;
+}
+
+.vmp-identity-block {
+  text-align: center;
+}
+
+.vmp-card-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text, #e8e8f6);
+  font-family: 'Outfit', sans-serif;
+  line-height: 1.2;
+}
+
+.vmp-card-username {
+  font-size: 13px;
+  color: var(--text2, #9a9ab2);
+  font-family: 'Outfit', sans-serif;
+  margin-top: 3px;
+}
+
+[data-theme="light"] .vmp-avatar-block,
+[data-theme="light"] .vmp-modal-avatar {
+  background: linear-gradient(135deg, #e8e0ff, #d4c5ff);
+}
+
+
+/* ── 12. RESPONSIVE ──────────────────────────────────────────── */
+@media (max-width: 360px) {
+  .vmp-modal-card {
+    width: calc(100vw - 32px);
+    padding: 20px 16px 16px;
+  }
+  .vmp-modal-avatar {
+    width: 110px;
+    height: 110px;
+  }
+  .vmp-modal-avatar-fallback {
+    font-size: 36px;
+  }
+}
