@@ -1746,6 +1746,21 @@ body.vm-menu-open {
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
   background: var(--bg2, #0e0e1a);
+   box-sizing: border-box;
+}
+/* Light theme */
+[data-theme="light"] #vaaniChat .vc-settings-panel {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: var(--bg2, #ffffff);
+}
+/* Responsive — full width on small screens */
+@media (max-width: 560px) {
+  #vaaniChat .vc-settings-panel {
+    max-width: 100%;
+    width: calc(100% - 32px);
+    margin: 16px auto;
+    padding: 16px;
+  }
 }
 #vaaniChat .vc-settings-title {
   margin: 0;
