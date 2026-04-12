@@ -147,7 +147,10 @@ export function subscribeTyping(db, chatId, receiverUserId, onChange) {
       snap.forEach(function (doc) {
         const data = doc.data() || {};
         const isForReceiver = String(data.toUserId || "") === String(receiverUserId);
-        const ts = data.updatedAt && typeof data.updatedAt.toMillis === "function" ? data.updatedAt.toMillis() : 0;
+        const ts = data.updatedAt && typeof data.updatedAt.toMillis === "function"
+          ? data.updatedAt.toMillis()
+          : 0;
+        // ts === 0 means the server timestamp is still pending (just written) — treat as fresh
         const fresh = ts === 0 || (now - ts) <= TYPING_STALE_MS;
         if (isForReceiver && data.isTyping && fresh && !activeFromUserId) {
           activeFromUserId = String(data.fromUserId || doc.id || "");
