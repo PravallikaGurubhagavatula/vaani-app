@@ -1,4 +1,12 @@
 import { getUserProfile, renderUserProfile } from "./profile.js";
+import {
+  bindPresence,
+  subscribeUserPresence,
+  subscribeTyping,
+  emitTyping,
+  clearTyping,
+  formatLastSeenLabel
+} from "./userStatus.js";
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -53,6 +61,13 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   var _inputMessage = "";
   var _messagesContainerRef = null;
   var _shouldStickToBottom = true;
+  var _chatPresenceUnsub = null;
+  var _chatTypingUnsub = null;
+  var _myPresenceUnbind = null;
+  var _headerPresenceState = { showStatus: true, isOnline: false, lastSeen: null };
+  var _headerTypingFromUserId = "";
+  var _typingHeartbeatTimer = null;
+  var _typingClearTimer = null;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
@@ -405,7 +420,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
           renderUserProfile(userProfile || null);
           return;
         }
-        if (action === "settings" && typeof window.navigateTo === "function") { window.navigateTo("Settings"); return; }
+        if (action === "settings") { _openChatSettings(); return; }
         if (typeof window.showToast === "function") {
           var labelNode = item.querySelector("span");
           window.showToast((labelNode ? labelNode.textContent : "Feature") + " coming soon");
@@ -419,6 +434,45 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
         if (window.vaaniRouter && typeof window.vaaniRouter.signOut === "function") window.vaaniRouter.signOut();
       });
     }
+  }
+
+  function _openChatSettings() {
+    var settingsHost = document.getElementById("vcSettingsScreen");
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    if (!settingsHost || !db || !currentUid) return;
+
+    settingsHost.innerHTML =
+      '<div class="vc-settings-panel">' +
+        '<h3 class="vc-settings-title">Status privacy</h3>' +
+        '<p class="vc-settings-note">Control what other users can see in chat headers.</p>' +
+        '<div class="vc-status-toggle-row">' +
+          '<span>Show my live status</span>' +
+          '<label class="switch"><input type="checkbox" id="vcStatusPrivacyToggle"><span class="slider"></span></label>' +
+        '</div>' +
+      '</div>';
+
+    var toggle = document.getElementById("vcStatusPrivacyToggle");
+    db.collection("users").doc(currentUid).get().then(function (doc) {
+      var data = doc && doc.exists ? (doc.data() || {}) : {};
+      var showStatus = !(data.status && data.status.showStatus === false);
+      if (toggle) toggle.checked = showStatus;
+    });
+
+    if (toggle) {
+      toggle.addEventListener("change", async function () {
+        try {
+          await db.collection("users").doc(currentUid).set({
+            status: { showStatus: !!toggle.checked }
+          }, { merge: true });
+        } catch (_) {
+          if (typeof window.showToast === "function") window.showToast("Could not update status privacy.");
+        }
+      });
+    }
+
+    _panelView = "settings";
+    _syncViewWithSelection(false);
   }
 
   function _renderLogin() {
@@ -496,6 +550,9 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   async function _renderChat(user, profile) {
     var root = _root(); if (!root) return;
     _clearSearchState(); _injectMenu(user, profile);
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    if (_myPresenceUnbind) { _myPresenceUnbind(); _myPresenceUnbind = null; }
+    _myPresenceUnbind = bindPresence(db, user && user.uid ? String(user.uid) : "");
 
     var photo    = user.photoURL || "";
      var photo = _upgradePhotoURL(user.photoURL || '');
@@ -521,7 +578,8 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       '<div class="vc-requests-list" id="vcSentRequestsList"><div class="vc-requests-empty">No pending requests</div></div></div></div></div>' +
       '<div class="vc-chat-list" id="vcChatList"><div class="vc-chat-list-empty">Loading chats…</div></div></div>' +
       '<div class="vc-chat-view-wrap" id="vcChatScreen" style="display:none;"></div>' +
-      '<div class="vc-profile-view-wrap" id="vcProfileScreen" style="display:none;"></div></section>';
+      '<div class="vc-profile-view-wrap" id="vcProfileScreen" style="display:none;"></div>' +
+      '<div class="vc-settings-view-wrap" id="vcSettingsScreen" style="display:none;"></div></section>';
 
     var profileBtn = document.getElementById("vcProfileBtn");
     if (profileBtn) profileBtn.addEventListener("click", function () {
@@ -575,6 +633,9 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
         var pr = document.getElementById("vcProfileScreen");
         if (pr) { pr.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void pr.offsetWidth; pr.classList.add("vn-chat-slide-in"); }
       }
+    } else if (_panelView === "settings") {
+      _setActivePanel("settings");
+      if (topBar) topBar.style.display = "flex";
     } else {
       var chat = document.getElementById("vcChatScreen");
       _setActivePanel("home");
@@ -585,7 +646,7 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       _lastPushedChatView = null;
     }
     if (window.vaaniChat)
-      window.vaaniChat._currentView = _panelView === "profile" ? "profile" : (_selectedChatUser ? "chat" : "home");
+      window.vaaniChat._currentView = _panelView === "profile" ? "profile" : (_panelView === "settings" ? "settings" : (_selectedChatUser ? "chat" : "home"));
   }
 
   function _setSelectedChatUser(user) {
@@ -596,10 +657,12 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
       } catch (e) {}
     }
     _selectedChatUser = user || null;
-    _panelView = _selectedChatUser ? "chat" : "home";
+    _panelView = _selectedChatUser ? "chat" : (_panelView === "settings" ? "settings" : "home");
     if (!_selectedChatUser) {
+      _emitTypingHeartbeat(false);
       _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
       _teardownMessageListener();
+      _teardownStatusListeners();
       _teardownViewportSync();
     }
     _syncViewWithSelection();
@@ -609,10 +672,12 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
     var home = document.getElementById("vcHomeScreen");
     var chat = document.getElementById("vcChatScreen");
     var profile = document.getElementById("vcProfileScreen");
-    if (!home || !chat || !profile) return;
+    var settings = document.getElementById("vcSettingsScreen");
+    if (!home || !chat || !profile || !settings) return;
     home.style.display = panel === "home" ? "block" : "none";
     chat.style.display = panel === "chat" ? "flex" : "none";
     profile.style.display = panel === "profile" ? "flex" : "none";
+    settings.style.display = panel === "settings" ? "block" : "none";
   }
 
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
@@ -637,6 +702,79 @@ import { getUserProfile, renderUserProfile } from "./profile.js";
   function _teardownMessageListener() {
     if (_unsubscribeMessages) { _unsubscribeMessages(); _unsubscribeMessages = null; }
     _activeMessageListenerKey = null; _activeMessagesSignature = ""; _optimisticMessages = [];
+  }
+
+  function _teardownStatusListeners() {
+    if (_chatPresenceUnsub) { _chatPresenceUnsub(); _chatPresenceUnsub = null; }
+    if (_chatTypingUnsub) { _chatTypingUnsub(); _chatTypingUnsub = null; }
+    if (_typingHeartbeatTimer) { clearTimeout(_typingHeartbeatTimer); _typingHeartbeatTimer = null; }
+    if (_typingClearTimer) { clearTimeout(_typingClearTimer); _typingClearTimer = null; }
+    _headerTypingFromUserId = "";
+    _headerPresenceState = { showStatus: true, isOnline: false, lastSeen: null };
+  }
+
+  function _renderHeaderStatus() {
+    var statusEl = document.getElementById("vcChatHeaderStatus");
+    if (!statusEl || !_selectedChatUser || !_selectedChatUser.uid) return;
+    var canShowStatus = _headerPresenceState.showStatus !== false;
+    if (!canShowStatus) {
+      statusEl.textContent = "";
+      statusEl.className = "vc-chat-hsub";
+      return;
+    }
+
+    var isTyping = _headerTypingFromUserId && String(_headerTypingFromUserId) === String(_selectedChatUser.uid);
+    if (isTyping) {
+      statusEl.textContent = "Typing...";
+      statusEl.className = "vc-chat-hsub vc-chat-hsub-typing";
+      return;
+    }
+
+    if (_headerPresenceState.isOnline) {
+      statusEl.textContent = "Online";
+      statusEl.className = "vc-chat-hsub vc-chat-hsub-online";
+      return;
+    }
+
+    var lastSeenLabel = formatLastSeenLabel(_headerPresenceState.lastSeen);
+    statusEl.textContent = lastSeenLabel ? ("Last seen at " + lastSeenLabel) : "";
+    statusEl.className = "vc-chat-hsub vc-chat-hsub-offline";
+  }
+
+  function _setupChatStatusWatchers(chatId, otherUid) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    _teardownStatusListeners();
+    if (!db || !chatId || !otherUid || !currentUid) return;
+
+    _chatPresenceUnsub = subscribeUserPresence(db, String(otherUid), function (nextStatus) {
+      _headerPresenceState = nextStatus || { showStatus: true, isOnline: false, lastSeen: null };
+      _renderHeaderStatus();
+    });
+
+    _chatTypingUnsub = subscribeTyping(db, String(chatId), currentUid, function (typingFromUserId) {
+      _headerTypingFromUserId = typingFromUserId ? String(typingFromUserId) : "";
+      _renderHeaderStatus();
+    });
+  }
+
+  function _emitTypingHeartbeat(isTypingNow) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    var otherUid = _selectedChatUser && _selectedChatUser.uid ? String(_selectedChatUser.uid) : "";
+    if (!db || !_activeChatId || !currentUid || !otherUid) return;
+
+    if (!isTypingNow) {
+      clearTyping(db, _activeChatId, currentUid);
+      return;
+    }
+
+    emitTyping(db, {
+      chatId: _activeChatId,
+      fromUserId: currentUid,
+      toUserId: otherUid,
+      isTyping: true
+    });
   }
 
   function _syncViewportForKeyboard() {
@@ -1141,6 +1279,8 @@ if (avatarEl) {
     _pendingOutgoingUidSet.clear();
     _pendingIncomingUidSet.clear();
     _teardownMessageListener();
+    _teardownStatusListeners();
+    if (_myPresenceUnbind) { _myPresenceUnbind(); _myPresenceUnbind = null; }
     if (_unsubscribeChatList) { _unsubscribeChatList(); _unsubscribeChatList = null; }
     _activeChatListListenerUid = null; _renderedChatListSignature = "";
     _createChatListListener._lastSignature = ""; _fetchConnections._lastSignature = "";
@@ -1882,6 +2022,7 @@ if (avatarEl) {
     var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
     _optimisticMessages.push({ _optimisticId: tempId, text: inputMessage, senderId: currentUid, timestamp: new Date() });
     _renderMessages(true);
+    _emitTypingHeartbeat(false);
 
     inputEl.disabled = true; if (sendBtn) sendBtn.disabled = true;
     inputEl.value = ""; _setInputMessage("");
@@ -2005,6 +2146,7 @@ if (avatarEl) {
 
   if (_activeChatId && _activeChatId !== chatId) {
     console.log("[Vaani] _openChatUI: switching from", _activeChatId, "to", chatId);
+    _emitTypingHeartbeat(false);
     _teardownMessageListener();
   }
 
@@ -2036,7 +2178,7 @@ if (avatarEl) {
             '<button class="vc-back-btn" id="backBtn">' + backIconSVG + "</button>" +
             '<div class="vc-chat-avatar">' + avatarHTML + "</div>" +
             '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
-            '<div class="vc-chat-hsub">Online • Connected</div></div>' +
+            '<div class="vc-chat-hsub" id="vcChatHeaderStatus"></div></div>' +
             '<div class="vc-chat-hactions">' +
               '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
             "</div></div>" +
@@ -2089,9 +2231,26 @@ if (chatAvatar && _selectedChatUser) {
     }
     if (messageInput) {
       messageInput.addEventListener("input", _toggleSendState);
+      messageInput.addEventListener("input", function () {
+        var hasText = !!String(messageInput.value || "").trim();
+        _emitTypingHeartbeat(hasText);
+        if (_typingHeartbeatTimer) clearTimeout(_typingHeartbeatTimer);
+        if (hasText) {
+          _typingHeartbeatTimer = setTimeout(function () {
+            _emitTypingHeartbeat(!!String(messageInput.value || "").trim());
+          }, 2500);
+        }
+        if (_typingClearTimer) clearTimeout(_typingClearTimer);
+        _typingClearTimer = setTimeout(function () {
+          _emitTypingHeartbeat(false);
+        }, 3500);
+      });
       messageInput.addEventListener("keydown", function (event) {
         if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault(); if (messageInput.value.trim()) _sendMessage();
+      });
+      messageInput.addEventListener("blur", function () {
+        _emitTypingHeartbeat(false);
       });
       messageInput.addEventListener("focus", function () {
         _scrollMessagesToBottom(true);
@@ -2106,6 +2265,8 @@ if (chatAvatar && _selectedChatUser) {
       }, { passive: true });
     }
     _toggleSendState();
+    _setupChatStatusWatchers(_activeChatId, otherProfile.uid || (_selectedChatUser && _selectedChatUser.uid));
+    _renderHeaderStatus();
 
     try {
       var cu = window._vaaniCurrentUser;
@@ -2193,7 +2354,7 @@ if (chatAvatar && _selectedChatUser) {
     close: function () { _stopListening(); _clearSearchState(); _removeMenu(); _teardownViewportSync(); if (window.vaaniProfile && typeof window.vaaniProfile.closeMyProfile === "function") window.vaaniProfile.closeMyProfile(); },
 
                 setPanelView: function (mode) {
-      _panelView = mode === "profile" ? "profile" : (mode === "chat" ? "chat" : "home");
+      _panelView = mode === "profile" ? "profile" : (mode === "chat" ? "chat" : (mode === "settings" ? "settings" : "home"));
       if (_panelView !== "chat") _selectedChatUser = null;
       _syncViewWithSelection(false);
     },
@@ -2211,6 +2372,10 @@ if (chatAvatar && _selectedChatUser) {
         _syncViewWithSelection(true);
         var pr = document.getElementById("vcProfileScreen");
         if (pr) { pr.classList.remove("vn-chat-slide-in","vn-chat-slide-back"); void pr.offsetWidth; pr.classList.add(isBack ? "vn-chat-slide-back" : "vn-chat-slide-in"); }
+      } else if (chatView === "settings") {
+        _panelView = "settings";
+        _selectedChatUser = null;
+        _syncViewWithSelection(true);
       } else {
         _panelView = "home";
         _selectedChatUser = null;
