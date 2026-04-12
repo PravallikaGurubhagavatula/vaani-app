@@ -107,6 +107,7 @@ export function dispatchProfileAction(action, user) {
     return normalized;
   }
 
+  // ── FIX 4: normalizeProfileData now includes socialLinks ──────────
   function _normalizeProfileData(data) {
     var safeData = data && typeof data === "object" ? data : {};
     var showStatus = safeData.status && typeof safeData.status.showStatus === "boolean"
@@ -124,7 +125,10 @@ export function dispatchProfileAction(action, user) {
       fluentLanguages: _toArray(safeData.fluentLanguages),
       localExpertise: _toArray(safeData.localExpertise),
       links: _toLinksObject(safeData.links),
-       socialLinks: Array.isArray(safeData.socialLinks) ? safeData.socialLinks : [],
+      // FIX 4: Ensure socialLinks always normalizes to a clean array of {url, type} objects
+      socialLinks: Array.isArray(safeData.socialLinks)
+        ? safeData.socialLinks.filter(function (l) { return l && typeof l.url === "string" && l.url.trim(); })
+        : [],
       status: {
         isOnline: !!(safeData.status && safeData.status.isOnline),
         isTyping: !!(safeData.status && safeData.status.isTyping),
@@ -152,6 +156,7 @@ export function dispatchProfileAction(action, user) {
     return null;
   }
 
+  // ── FIX 5: _profileEditSnapshot now includes socialLinks ──────────
   function _profileEditSnapshot(data) {
     var safe = data && typeof data === "object" ? data : {};
     var links = _toLinksObject(safe.links);
@@ -167,7 +172,8 @@ export function dispatchProfileAction(action, user) {
       interests: _toArray(safe.interests),
       photoURL: String(safe.photoURL || "").trim(),
       links: orderedLinks,
-       socialLinks: Array.isArray(safe.socialLinks) ? safe.socialLinks : [],
+      // FIX 5: Include socialLinks in snapshot so edit-change detection works
+      socialLinks: Array.isArray(safe.socialLinks) ? safe.socialLinks : [],
       languages: _toArray(safe.languages),
       fluentLanguages: _toArray(safe.fluentLanguages),
       localExpertise: _toArray(safe.localExpertise),
@@ -196,6 +202,9 @@ export function dispatchProfileAction(action, user) {
     var requiredError = _validateRequired(cleaned);
     if (requiredError) throw new Error(requiredError);
 
+    // ── FIX 2: Debug log to verify socialLinks are flowing through ──
+    console.log("Saving profile:", cleaned);
+
     var usernameLower = cleaned.username.toLowerCase();
     if (await _isUsernameTaken(db, uid, usernameLower)) {
       throw new Error("That username is already taken. Try another.");
@@ -217,6 +226,8 @@ export function dispatchProfileAction(action, user) {
       fluentLanguages: cleaned.fluentLanguages,
       localExpertise: cleaned.localExpertise,
       links: cleaned.links,
+      // ── FIX 3: Include socialLinks in the Firestore save payload ──
+      socialLinks: cleaned.socialLinks || [],
       lastActive: firebase.firestore.FieldValue.serverTimestamp(),
       status: {
         isOnline: !!(cleaned.status && cleaned.status.isOnline),
@@ -234,6 +245,7 @@ export function dispatchProfileAction(action, user) {
     return Object.assign({}, existing.exists ? existing.data() : {}, payload);
   }
 
+  // ── FIX 1: _readFormState correctly reads social link inputs ──────
   function _readFormState() {
     var next = Object.assign({}, _myProfileState.profile || {});
     var name = document.getElementById("vmpName");
@@ -247,18 +259,20 @@ export function dispatchProfileAction(action, user) {
     next.bio = bio ? bio.value.trim() : next.bio;
     next.interests = interests ? _toArray(interests.value) : next.interests;
     next.location = location ? location.value.trim() : next.location;
-     // inside _readFormState(), after:
-//   next.location = location ? location.value.trim() : next.location;
 
-var socialInputs = document.querySelectorAll('.vmp-social-input');
-if (socialInputs.length > 0) {
-  next.socialLinks = Array.from(socialInputs)
-    .map(function(inp) { return inp.value.trim(); })
-    .filter(Boolean)
-    .map(function(url) {
-      return { url: url, type: window.detectPlatform ? window.detectPlatform(url) : 'custom' };
-    });
-}
+    // FIX 1: Read all social link inputs and map to {url, type} objects.
+    // detectPlatform is imported at the top and exposed on window as well.
+    var socialInputs = document.querySelectorAll('.vmp-social-input');
+    next.socialLinks = Array.from(socialInputs)
+      .map(function (inp) { return inp.value.trim(); })
+      .filter(Boolean)
+      .map(function (url) {
+        return {
+          url: url,
+          type: window.detectPlatform ? window.detectPlatform(url) : 'custom'
+        };
+      });
+
     return next;
   }
 
@@ -298,6 +312,7 @@ if (socialInputs.length > 0) {
     }
     if (saveBtn) {
       saveBtn.addEventListener("click", async function () {
+        // _readFormState() now captures socialLinks correctly (FIX 1)
         var next = _readFormState();
         try {
           await saveProfile(uid, Object.assign({}, next, { status: _myProfileState.status || {} }));
@@ -316,44 +331,42 @@ if (socialInputs.length > 0) {
       });
     }
 
-     // ── Social Links: dynamic add/remove ─────────────────────────────
-var host = _myProfileState.host;
+    // ── Social Links: dynamic add/remove ─────────────────────────────
+    function _bindSocialEditorEvents() {
+      var list = document.getElementById('vmpSocialList');
+      var addBtn = document.getElementById('vmpAddSocialBtn');
 
-function _bindSocialEditorEvents() {
-  var list = document.getElementById('vmpSocialList');
-  var addBtn = document.getElementById('vmpAddSocialBtn');
+      if (addBtn) {
+        addBtn.addEventListener('click', function () {
+          if (!list) return;
+          var idx = list.querySelectorAll('.vmp-social-row').length;
+          var row = document.createElement('div');
+          row.className = 'vmp-social-row';
+          row.dataset.idx = idx;
+          row.innerHTML =
+            '<input class="vmp-input vmp-social-input" value="" placeholder="https://instagram.com/username">' +
+            '<button type="button" class="vmp-social-remove" data-idx="' + idx + '" title="Remove">×</button>';
+          list.appendChild(row);
+          var newInput = row.querySelector('.vmp-social-input');
+          if (newInput) newInput.focus();
+          _bindRemoveButtons(list);
+        });
+      }
 
-  if (addBtn) {
-    addBtn.addEventListener('click', function() {
-      if (!list) return;
-      var idx = list.querySelectorAll('.vmp-social-row').length;
-      var row = document.createElement('div');
-      row.className = 'vmp-social-row';
-      row.dataset.idx = idx;
-      row.innerHTML =
-        '<input class="vmp-input vmp-social-input" value="" placeholder="https://instagram.com/username">' +
-        '<button type="button" class="vmp-social-remove" data-idx="' + idx + '" title="Remove">×</button>';
-      list.appendChild(row);
-      var newInput = row.querySelector('.vmp-social-input');
-      if (newInput) newInput.focus();
-      _bindRemoveButtons(list);
-    });
-  }
+      if (list) _bindRemoveButtons(list);
+    }
 
-  if (list) _bindRemoveButtons(list);
-}
+    function _bindRemoveButtons(list) {
+      list.querySelectorAll('.vmp-social-remove').forEach(function (btn) {
+        btn.onclick = function () {
+          var row = btn.closest('.vmp-social-row');
+          if (row) row.remove();
+        };
+      });
+    }
 
-function _bindRemoveButtons(list) {
-  list.querySelectorAll('.vmp-social-remove').forEach(function(btn) {
-    btn.onclick = function() {
-      var row = btn.closest('.vmp-social-row');
-      if (row) row.remove();
-    };
-  });
-}
+    _bindSocialEditorEvents();
 
-_bindSocialEditorEvents();
-     
     if (toggle) {
       toggle.addEventListener("change", async function () {
         try {
@@ -536,10 +549,11 @@ _bindSocialEditorEvents();
       var auth = _getAuth();
       if (!auth) throw new Error("Auth not available. Please refresh.");
       if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
+      // FIX: 'cleaned' is not in scope here; use an empty array as the correct default
       var profile = await saveProfile(user.uid, {
         name: user.displayName || "",
         username: username,
-         socialLinks: cleaned.socialLinks || [],
+        socialLinks: [],
         city: city || "Unknown",
         status: {
           isOnline: true,
