@@ -1060,6 +1060,16 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       "</div>" +
       "";
 
+// Add inside the item.innerHTML, make the avatar a separate clickable zone:
+var avatarEl = item.querySelector('.vc-chat-list-avatar');
+if (avatarEl) {
+  avatarEl.addEventListener('click', function(e) {
+    e.stopPropagation(); // don't open chat, just show modal
+    _getUserProfileCached(db, chat.otherUid).then(function(p) {
+      openProfileModal(Object.assign({ uid: chat.otherUid }, p));
+    });
+  });
+}
     item.addEventListener("click", function () {
       if (!chat.otherUid) {
         console.error("[Vaani] Chat list click: missing otherUid");
@@ -2037,6 +2047,18 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
       console.log("[Vaani] Menu action tapped for:", username);
     };
 
+var chatAvatar = chatScreen.querySelector('.vc-chat-avatar');
+if (chatAvatar && _selectedChatUser) {
+  chatAvatar.style.cursor = 'pointer';
+  chatAvatar.addEventListener('click', function() {
+    var db = window.vaaniRouter && window.vaaniRouter.getDb ? window.vaaniRouter.getDb() : null;
+    if (!db) return;
+    _getUserProfileCached(db, _selectedChatUser.uid).then(function(p) {
+      openProfileModal(Object.assign({ uid: _selectedChatUser.uid }, p));
+    });
+  });
+}
+     
     var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
     function _toggleSendState() {
       if (!messageInput || !sendBtn) return;
@@ -2182,4 +2204,126 @@ if (window.vaaniChat && Array.isArray(window.vaaniChat.conversations)) {
   };
 
   console.log("[Vaani] chat.js v4.2 loaded ✓");
+
+/* ========================================================= */ 
+   // ── Profile Modal ─────────────────────────────────────────────
+function _detectSocialPlatform(url) {
+  if (!url) return null;
+  var u = String(url).toLowerCase();
+  if (u.includes('instagram.com'))  return 'instagram';
+  if (u.includes('linkedin.com'))   return 'linkedin';
+  if (u.includes('twitter.com') || u.includes('x.com')) return 'twitter';
+  if (u.includes('threads.net'))    return 'threads';
+  if (u.includes('snapchat.com'))   return 'snapchat';
+  return 'website';
+}
+
+function _socialIcon(platform) {
+  var icons = {
+    instagram: '<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>',
+    linkedin:  '<svg viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>',
+    twitter:   '<svg class="pm-social-x" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+    threads:   '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>',
+    website:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'
+  };
+  return icons[platform] || icons.website;
+}
+
+function openProfileModal(profile) {
+  if (!profile) return;
+
+  var existing = document.getElementById('vaaniProfileModal');
+  if (existing) existing.remove();
+
+  var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  var name      = _esc(profile.displayName || profile.name || profile.username || 'User');
+  var username  = _esc(profile.username || 'user');
+  var photoURL  = profile.photoURL || '';
+  var bio       = _esc(profile.bio || '');
+  var langs     = Array.isArray(profile.fluentLanguages) ? profile.fluentLanguages : [];
+  var links     = profile.links && typeof profile.links === 'object' ? profile.links : {};
+  var initial   = (name.charAt(0) || 'U').toUpperCase();
+
+  // Avatar HTML
+  var avatarHTML = photoURL
+    ? '<img src="' + _esc(photoURL) + '" alt="' + name + ' avatar" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\';">' +
+      '<div class="pm-img-fallback" style="display:none;">' + initial + '</div>'
+    : '<div class="pm-img-fallback">' + initial + '</div>';
+
+  // Lang tags
+  var langHTML = langs.slice(0, 4).map(function(l) {
+    return '<span class="pm-lang">' + _esc(l) + '</span>';
+  }).join('');
+
+  // Social links (auto-detect platform)
+  var socialHTML = Object.values(links).filter(Boolean).slice(0, 5).map(function(url) {
+    var platform = _detectSocialPlatform(url);
+    return '<a class="pm-social' + (platform === 'twitter' ? ' pm-social-x' : '') + '" href="' + _esc(url) + '" target="_blank" rel="noopener" title="' + platform + '">' +
+      _socialIcon(platform) + '</a>';
+  }).join('');
+
+  var overlay = document.createElement('div');
+  overlay.id = 'vaaniProfileModal';
+  overlay.className = 'pm-overlay';
+  if (theme === 'light') overlay.setAttribute('data-theme', 'light');
+
+  overlay.innerHTML =
+    '<div class="pm-card" role="dialog" aria-label="' + name + '\'s profile">' +
+      '<button class="pm-close" aria-label="Close profile">' +
+        '<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
+      '<div class="pm-img-wrap">' + avatarHTML +
+        '<div class="pm-identity">' +
+          '<div class="pm-identity-name">' + name + '</div>' +
+          '<div class="pm-identity-user">@' + username + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="pm-body">' +
+        (bio ? '<div class="pm-bio">' + bio + '</div>' : '') +
+        (langHTML ? '<div class="pm-langs">' + langHTML + '</div>' : '') +
+        (socialHTML ? '<div class="pm-divider"></div><div class="pm-socials">' + socialHTML + '</div>' : '') +
+        '<button class="pm-msg-btn" id="pmMsgBtn">' +
+          '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+          'Message' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  // Close on backdrop click
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) _closeProfileModal();
+  });
+
+  // Close button
+  overlay.querySelector('.pm-close').addEventListener('click', _closeProfileModal);
+
+  // ESC key
+  function onKeyDown(e) {
+    if (e.key === 'Escape') { _closeProfileModal(); document.removeEventListener('keydown', onKeyDown); }
+  }
+  document.addEventListener('keydown', onKeyDown);
+
+  // Message button
+  var msgBtn = overlay.querySelector('#pmMsgBtn');
+  if (msgBtn) {
+    msgBtn.addEventListener('click', function() {
+      _closeProfileModal();
+      if (profile.uid) {
+        var db = window.vaaniRouter && window.vaaniRouter.getDb ? window.vaaniRouter.getDb() : null;
+        if (db) _openChatWithUser(profile);
+      }
+    });
+  }
+}
+
+function _closeProfileModal() {
+  var modal = document.getElementById('vaaniProfileModal');
+  if (!modal) return;
+  modal.style.opacity = '0';
+  modal.style.transition = 'opacity 0.18s ease';
+  setTimeout(function() { if (modal.parentNode) modal.parentNode.removeChild(modal); }, 180);
+}
+ /* ========================================================= */   
 })();
