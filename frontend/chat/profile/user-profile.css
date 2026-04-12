@@ -400,3 +400,62 @@ body {
   .vp-hero__name { font-size: 19px; }
   .btn-primary { font-size: 13px; padding: 8px 16px; }
 }
+
+/* Square image block — replaces circular avatar */
+#vaaniChat .vmp-img-wrap {
+  position: relative;
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1e1040, #0b0f19);
+}
+
+#vaaniChat .vmp-photo {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  border-radius: 0;            /* ← kill any inherited radius */
+}
+
+#vaaniChat .vmp-photo-fallback {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 64px; color: rgba(167,139,250,0.18);
+  border-radius: 0;            /* ← no circle */
+}
+
+/* Gradient overlay */
+#vaaniChat .vmp-img-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,0.82) 100%);
+  pointer-events: none;
+}
+[data-theme="light"] #vaaniChat .vmp-img-overlay {
+  background: linear-gradient(to bottom, rgba(255,255,255,0) 20%, rgba(255,255,255,0.88) 100%);
+}
+
+/* Identity text inside image */
+#vaaniChat .vmp-identity {
+  position: absolute; bottom: 14px; left: 0; right: 0;
+  text-align: center; padding: 0 16px; z-index: 2;
+}
+#vaaniChat .vmp-identity-name {
+  font-size: 18px; font-weight: 600; color: #fff;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.45);
+}
+[data-theme="light"] #vaaniChat .vmp-identity-name { color: #1a1a1a; }
+#vaaniChat .vmp-identity-user { font-size: 12px; color: rgba(255,255,255,0.58); margin-top: 2px; }
+[data-theme="light"] #vaaniChat .vmp-identity-user { color: #555; }
+
+/* Hover-to-change-photo in edit mode */
+#vaaniChat .vmp-edit-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0);
+  display: flex; align-items: center; justify-content: center;
+  transition: background .2s; cursor: pointer; z-index: 3;
+}
+#vaaniChat .vmp-edit-overlay:hover { background: rgba(0,0,0,0.38); }
+#vaaniChat .vmp-edit-overlay span {
+  opacity: 0; color: #fff; font-size: 12px; padding: 6px 12px;
+  border-radius: 8px; background: rgba(0,0,0,0.45); transition: opacity .2s;
+}
+#vaaniChat .vmp-edit-overlay:hover span { opacity: 1; }
