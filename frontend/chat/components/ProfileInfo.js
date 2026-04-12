@@ -8,20 +8,20 @@ export function profileInfoTemplate(profile, isEditing) {
   var name = profile.name || 'Unnamed User';
   var username = profile.username || 'user';
   var photoURL = profile.photoURL || '';
-  var fallback = (name.charAt(0) || username.charAt(0) || 'U').toUpperCase();
-
-  var photoButtonTitle = isEditing ? 'Open photo' : 'Change photo';
+  var fallback = (name.charAt(0) || 'U').toUpperCase();
 
   return '<section class="vmp-card vmp-info">' +
-    '<button type="button" class="vmp-photo-btn" id="vmpPhotoBtn" title="' + esc(photoButtonTitle) + '">' +
+    '<div class="vmp-img-wrap">' +
       (photoURL
         ? '<img src="' + esc(photoURL) + '" class="vmp-photo" alt="Profile photo">'
-        : '<span class="vmp-photo-fallback">' + esc(fallback) + '</span>') +
-    '</button>' +
+        : '<div class="vmp-photo-fallback">' + esc(fallback) + '</div>') +
+      '<div class="vmp-img-overlay"></div>' +
+      (isEditing ? '<div class="vmp-edit-overlay" id="vmpEditPhoto"><span>Change photo</span></div>' : '') +
+      '<div class="vmp-identity">' +
+        '<div class="vmp-identity-name">' + esc(name) + '</div>' +
+        '<div class="vmp-identity-user">@' + esc(username) + '</div>' +
+      '</div>' +
+    '</div>' +
     '<input id="vmpPhotoInput" class="vmp-hidden-input" type="file" accept="image/*">' +
-    '<button type="button" class="vmp-link-btn" id="vmpChangePhotoBtn">Change Photo</button>' +
-    '<div class="vmp-name">' + esc(name) + '</div>' +
-    '<div class="vmp-username">@' + esc(username) + '</div>' +
-    (isEditing ? '<p class="vmp-muted">Photo updates save immediately.</p>' : '') +
     '</section>';
 }
