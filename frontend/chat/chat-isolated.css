@@ -1739,8 +1739,10 @@ body.vm-menu-open {
 }
 
 #vaaniChat .vc-settings-panel {
-  margin: 16px;
-  padding: 18px;
+  margin: 24px auto;
+  padding: 20px 24px;
+  max-width: 520px;
+  width: calc(100% - 32px);
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.12);
   background: var(--bg2, #0e0e1a);
