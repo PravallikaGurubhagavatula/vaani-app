@@ -2019,3 +2019,150 @@ body.vm-menu-open {
   border-color: rgba(124,58,237,0.65);
   color: #c4b5fd;
 }
+
+/*
+ * social-icons-theme.css  — Append this to your existing profile CSS
+ * (or merge the rules below into the existing stylesheet)
+ *
+ * FIX 7 + FIX 8: Theme-safe social icon colours
+ * ─────────────────────────────────────────────
+ * We add --icon-bg and --icon-color CSS variables at the :root level
+ * so they default to the dark theme (matching the existing dark palette
+ * in profile.css), then override them for [data-theme="light"].
+ *
+ * All icon SVGs use `stroke: currentColor` in ProfileAbout.js already,
+ * so setting `color` on .vmp-social-icon is all that's needed.
+ */
+
+/* ── Default (dark theme) variables ─────────────────────────────── */
+:root {
+  --icon-bg:    rgba(255, 255, 255, 0.08);
+  --icon-color: #e5e7eb;
+}
+
+/* ── Explicit dark-theme override ────────────────────────────────── */
+[data-theme="dark"] {
+  --icon-bg:    rgba(255, 255, 255, 0.08);
+  --icon-color: #e5e7eb;
+}
+
+/* ── Light-theme override ────────────────────────────────────────── */
+[data-theme="light"] {
+  --icon-bg:    rgba(0, 0, 0, 0.05);
+  --icon-color: #111827;
+}
+
+/* ── Social icon button (view mode) ─────────────────────────────── */
+/* FIX 7: color inherits from the variable; SVG strokes follow via currentColor */
+.vmp-social-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--icon-bg);
+  color: var(--icon-color);          /* FIX 7 */
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.vmp-social-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;              /* FIX 7 — ensures SVG strokes follow color var */
+  fill: none;
+  display: block;
+}
+
+.vmp-social-icon:hover {
+  background: var(--accent-soft);
+  color: #c4b5fd;
+  transform: translateY(-2px);
+}
+
+/* ── Social icons container ─────────────────────────────────────── */
+.vmp-social-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── Edit-mode social rows ───────────────────────────────────────── */
+.vmp-social-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.vmp-social-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.vmp-social-row .vmp-input {
+  flex: 1;
+}
+
+.vmp-social-remove {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  font-family: inherit;
+}
+
+.vmp-social-remove:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #f87171;
+}
+
+.vmp-social-add,
+.vmp-social-section-title {
+  /* section title styling — matches existing .vmp-section-title pattern */
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 14px;
+  margin-bottom: 8px;
+}
+
+.vmp-social-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(124, 58, 237, 0.12);
+  border: 1px dashed rgba(124, 58, 237, 0.4);
+  border-radius: var(--radius-sm, 8px);
+  color: #c4b5fd;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  margin-top: 4px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.vmp-social-add:hover {
+  background: rgba(124, 58, 237, 0.22);
+  border-color: rgba(124, 58, 237, 0.65);
+}
