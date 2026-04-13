@@ -445,7 +445,7 @@ import {
     settingsHost.innerHTML =
       '<div class="vc-settings-panel">' +
         '<h3 class="vc-settings-title">Status privacy</h3>' +
-        '<p class="vc-settings-note">Control what other users can see in chat headers.</p>' +
+        '<p class="vc-settings-note">Show when you're online and last seen.</p>' +
         '<div class="vc-status-toggle-row">' +
           '<span>Show my live status</span>' +
           '<label class="switch"><input type="checkbox" id="vcStatusPrivacyToggle"><span class="slider"></span></label>' +
