@@ -2200,7 +2200,18 @@ if (avatarEl) {
     _scrollMessagesToBottom(true);
 
     var backBtn = document.getElementById("backBtn");
-    if (backBtn) backBtn.onclick = function () { _setSelectedChatUser(null); };
+    if (backBtn) backBtn.onclick = function () {
+      // Drive the transition through history.back() so the browser
+      // stack stays consistent and popstate fires with chatView="home",
+      // which will call handleHistoryState → show the chat list.
+      if (window.history.length > 1 &&
+          history.state && history.state.chatView === "chat") {
+        history.back();
+      } else {
+        // No matching history entry — fall back to direct state mutation.
+        _setSelectedChatUser(null);
+      }
+    };
     var menuBtn = document.getElementById("chatMenuBtn");
     if (menuBtn) menuBtn.onclick = function () {
       console.log("[Vaani] Menu action tapped for:", username);
@@ -2380,6 +2391,9 @@ if (chatAvatar && _selectedChatUser) {
         _panelView = "home";
         _selectedChatUser = null;
         _syncViewWithSelection(true);
+        // Re-paint the chat list so it is never blank when the user
+        // returns to Chat via the hardware/browser back button.
+        if (typeof _renderChatList === "function") _renderChatList();
       }
       _lastPushedChatView = chatView === "home" ? null : chatView;
     },
