@@ -443,8 +443,18 @@ import {
     if (!settingsHost || !db || !currentUid) return;
 
     settingsHost.innerHTML =
-      '<div class="vc-settings-panel">' +
-        '<h3 class="vc-settings-title">Status privacy</h3>' +
+  '<div class="vc-settings-panel">' +
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
+      '<button id="vcSettingsBackBtn" style="background:none;border:1px solid rgba(255,255,255,0.1);' +
+        'color:var(--text,#e8e8f6);border-radius:8px;width:32px;height:32px;cursor:pointer;' +
+        'display:flex;align-items:center;justify-content:center;" aria-label="Back">' +
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" ' +
+          'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<polyline points="15 18 9 12 15 6"/>' +
+        '</svg>' +
+      '</button>' +
+      '<h3 class="vc-settings-title" style="margin:0;">Status privacy</h3>' +
+    '</div>' +
         '<p class="vc-settings-note">Show when you are online and last seen.</p>' +
         '<div class="vc-status-toggle-row">' +
           '<span>Show my live status</span>' +
@@ -452,6 +462,21 @@ import {
         '</div>' +
       '</div>';
 
+    var settingsBackBtn = document.getElementById("vcSettingsBackBtn");
+if (settingsBackBtn) {
+  settingsBackBtn.addEventListener("click", function () {
+    // Prefer history.back() if we pushed an entry; fall back to direct state mutation
+    if (history.state && history.state.chatView === "settings" &&
+        (history.state._depth || 0) > 1) {
+      history.back();
+    } else {
+      _panelView = "home";
+      _setSelectedChatUser(null);
+      _syncViewWithSelection(false);
+      if (typeof _renderChatList === "function") _renderChatList();
+    }
+  });
+}
     var toggle = document.getElementById("vcStatusPrivacyToggle");
     db.collection("users").doc(currentUid).get().then(function (doc) {
       var data = doc && doc.exists ? (doc.data() || {}) : {};
@@ -471,8 +496,14 @@ import {
       });
     }
 
-    _panelView = "settings";
-    _syncViewWithSelection(false);
+    // AFTER
+_panelView = "settings";
+_syncViewWithSelection(false);
+
+// Push a history entry so browser back returns to #chat
+var d = (history.state && history.state._depth) || 1;
+history.pushState({ page: "Chat", chatView: "settings", _depth: d + 1 }, "", "#chat");
+if (window.VaaniNav) window.VaaniNav.sync();
   }
 
   function _renderLogin() {
