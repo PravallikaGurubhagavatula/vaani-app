@@ -2166,10 +2166,20 @@ window.addEventListener("popstate", (e) => {
     document.getElementById(`menu${p}`)?.classList.toggle("active", p === page);
   });
   _syncChatViewportLock(page);
-  closeMenu(); _onPageActivate(page);
+  closeMenu();
+
   if (page === "Chat" && window.vaaniChat && typeof window.vaaniChat.handleHistoryState === "function") {
-        window.vaaniChat.handleHistoryState(e.state || { page: "Chat", chatView: "home", _depth: 1 });
+    // Always delegate Chat page pops to handleHistoryState.
+    // It reads e.state.chatView to decide what to show:
+    //   chatView="chat" → keep open conversation visible
+    //   chatView="home" → render chat list  ← the "back from chat" case
+    // Calling _onPageActivate("Chat") here would re-trigger vaaniChat.open()
+    // (auth check + full re-render) instead of simply revealing the list.
+    window.vaaniChat.handleHistoryState(e.state || { page: "Chat", chatView: "home", _depth: 1 });
+  } else {
+    _onPageActivate(page);
   }
+
   Object.values(_mic).forEach(ctx => { _killMic(ctx); });
   ["micBtn", "micBtnA", "micBtnB"].forEach(id => document.getElementById(id)?.classList.remove("listening"));
 });
