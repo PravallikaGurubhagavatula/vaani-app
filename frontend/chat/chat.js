@@ -2010,16 +2010,23 @@ if (avatarEl) {
   }
 
   // ── FIX 6: sendMessage — always include sorted participants[] ────────────
-  async function sendMessage(chatId, text, currentUid, otherUid) {
+  async function sendMessage(chatId, text, currentUid, otherUid, replyTo) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     if (!db || !chatId || !text || !currentUid || !otherUid) return;
-    // participants must be sorted to match the Firestore rule check
     var participants = [String(currentUid), String(otherUid)].sort();
-    await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add({
+    var msgData = {
       text: text, senderId: currentUid, receiverId: otherUid,
       participants: participants, chatId: chatId,
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    };
+    if (replyTo && replyTo.id) {
+      msgData.replyTo = {
+        id: String(replyTo.id),
+        text: String(replyTo.text || "").slice(0, 200),
+        senderId: String(replyTo.senderId || "")
+      };
+    }
+    await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add(msgData);
     await db.collection(CHATS_COLLECTION).doc(chatId).update({
       lastMessage: text, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -2088,7 +2095,9 @@ function _renderReplyBanner() {
     inputEl.value = ""; _setInputMessage("");
 
     try {
-      await sendMessage(_activeChatId, inputMessage, currentUid, otherUid);
+      var replySnapshot = _replyToMessage || null;
+      await sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot);
+      _setReplyTo(null); // clear reply banner after successful send
       console.log("[Vaani] _sendMessage: write succeeded");
     } catch (err) {
       _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
