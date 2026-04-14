@@ -28,6 +28,7 @@
 ================================================================ */
 
 const API_URL = "https://vaani-app-ui0z.onrender.com";
+window.API_URL = API_URL;
 
 // ── GLOBAL AUTH STATE ─────────────────────────────────────────────
 window.VAANI_AUTH_READY  = false;
