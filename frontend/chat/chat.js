@@ -2120,15 +2120,64 @@ function _renderReplyBanner() {
       var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
       var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
 
-      // Reply on swipe-right or double-click
-      var pressTimer = null;
-      bubble.addEventListener("dblclick", function () { _setReplyTo(msg); });
-      bubble.addEventListener("touchstart", function () {
-        pressTimer = setTimeout(function () { _setReplyTo(msg); }, 500);
+      // ── Swipe-to-reply (touch + mouse) ──────────────────────────
+      var swipeStartX = 0, swipeStartY = 0, swipeDx = 0;
+      var swipeActive = false, swipeThreshold = 80, swipeMaxY = 40;
+      var swipeTriggered = false;
+
+      function _onSwipeStart(clientX, clientY) {
+        swipeStartX = clientX; swipeStartY = clientY;
+        swipeDx = 0; swipeActive = true; swipeTriggered = false;
+        bubble.style.transition = "none";
+      }
+
+      function _onSwipeMove(clientX, clientY) {
+        if (!swipeActive) return;
+        var dx = clientX - swipeStartX;
+        var dy = Math.abs(clientY - swipeStartY);
+        if (dy > swipeMaxY) { _onSwipeEnd(); return; }   // mostly vertical — cancel
+        if (dx < 0) { _onSwipeEnd(); return; }           // left swipe — ignore
+        swipeDx = Math.min(dx, swipeThreshold);
+        bubble.style.transform = "translateX(" + swipeDx + "px)";
+        if (swipeDx >= swipeThreshold && !swipeTriggered) {
+          swipeTriggered = true;
+          _setReplyTo(msg);
+          if (window.navigator && typeof window.navigator.vibrate === "function") {
+            window.navigator.vibrate(30);
+          }
+        }
+      }
+
+      function _onSwipeEnd() {
+        if (!swipeActive) return;
+        swipeActive = false;
+        bubble.style.transition = "transform 0.22s cubic-bezier(0.25,0.46,0.45,0.94)";
+        bubble.style.transform = "translateX(0)";
+      }
+
+      // Touch
+      bubble.addEventListener("touchstart", function (e) {
+        var t = e.touches[0];
+        _onSwipeStart(t.clientX, t.clientY);
       }, { passive: true });
-      bubble.addEventListener("touchend", function () {
-        if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+
+      bubble.addEventListener("touchmove", function (e) {
+        var t = e.touches[0];
+        _onSwipeMove(t.clientX, t.clientY);
       }, { passive: true });
+
+      bubble.addEventListener("touchend",   _onSwipeEnd, { passive: true });
+      bubble.addEventListener("touchcancel", _onSwipeEnd, { passive: true });
+
+      // Mouse (desktop)
+      bubble.addEventListener("mousedown", function (e) {
+        if (e.button !== 0) return;
+        _onSwipeStart(e.clientX, e.clientY);
+        function onMouseMove(e) { _onSwipeMove(e.clientX, e.clientY); }
+        function onMouseUp()   { _onSwipeEnd(); document.removeEventListener("mousemove", onMouseMove); document.removeEventListener("mouseup", onMouseUp); }
+        document.addEventListener("mousemove", onMouseMove);
+        document.addEventListener("mouseup",   onMouseUp);
+      });
 
       row.appendChild(bubble); container.appendChild(row);
     });
