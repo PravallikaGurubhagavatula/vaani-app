@@ -2964,3 +2964,85 @@ body.vm-menu-open {
 [data-theme="light"] #vaaniChat .vc-reply-banner-close {
   color: var(--text2, #5a5a72);
 }
+
+/* ── Reply preview inside message bubble ────────────────────── */
+#vaaniChat .vc-msg-reply-preview {
+  padding: 5px 8px;
+  margin-bottom: 5px;
+  border-radius: 6px;
+  border-left: 2.5px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.15);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+#vaaniChat .vc-msg-own .vc-msg-reply-preview {
+  border-left-color: rgba(255, 255, 255, 0.45);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+#vaaniChat .vc-msg-other .vc-msg-reply-preview {
+  border-left-color: #8E7BEF;
+  background: rgba(142, 123, 239, 0.1);
+}
+
+#vaaniChat .vc-msg-reply-author {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 2px;
+  line-height: 1.2;
+}
+
+#vaaniChat .vc-msg-own .vc-msg-reply-author {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+#vaaniChat .vc-msg-other .vc-msg-reply-author {
+  color: #a78bfa;
+}
+
+#vaaniChat .vc-msg-reply-text {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+#vaaniChat .vc-msg-own .vc-msg-reply-text {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+#vaaniChat .vc-msg-other .vc-msg-reply-text {
+  color: rgba(236, 236, 255, 0.6);
+}
+
+#vaaniChat .vc-msg-text {
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+/* Light theme */
+[data-theme="light"] #vaaniChat .vc-msg-other .vc-msg-reply-preview {
+  border-left-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.08);
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-other .vc-msg-reply-author {
+  color: #7c3aed;
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-other .vc-msg-reply-text {
+  color: #5a5a72;
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-own .vc-msg-reply-preview {
+  background: rgba(0, 0, 0, 0.12);
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-own .vc-msg-reply-text {
+  color: rgba(255, 255, 255, 0.7);
+}
