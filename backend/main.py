@@ -23,17 +23,15 @@ Bhashini is unconfigured or down.
 ═══════════════════════════════════════════════════════════════════
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from gtts import gTTS
 from gtts.lang import tts_langs
 from deep_translator import GoogleTranslator
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import requests, io, os, re, json, base64, hashlib, time
-from uuid import uuid4
 from functools import lru_cache
 
 app = FastAPI(title="Vaani API", version="3.0")
@@ -44,10 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-VOICE_UPLOAD_DIR = os.path.join("/tmp", "vaani_voice_uploads")
-os.makedirs(VOICE_UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads/voice", StaticFiles(directory=VOICE_UPLOAD_DIR), name="voice_uploads")
 
 # ══════════════════════════════════════════════════════════════════
 # BHASHINI CONFIG
@@ -716,51 +710,6 @@ async def asr_endpoint(data: dict):
         return {"transcript": transcript, "engine": "bhashini"}
     return JSONResponse(status_code=503,
                         content={"error": "Bhashini ASR unavailable — use browser mic"})
-
-
-@app.post("/chat/voice/upload")
-@app.post("/api/chat/voice/upload")
-async def upload_voice_message(
-    request: Request,
-    file: UploadFile = File(...),
-    duration_ms: int = Form(0)
-):
-    if not file:
-        return JSONResponse(status_code=400, content={"error": "Missing audio file"})
-
-    content_type = (file.content_type or "").lower()
-    if not content_type.startswith("audio/"):
-        return JSONResponse(status_code=400, content={"error": f"Invalid file type: {content_type or 'unknown'}"})
-
-    payload = await file.read()
-    if not payload:
-        return JSONResponse(status_code=400, content={"error": "Audio file is empty"})
-
-    ext = ".webm"
-    if "mpeg" in content_type or "mp3" in content_type:
-        ext = ".mp3"
-    elif "wav" in content_type:
-        ext = ".wav"
-    elif "ogg" in content_type:
-        ext = ".ogg"
-
-    max_bytes = 12 * 1024 * 1024
-    if len(payload) > max_bytes:
-        return JSONResponse(status_code=413, content={"error": "Audio file too large (max 12MB)"})
-
-    file_name = f"{int(time.time())}_{uuid4().hex}{ext}"
-    out_path = os.path.join(VOICE_UPLOAD_DIR, file_name)
-    with open(out_path, "wb") as out_file:
-        out_file.write(payload)
-
-    audio_url = str(request.base_url).rstrip("/") + f"/uploads/voice/{file_name}"
-    return {
-        "success": True,
-        "audioUrl": audio_url,
-        "mimeType": content_type,
-        "durationMs": max(0, int(duration_ms or 0)),
-        "size": len(payload)
-    }
 
 
 @app.post("/image-translate")
