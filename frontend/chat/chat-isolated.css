@@ -1472,6 +1472,33 @@ body.vm-menu-open {
   letter-spacing: 0.02em;
 }
 
+#vaaniChat .vc-recording-duration.is-error {
+  color: #fb7185;
+}
+
+#vaaniChat .vc-chat-voice-retry,
+#vaaniChat .vc-chat-voice-cancel {
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.04);
+  color: #d4d4ee;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+#vaaniChat .vc-chat-voice-retry {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+#vaaniChat .vc-chat-voice-cancel {
+  border-color: rgba(244, 114, 182, 0.4);
+  color: #fbcfe8;
+}
+
 /* ── Theme responsiveness: chat light mode parity ───────────────────────── */
 #vaaniChat,
 #vaaniChat .vg-card,

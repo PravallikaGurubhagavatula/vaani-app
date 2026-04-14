@@ -83,6 +83,11 @@ import {
   var _pendingIncomingUidSet = new Set();
   var VOICE_UPLOAD_API_BASE = _resolveVoiceUploadApiBase();
   var _voiceUploadInFlight = false;
+  var _voiceUploadError = "";
+  var _voicePendingDraft = null;
+  var _voiceUploadCancelFn = null;
+  var VOICE_UPLOAD_TIMEOUT_MS = 10000;
+  var VOICE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -2249,17 +2254,28 @@ function _renderReplyBanner() {
   function _renderVoiceRecordingState() {
     var durationEl = document.getElementById("vcRecordingDuration");
     var micBtn = document.getElementById("voiceRecordBtn");
+    var retryBtn = document.getElementById("voiceRetryBtn");
+    var cancelBtn = document.getElementById("voiceCancelBtn");
+    var messageInput = document.getElementById("messageInput");
+    var sendBtn = document.getElementById("sendBtn");
     if (durationEl) {
       if (_voiceRecordingActive) {
         var elapsed = Math.max(0, Date.now() - _voiceRecordStartTs);
         durationEl.textContent = _voiceDurationLabel(elapsed);
+        durationEl.classList.remove("is-error");
         durationEl.style.display = "inline-flex";
       } else {
         durationEl.textContent = "";
+        durationEl.classList.remove("is-error");
         durationEl.style.display = "none";
       }
       if (_voiceUploadInFlight) {
         durationEl.textContent = "Uploading…";
+        durationEl.classList.remove("is-error");
+        durationEl.style.display = "inline-flex";
+      } else if (_voiceUploadError) {
+        durationEl.textContent = _voiceUploadError;
+        durationEl.classList.add("is-error");
         durationEl.style.display = "inline-flex";
       }
     }
@@ -2268,6 +2284,15 @@ function _renderReplyBanner() {
       micBtn.setAttribute("aria-label", _voiceRecordingActive ? "Recording voice message" : "Hold to record voice message");
       micBtn.disabled = !!_voiceUploadInFlight;
     }
+    if (retryBtn) {
+      retryBtn.style.display = (!_voiceUploadInFlight && !!_voiceUploadError && !!_voicePendingDraft) ? "inline-flex" : "none";
+    }
+    if (cancelBtn) {
+      cancelBtn.style.display = _voiceUploadInFlight ? "inline-flex" : "none";
+      cancelBtn.disabled = !_voiceUploadInFlight;
+    }
+    if (messageInput) messageInput.disabled = !!_voiceUploadInFlight;
+    if (sendBtn && _voiceUploadInFlight) sendBtn.disabled = true;
   }
 
   function _cleanupVoiceStream() {
@@ -2323,46 +2348,92 @@ function _renderReplyBanner() {
     if (!mimeType || String(mimeType).indexOf("audio/") !== 0) {
       throw new Error("Invalid audio mime type: " + String(mimeType || "unknown"));
     }
+    if (blob.size > VOICE_UPLOAD_MAX_BYTES) {
+      throw new Error("Voice message is too large. Please keep it under 10 MB.");
+    }
+    if (Math.max(0, Math.round(Number(durationMs || 0))) <= 0) {
+      throw new Error("Voice message is empty.");
+    }
 
     var ext = "webm";
     if (mimeType.indexOf("mpeg") !== -1 || mimeType.indexOf("mp3") !== -1) ext = "mp3";
     else if (mimeType.indexOf("wav") !== -1) ext = "wav";
     else if (mimeType.indexOf("ogg") !== -1) ext = "ogg";
+    var currentUser = window._vaaniCurrentUser || null;
+    var uploaderUid = currentUser && currentUser.uid ? String(currentUser.uid) : "anon";
+    var objectPath = "voiceMessages/" + uploaderUid + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + "." + ext;
+    console.log("[Vaani][Voice] Upload start", { strategy: "firebase-storage", path: objectPath, size: blob.size, mimeType: mimeType, durationMs: durationMs });
 
+    if (firebase && typeof firebase.storage === "function") {
+      var storage = firebase.storage();
+      var ref = storage.ref(objectPath);
+      var metadata = { contentType: mimeType, customMetadata: { durationMs: String(Math.max(0, Math.round(Number(durationMs || 0)))) } };
+      var uploadTask = ref.put(blob, metadata);
+
+      var taskPromise = new Promise(function (resolve, reject) {
+        var completed = false;
+        var timeoutId = setTimeout(function () {
+          try { uploadTask.cancel(); } catch (e) {}
+          if (completed) return;
+          completed = true;
+          reject(new Error("Voice upload timed out after " + Math.round(VOICE_UPLOAD_TIMEOUT_MS / 1000) + "s"));
+        }, VOICE_UPLOAD_TIMEOUT_MS);
+        _voiceUploadCancelFn = function () {
+          try { uploadTask.cancel(); } catch (e) {}
+        };
+        uploadTask.on("state_changed", null, function (error) {
+          if (completed) return;
+          completed = true;
+          clearTimeout(timeoutId);
+          reject(error || new Error("Voice upload failed"));
+        }, function () {
+          ref.getDownloadURL().then(function (audioUrl) {
+            if (completed) return;
+            completed = true;
+            clearTimeout(timeoutId);
+            resolve({ success: true, audioUrl: audioUrl, storagePath: objectPath });
+          }).catch(function (urlErr) {
+            if (completed) return;
+            completed = true;
+            clearTimeout(timeoutId);
+            reject(urlErr || new Error("Could not get uploaded voice URL"));
+          });
+        });
+      });
+      try {
+        var storagePayload = await taskPromise;
+        console.log("[Vaani][Voice] Upload success", { strategy: "firebase-storage", path: objectPath, audioUrl: storagePayload.audioUrl });
+        return storagePayload;
+      } finally {
+        _voiceUploadCancelFn = null;
+      }
+    }
+
+    console.warn("[Vaani][Voice] Firebase Storage unavailable, falling back to API:", VOICE_UPLOAD_API_BASE + "/chat/voice/upload");
     var formData = new FormData();
     formData.append("file", blob, "voice-message-" + Date.now() + "." + ext);
     formData.append("duration_ms", String(Math.max(0, Math.round(Number(durationMs || 0)))));
-
-    var response;
-    var uploadErr = null;
-    var uploadUrl = VOICE_UPLOAD_API_BASE + "/chat/voice/upload";
-    for (var attempt = 1; attempt <= 2; attempt++) {
-      try {
-        response = await fetch(uploadUrl, { method: "POST", body: formData });
-        if (!response.ok && response.status >= 500 && attempt < 2) {
-          await new Promise(function (resolve) { setTimeout(resolve, 350); });
-          continue;
-        }
-        uploadErr = null;
-        break;
-      } catch (networkErr) {
-        uploadErr = networkErr;
-        if (attempt < 2) await new Promise(function (resolve) { setTimeout(resolve, 350); });
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, VOICE_UPLOAD_TIMEOUT_MS);
+    _voiceUploadCancelFn = function () { controller.abort(); };
+    try {
+      var response = await fetch(VOICE_UPLOAD_API_BASE + "/chat/voice/upload", { method: "POST", body: formData, signal: controller.signal });
+      if (!response.ok) {
+        var errText = "";
+        try { errText = await response.text(); } catch (e) {}
+        throw new Error("Upload failure (" + response.status + "): " + (errText || "Unknown upload error"));
       }
+      var payload = await response.json().catch(function () { return null; });
+      if (!payload || payload.success === false || !payload.audioUrl) throw new Error("Upload API did not return audioUrl");
+      console.log("[Vaani][Voice] Upload success", { strategy: "api", audioUrl: payload.audioUrl });
+      return payload;
+    } catch (err) {
+      var isAbort = err && (err.name === "AbortError" || String(err.message || "").toLowerCase().indexOf("abort") !== -1);
+      throw new Error(isAbort ? "Voice upload timed out. Please retry." : (err && err.message ? err.message : "Voice upload failed"));
+    } finally {
+      clearTimeout(timeout);
+      _voiceUploadCancelFn = null;
     }
-    if (uploadErr) {
-      throw new Error("Network failure while uploading voice message: " + (uploadErr && uploadErr.message ? uploadErr.message : String(uploadErr)));
-    }
-
-    if (!response.ok) {
-      var errText = "";
-      try { errText = await response.text(); } catch (e) {}
-      throw new Error("Upload failure (" + response.status + "): " + (errText || "Unknown upload error"));
-    }
-
-    var payload = await response.json().catch(function () { return null; });
-    if (!payload || payload.success === false || !payload.audioUrl) throw new Error("Upload API did not return audioUrl");
-    return payload;
   }
 
   async function _sendVoiceMessage(blob, mimeType, durationMs) {
@@ -2377,24 +2448,26 @@ function _renderReplyBanner() {
       if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
     }
     _voiceUploadInFlight = true;
+    _voiceUploadError = "";
+    _voicePendingDraft = { blob: blob, mimeType: mimeType, durationMs: durationMs };
     _renderVoiceRecordingState();
-    var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs);
-    var audioUrl = String(uploadPayload.audioUrl || "");
-    if (!audioUrl) throw new Error("Upload succeeded but audio URL is missing");
     var tempId = "local-voice-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-    _optimisticMessages.push({
-      _optimisticId: tempId,
-      type: "voice",
-      text: "",
-      audioUrl: audioUrl,
-      audioData: audioUrl,
-      audioMimeType: mimeType || "audio/webm",
-      durationMs: Math.max(0, Math.round(Number(durationMs || 0))),
-      senderId: currentUid,
-      timestamp: new Date()
-    });
-    _renderMessages(true);
     try {
+      var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs);
+      var audioUrl = String(uploadPayload.audioUrl || "");
+      if (!audioUrl) throw new Error("Upload succeeded but audio URL is missing");
+      _optimisticMessages.push({
+        _optimisticId: tempId,
+        type: "voice",
+        text: "",
+        audioUrl: audioUrl,
+        audioData: audioUrl,
+        audioMimeType: mimeType || "audio/webm",
+        durationMs: Math.max(0, Math.round(Number(durationMs || 0))),
+        senderId: currentUid,
+        timestamp: new Date()
+      });
+      _renderMessages(true);
       var replySnapshot = _replyToMessage || null;
       await sendMessage(_activeChatId, "", currentUid, otherUid, replySnapshot, {
         type: "voice",
@@ -2404,12 +2477,14 @@ function _renderReplyBanner() {
         durationMs: durationMs,
         duration: Math.max(0, Math.round(Number(durationMs || 0) / 1000))
       });
+      _voicePendingDraft = null;
       _setReplyTo(null);
       _scrollMessagesToBottom(true);
     } catch (err) {
       console.error("[Vaani] _sendVoiceMessage failed:", err && err.message ? err.message : err);
       _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
       _renderMessages(true);
+      _voiceUploadError = "Upload failed";
       if (typeof window.showToast === "function") window.showToast("Voice message failed to send — please try again");
       throw err;
     } finally {
@@ -2740,6 +2815,8 @@ function _renderReplyBanner() {
             '<div class="vc-chat-input-row">' +
               '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
               '<span id="vcRecordingDuration" class="vc-recording-duration" aria-live="polite"></span>' +
+              '<button id="voiceRetryBtn" class="vc-chat-voice-retry" type="button" style="display:none;">Retry</button>' +
+              '<button id="voiceCancelBtn" class="vc-chat-voice-cancel" type="button" style="display:none;">Cancel</button>' +
               '<button id="voiceRecordBtn" class="vc-chat-voice-btn" aria-label="Hold to record voice message">' +
                 '<svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>' +
               '</button>' +
@@ -2795,9 +2872,10 @@ if (chatAvatar && _selectedChatUser) {
 }
      
     var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn"), voiceRecordBtn = document.getElementById("voiceRecordBtn");
+    var voiceRetryBtn = document.getElementById("voiceRetryBtn"), voiceCancelBtn = document.getElementById("voiceCancelBtn");
     function _toggleSendState() {
       if (!messageInput || !sendBtn) return;
-      sendBtn.disabled = !messageInput.value.trim(); _setInputMessage(messageInput.value);
+      sendBtn.disabled = _voiceUploadInFlight || !messageInput.value.trim(); _setInputMessage(messageInput.value);
     }
     if (messageInput) {
       messageInput.addEventListener("input", _toggleSendState);
@@ -2849,6 +2927,22 @@ if (chatAvatar && _selectedChatUser) {
       voiceRecordBtn.addEventListener("pointercancel", _releaseVoiceHold);
       voiceRecordBtn.addEventListener("pointerleave", function (event) {
         if (event.buttons === 0) _releaseVoiceHold();
+      });
+    }
+    if (voiceRetryBtn) {
+      voiceRetryBtn.addEventListener("click", function () {
+        if (_voiceUploadInFlight || !_voicePendingDraft) return;
+        _voiceUploadError = "";
+        _renderVoiceRecordingState();
+        _sendVoiceMessage(_voicePendingDraft.blob, _voicePendingDraft.mimeType, _voicePendingDraft.durationMs)
+          .catch(function (err) {
+            console.error("[Vaani] Voice retry failed:", err && err.message ? err.message : err);
+          });
+      });
+    }
+    if (voiceCancelBtn) {
+      voiceCancelBtn.addEventListener("click", function () {
+        if (typeof _voiceUploadCancelFn === "function") _voiceUploadCancelFn();
       });
     }
     _renderVoiceRecordingState();
