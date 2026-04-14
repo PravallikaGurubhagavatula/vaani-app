@@ -81,7 +81,8 @@ import {
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
   var _pendingIncomingUidSet = new Set();
-  var VOICE_UPLOAD_API_BASE = window.API_URL || "https://vaani-app-ui0z.onrender.com";
+  var VOICE_UPLOAD_API_BASE = _resolveVoiceUploadApiBase();
+  var _voiceUploadInFlight = false;
 
   var CHATS_COLLECTION = "chats";
   var MESSAGES_COLLECTION = "messages";
@@ -99,6 +100,15 @@ import {
 
   function _root() {
     return document.getElementById(CHAT_ROOT_ID);
+  }
+
+  function _resolveVoiceUploadApiBase() {
+    var explicit = String(window.API_URL || "").trim();
+    if (explicit) return explicit.replace(/\/+$/, "");
+    var origin = window.location && window.location.origin ? String(window.location.origin) : "";
+    if (!origin) return "https://vaani-app-ui0z.onrender.com";
+    if (/localhost|127\.0\.0\.1/.test(origin)) return "http://127.0.0.1:8000";
+    return origin.replace(/\/+$/, "");
   }
 
   function _esc(value) {
@@ -122,6 +132,31 @@ import {
       return firebase.firestore.Timestamp.fromMillis(value);
     }
     return null;
+  }
+
+  function _loadProfileCache(uid) {
+    var key = String(uid || "").trim();
+    if (!key) return null;
+    if (_userProfileCache[key]) return _userProfileCache[key];
+    try {
+      var raw = sessionStorage.getItem("vaani_profile_cache_" + key);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      _userProfileCache[key] = parsed;
+      return parsed;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function _saveProfileCache(uid, profile) {
+    var key = String(uid || "").trim();
+    if (!key || !profile || typeof profile !== "object") return;
+    _userProfileCache[key] = profile;
+    try {
+      sessionStorage.setItem("vaani_profile_cache_" + key, JSON.stringify(profile));
+    } catch (err) {}
   }
 
   function _extractLegacyMessageUsers(data) {
@@ -150,9 +185,10 @@ import {
         var existingChatKeySet = new Set();
         var existingChatSnap = await db.collection(CHATS_COLLECTION)
           .where("participants", "array-contains", currentUid)
-  .orderBy("updatedAt", "desc")
-  .limit(20)
-        existingChatSnap.forEach(function (doc) {
+          .orderBy("updatedAt", "desc")
+          .limit(20)
+          .get();
+        (existingChatSnap && typeof existingChatSnap.forEach === "function" ? existingChatSnap.docs : []).forEach(function (doc) {
           var data = doc.data() || {};
           var p = Array.isArray(data.participants) ? data.participants.filter(Boolean).map(String).sort() : [];
           if (p.length === 2) existingChatKeySet.add(p.join("|"));
@@ -2222,10 +2258,15 @@ function _renderReplyBanner() {
         durationEl.textContent = "";
         durationEl.style.display = "none";
       }
+      if (_voiceUploadInFlight) {
+        durationEl.textContent = "Uploading…";
+        durationEl.style.display = "inline-flex";
+      }
     }
     if (micBtn) {
       micBtn.classList.toggle("is-recording", !!_voiceRecordingActive);
       micBtn.setAttribute("aria-label", _voiceRecordingActive ? "Recording voice message" : "Hold to record voice message");
+      micBtn.disabled = !!_voiceUploadInFlight;
     }
   }
 
@@ -2293,13 +2334,24 @@ function _renderReplyBanner() {
     formData.append("duration_ms", String(Math.max(0, Math.round(Number(durationMs || 0)))));
 
     var response;
-    try {
-      response = await fetch(VOICE_UPLOAD_API_BASE + "/chat/voice/upload", {
-        method: "POST",
-        body: formData
-      });
-    } catch (networkErr) {
-      throw new Error("Network failure while uploading voice message: " + (networkErr && networkErr.message ? networkErr.message : String(networkErr)));
+    var uploadErr = null;
+    var uploadUrl = VOICE_UPLOAD_API_BASE + "/chat/voice/upload";
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      try {
+        response = await fetch(uploadUrl, { method: "POST", body: formData });
+        if (!response.ok && response.status >= 500 && attempt < 2) {
+          await new Promise(function (resolve) { setTimeout(resolve, 350); });
+          continue;
+        }
+        uploadErr = null;
+        break;
+      } catch (networkErr) {
+        uploadErr = networkErr;
+        if (attempt < 2) await new Promise(function (resolve) { setTimeout(resolve, 350); });
+      }
+    }
+    if (uploadErr) {
+      throw new Error("Network failure while uploading voice message: " + (uploadErr && uploadErr.message ? uploadErr.message : String(uploadErr)));
     }
 
     if (!response.ok) {
@@ -2309,7 +2361,7 @@ function _renderReplyBanner() {
     }
 
     var payload = await response.json().catch(function () { return null; });
-    if (!payload || !payload.audioUrl) throw new Error("Upload API did not return audioUrl");
+    if (!payload || payload.success === false || !payload.audioUrl) throw new Error("Upload API did not return audioUrl");
     return payload;
   }
 
@@ -2324,6 +2376,8 @@ function _renderReplyBanner() {
       if (!_activeChatId) return;
       if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
     }
+    _voiceUploadInFlight = true;
+    _renderVoiceRecordingState();
     var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs);
     var audioUrl = String(uploadPayload.audioUrl || "");
     if (!audioUrl) throw new Error("Upload succeeded but audio URL is missing");
@@ -2347,14 +2401,20 @@ function _renderReplyBanner() {
         audioUrl: audioUrl,
         audioData: audioUrl,
         audioMimeType: mimeType || "audio/webm",
-        durationMs: durationMs
+        durationMs: durationMs,
+        duration: Math.max(0, Math.round(Number(durationMs || 0) / 1000))
       });
       _setReplyTo(null);
+      _scrollMessagesToBottom(true);
     } catch (err) {
       console.error("[Vaani] _sendVoiceMessage failed:", err && err.message ? err.message : err);
       _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
       _renderMessages(true);
       if (typeof window.showToast === "function") window.showToast("Voice message failed to send — please try again");
+      throw err;
+    } finally {
+      _voiceUploadInFlight = false;
+      _renderVoiceRecordingState();
     }
   }
 

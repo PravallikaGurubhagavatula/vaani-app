@@ -719,6 +719,7 @@ async def asr_endpoint(data: dict):
 
 
 @app.post("/chat/voice/upload")
+@app.post("/api/chat/voice/upload")
 async def upload_voice_message(
     request: Request,
     file: UploadFile = File(...),
@@ -743,6 +744,10 @@ async def upload_voice_message(
     elif "ogg" in content_type:
         ext = ".ogg"
 
+    max_bytes = 12 * 1024 * 1024
+    if len(payload) > max_bytes:
+        return JSONResponse(status_code=413, content={"error": "Audio file too large (max 12MB)"})
+
     file_name = f"{int(time.time())}_{uuid4().hex}{ext}"
     out_path = os.path.join(VOICE_UPLOAD_DIR, file_name)
     with open(out_path, "wb") as out_file:
@@ -750,6 +755,7 @@ async def upload_voice_message(
 
     audio_url = str(request.base_url).rstrip("/") + f"/uploads/voice/{file_name}"
     return {
+        "success": True,
         "audioUrl": audio_url,
         "mimeType": content_type,
         "durationMs": max(0, int(duration_ms or 0)),
