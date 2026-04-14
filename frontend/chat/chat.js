@@ -69,6 +69,13 @@ import {
   var _headerTypingFromUserId = "";
   var _typingHeartbeatTimer = null;
   var _typingClearTimer = null;
+  var _voiceRecorder = null;
+  var _voiceRecorderStream = null;
+  var _voiceRecorderChunks = [];
+  var _voiceRecordStartTs = 0;
+  var _voiceRecordTimer = null;
+  var _voiceRecordingActive = false;
+  var _voicePressActive = false;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
@@ -2009,30 +2016,50 @@ if (avatarEl) {
     return {};
   }
 
+  function _messagePreviewText(msg) {
+    if (!msg || typeof msg !== "object") return "";
+    var text = String(msg.text || "").trim();
+    if (text) return text;
+    if (msg.type === "voice") return "\ud83c\udfa4 Voice message";
+    return "";
+  }
+
   // ── FIX 6: sendMessage — always include sorted participants[] ────────────
-  async function sendMessage(chatId, text, currentUid, otherUid, replyTo) {
+  async function sendMessage(chatId, text, currentUid, otherUid, replyTo, extraData) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    if (!db || !chatId || !text || !currentUid || !otherUid) return;
+    if (!db || !chatId || !currentUid || !otherUid) return;
+    var hasText = !!String(text || "").trim();
+    var hasVoice = !!(extraData && extraData.type === "voice" && extraData.audioData);
+    if (!hasText && !hasVoice) return;
     var participants = [String(currentUid), String(otherUid)].sort();
     var msgData = {
-      text: text, senderId: currentUid, receiverId: otherUid,
+      text: String(text || ""), senderId: currentUid, receiverId: otherUid,
       participants: participants, chatId: chatId,
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     };
+    if (extraData && typeof extraData === "object") {
+      if (extraData.type) msgData.type = String(extraData.type);
+      if (extraData.audioData) msgData.audioData = String(extraData.audioData);
+      if (extraData.audioMimeType) msgData.audioMimeType = String(extraData.audioMimeType);
+      if (extraData.durationMs && Number(extraData.durationMs) > 0) {
+        msgData.durationMs = Math.max(0, Math.round(Number(extraData.durationMs)));
+      }
+    }
     if (replyTo && replyTo.id) {
       msgData.replyTo = {
         id: String(replyTo.id),
-        text: String(replyTo.text || "").slice(0, 200),
+        text: _messagePreviewText(replyTo).slice(0, 200),
         senderId: String(replyTo.senderId || "")
       };
     }
+    var previewText = hasVoice ? "\ud83c\udfa4 Voice message" : String(text || "");
     await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add(msgData);
     await db.collection(CHATS_COLLECTION).doc(chatId).update({
-      lastMessage: text, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      lastMessage: previewText, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
 function _setReplyTo(msg) {
-  _replyToMessage = msg ? { id: msg.id || null, text: String(msg.text || ""), senderId: String(msg.senderId || "") } : null;
+  _replyToMessage = msg ? { id: msg.id || null, text: _messagePreviewText(msg), senderId: String(msg.senderId || "") } : null;
   _renderReplyBanner();
 }
 
@@ -2059,6 +2086,151 @@ function _renderReplyBanner() {
   var closeBtn = document.getElementById("vcReplyBannerClose");
   if (closeBtn) closeBtn.addEventListener("click", function () { _setReplyTo(null); });
 }
+
+  function _voiceDurationLabel(ms) {
+    var totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    return String(minutes).padStart(2, "0") + ":" + String(seconds).padStart(2, "0");
+  }
+
+  function _renderVoiceRecordingState() {
+    var durationEl = document.getElementById("vcRecordingDuration");
+    var micBtn = document.getElementById("voiceRecordBtn");
+    if (durationEl) {
+      if (_voiceRecordingActive) {
+        var elapsed = Math.max(0, Date.now() - _voiceRecordStartTs);
+        durationEl.textContent = _voiceDurationLabel(elapsed);
+        durationEl.style.display = "inline-flex";
+      } else {
+        durationEl.textContent = "";
+        durationEl.style.display = "none";
+      }
+    }
+    if (micBtn) {
+      micBtn.classList.toggle("is-recording", !!_voiceRecordingActive);
+      micBtn.setAttribute("aria-label", _voiceRecordingActive ? "Recording voice message" : "Hold to record voice message");
+    }
+  }
+
+  function _cleanupVoiceStream() {
+    if (_voiceRecorderStream && typeof _voiceRecorderStream.getTracks === "function") {
+      _voiceRecorderStream.getTracks().forEach(function (track) {
+        if (track && typeof track.stop === "function") track.stop();
+      });
+    }
+    _voiceRecorderStream = null;
+  }
+
+  async function _startVoiceRecording() {
+    if (_voiceRecordingActive) return;
+    if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (typeof window.showToast === "function") window.showToast("Voice recording is not supported on this browser.");
+      return;
+    }
+    try {
+      _voiceRecorderChunks = [];
+      _voiceRecorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      _voiceRecorder = new MediaRecorder(_voiceRecorderStream);
+      _voiceRecorder.ondataavailable = function (event) {
+        if (event && event.data && event.data.size > 0) _voiceRecorderChunks.push(event.data);
+      };
+      _voiceRecorder.start();
+      _voiceRecordingActive = true;
+      _voiceRecordStartTs = Date.now();
+      if (_voiceRecordTimer) clearInterval(_voiceRecordTimer);
+      _voiceRecordTimer = setInterval(_renderVoiceRecordingState, 250);
+      _renderVoiceRecordingState();
+    } catch (err) {
+      console.error("[Vaani] Voice recording start failed:", err);
+      _voiceRecordingActive = false;
+      _voiceRecorder = null;
+      _cleanupVoiceStream();
+      _renderVoiceRecordingState();
+      if (typeof window.showToast === "function") window.showToast("Microphone permission is required to send voice messages.");
+    }
+  }
+
+  async function _sendVoiceMessage(audioDataUrl, mimeType, durationMs) {
+    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+    var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
+    if (!db || !currentUser || !currentUser.uid || !selectedUser || !selectedUser.uid) return;
+    var currentUid = String(currentUser.uid), otherUid = String(selectedUser.uid);
+
+    if (!_activeChatId) {
+      _activeChatId = await _getOrCreateChat(otherUid);
+      if (!_activeChatId) return;
+      if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
+    }
+    var tempId = "local-voice-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    _optimisticMessages.push({
+      _optimisticId: tempId,
+      type: "voice",
+      text: "",
+      audioData: audioDataUrl,
+      audioMimeType: mimeType || "audio/webm",
+      durationMs: Math.max(0, Math.round(Number(durationMs || 0))),
+      senderId: currentUid,
+      timestamp: new Date()
+    });
+    _renderMessages(true);
+    try {
+      var replySnapshot = _replyToMessage || null;
+      await sendMessage(_activeChatId, "", currentUid, otherUid, replySnapshot, {
+        type: "voice",
+        audioData: audioDataUrl,
+        audioMimeType: mimeType || "audio/webm",
+        durationMs: durationMs
+      });
+      _setReplyTo(null);
+    } catch (err) {
+      console.error("[Vaani] _sendVoiceMessage failed:", err);
+      _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
+      _renderMessages(true);
+      if (typeof window.showToast === "function") window.showToast("Voice message failed to send — please try again");
+    }
+  }
+
+  async function _stopVoiceRecordingAndSend() {
+    if (!_voiceRecordingActive || !_voiceRecorder) return;
+    _voiceRecordingActive = false;
+    if (_voiceRecordTimer) { clearInterval(_voiceRecordTimer); _voiceRecordTimer = null; }
+    _renderVoiceRecordingState();
+    var durationMs = Math.max(0, Date.now() - _voiceRecordStartTs);
+    if (durationMs < 300) {
+      try { _voiceRecorder.stop(); } catch (e) {}
+      _voiceRecorder = null;
+      _voiceRecorderChunks = [];
+      _cleanupVoiceStream();
+      return;
+    }
+    var recorder = _voiceRecorder;
+    _voiceRecorder = null;
+    await new Promise(function (resolve) {
+      recorder.onstop = function () {
+        try {
+          var mimeType = recorder.mimeType || "audio/webm";
+          var blob = new Blob(_voiceRecorderChunks, { type: mimeType });
+          _voiceRecorderChunks = [];
+          if (!blob || !blob.size) { resolve(); return; }
+          var reader = new FileReader();
+          reader.onloadend = function () {
+            var dataUrl = String(reader.result || "");
+            if (dataUrl) _sendVoiceMessage(dataUrl, mimeType, durationMs);
+            resolve();
+          };
+          reader.onerror = function () { resolve(); };
+          reader.readAsDataURL(blob);
+        } catch (err) {
+          console.error("[Vaani] Voice message encoding failed:", err);
+          resolve();
+        } finally {
+          _cleanupVoiceStream();
+        }
+      };
+      try { recorder.stop(); } catch (err) { resolve(); _cleanupVoiceStream(); }
+    });
+  }
   async function _sendMessage() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
@@ -2141,10 +2313,28 @@ function _renderReplyBanner() {
         bubble.appendChild(replyPreview);
       }
 
-      var msgText = document.createElement("div");
-      msgText.className = "vc-msg-text";
-      msgText.textContent = String(msg.text || "");
-      bubble.appendChild(msgText);
+      if (msg.type === "voice" && msg.audioData) {
+        var voiceWrap = document.createElement("div");
+        voiceWrap.className = "vc-msg-voice";
+        var audioEl = document.createElement("audio");
+        audioEl.className = "vc-msg-voice-player";
+        audioEl.controls = true;
+        audioEl.preload = "metadata";
+        audioEl.src = String(msg.audioData || "");
+        voiceWrap.appendChild(audioEl);
+        if (msg.durationMs) {
+          var voiceMeta = document.createElement("div");
+          voiceMeta.className = "vc-msg-voice-meta";
+          voiceMeta.textContent = _voiceDurationLabel(msg.durationMs);
+          voiceWrap.appendChild(voiceMeta);
+        }
+        bubble.appendChild(voiceWrap);
+      } else {
+        var msgText = document.createElement("div");
+        msgText.className = "vc-msg-text";
+        msgText.textContent = _messagePreviewText(msg);
+        bubble.appendChild(msgText);
+      }
 
       // ── Swipe-to-reply (touch + mouse) ──────────────────────────
       var swipeStartX = 0, swipeStartY = 0, swipeDx = 0;
@@ -2333,6 +2523,10 @@ function _renderReplyBanner() {
             '<div id="vcReplyBanner" class="vc-reply-banner" style="display:none;"></div>' +
             '<div class="vc-chat-input-row">' +
               '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
+              '<span id="vcRecordingDuration" class="vc-recording-duration" aria-live="polite"></span>' +
+              '<button id="voiceRecordBtn" class="vc-chat-voice-btn" aria-label="Hold to record voice message">' +
+                '<svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>' +
+              '</button>' +
               '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
             '</div>' +
           "</div>" +
@@ -2384,7 +2578,7 @@ if (chatAvatar && _selectedChatUser) {
   });
 }
      
-    var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
+    var messageInput = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn"), voiceRecordBtn = document.getElementById("voiceRecordBtn");
     function _toggleSendState() {
       if (!messageInput || !sendBtn) return;
       sendBtn.disabled = !messageInput.value.trim(); _setInputMessage(messageInput.value);
@@ -2419,6 +2613,29 @@ if (chatAvatar && _selectedChatUser) {
       messageInput.value = ""; messageInput.focus();
     }
     if (sendBtn) { sendBtn.addEventListener("click", function () { if (messageInput && messageInput.value.trim()) _sendMessage(); }); sendBtn.disabled = true; }
+    if (voiceRecordBtn) {
+      voiceRecordBtn.addEventListener("contextmenu", function (event) { event.preventDefault(); });
+      voiceRecordBtn.addEventListener("pointerdown", function (event) {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        event.preventDefault();
+        _voicePressActive = true;
+        if (voiceRecordBtn.setPointerCapture) {
+          try { voiceRecordBtn.setPointerCapture(event.pointerId); } catch (e) {}
+        }
+        _startVoiceRecording();
+      });
+      function _releaseVoiceHold() {
+        if (!_voicePressActive) return;
+        _voicePressActive = false;
+        _stopVoiceRecordingAndSend();
+      }
+      voiceRecordBtn.addEventListener("pointerup", _releaseVoiceHold);
+      voiceRecordBtn.addEventListener("pointercancel", _releaseVoiceHold);
+      voiceRecordBtn.addEventListener("pointerleave", function (event) {
+        if (event.buttons === 0) _releaseVoiceHold();
+      });
+    }
+    _renderVoiceRecordingState();
     if (_messagesContainerRef) {
       _messagesContainerRef.addEventListener("scroll", function () {
         _shouldStickToBottom = _isUserNearBottom(_messagesContainerRef);
