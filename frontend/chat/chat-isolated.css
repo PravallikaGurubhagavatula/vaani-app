@@ -2864,3 +2864,8 @@ body.vm-menu-open {
 .vc-reply-banner-close { background: none; border: none; cursor: pointer; color: var(--text-secondary, #aaa); padding: 2px; flex-shrink: 0; }
 .vc-reply-banner-close:hover { color: var(--text, #e8e8f6); }
 .vc-chat-input-row { display: flex; align-items: center; gap: 8px; }
+
+/* Swipe-to-reply bubble transition base */
+#vaaniChat .vc-msg-bubble {
+  will-change: transform;
+}
