@@ -76,6 +76,7 @@ import {
   var _voiceRecordTimer = null;
   var _voiceRecordingActive = false;
   var _voicePressActive = false;
+  var _activeVoicePlayback = null;
   var _searchResultCache = [];
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
@@ -2094,6 +2095,119 @@ function _renderReplyBanner() {
     return String(minutes).padStart(2, "0") + ":" + String(seconds).padStart(2, "0");
   }
 
+  function _setActiveVoicePlayback(audioEl, syncBtnIcon) {
+    if (_activeVoicePlayback && _activeVoicePlayback.audioEl && _activeVoicePlayback.audioEl !== audioEl) {
+      try { _activeVoicePlayback.audioEl.pause(); } catch (e) {}
+      if (typeof _activeVoicePlayback.syncBtnIcon === "function") _activeVoicePlayback.syncBtnIcon();
+    }
+    _activeVoicePlayback = { audioEl: audioEl, syncBtnIcon: syncBtnIcon };
+  }
+
+  function _destroyActiveVoicePlayback() {
+    if (_activeVoicePlayback && _activeVoicePlayback.audioEl) {
+      try { _activeVoicePlayback.audioEl.pause(); } catch (e) {}
+    }
+    _activeVoicePlayback = null;
+  }
+
+  function _createVoiceMessageBubble(msg) {
+    var voiceWrap = document.createElement("div");
+    voiceWrap.className = "vc-msg-voice";
+    var audioEl = document.createElement("audio");
+    audioEl.className = "vc-msg-voice-player";
+    audioEl.preload = "metadata";
+    audioEl.src = String(msg.audioData || "");
+
+    var controlsRow = document.createElement("div");
+    controlsRow.className = "vc-msg-voice-controls";
+
+    var playPauseBtn = document.createElement("button");
+    playPauseBtn.type = "button";
+    playPauseBtn.className = "vc-msg-voice-btn";
+    playPauseBtn.setAttribute("aria-label", "Play voice message");
+
+    var backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "vc-msg-voice-seek";
+    backBtn.textContent = "−10s";
+    backBtn.setAttribute("aria-label", "Seek backward 10 seconds");
+
+    var fwdBtn = document.createElement("button");
+    fwdBtn.type = "button";
+    fwdBtn.className = "vc-msg-voice-seek";
+    fwdBtn.textContent = "+10s";
+    fwdBtn.setAttribute("aria-label", "Seek forward 10 seconds");
+
+    var durationLabel = document.createElement("span");
+    durationLabel.className = "vc-msg-voice-duration";
+    durationLabel.textContent = _voiceDurationLabel(msg.durationMs || 0);
+
+    function _syncPlayPauseIcon() {
+      var isPlaying = !audioEl.paused && !audioEl.ended;
+      playPauseBtn.textContent = isPlaying ? "❚❚" : "▶";
+      playPauseBtn.setAttribute("aria-label", isPlaying ? "Pause voice message" : "Play voice message");
+    }
+
+    playPauseBtn.addEventListener("click", function () {
+      if (audioEl.paused || audioEl.ended) {
+        _setActiveVoicePlayback(audioEl, _syncPlayPauseIcon);
+        audioEl.play().catch(function () {});
+      } else {
+        audioEl.pause();
+      }
+    });
+    backBtn.addEventListener("click", function () {
+      audioEl.currentTime = Math.max(0, (audioEl.currentTime || 0) - 10);
+    });
+    fwdBtn.addEventListener("click", function () {
+      var dur = isFinite(audioEl.duration) ? audioEl.duration : Number.MAX_SAFE_INTEGER;
+      audioEl.currentTime = Math.min(dur, (audioEl.currentTime || 0) + 10);
+    });
+
+    var progressWrap = document.createElement("div");
+    progressWrap.className = "vc-msg-voice-progress-wrap";
+    var progress = document.createElement("input");
+    progress.type = "range";
+    progress.className = "vc-msg-voice-progress";
+    progress.min = "0";
+    progress.max = "100";
+    progress.step = "0.1";
+    progress.value = "0";
+    progress.setAttribute("aria-label", "Voice playback progress");
+
+    progress.addEventListener("input", function () {
+      if (!isFinite(audioEl.duration) || audioEl.duration <= 0) return;
+      audioEl.currentTime = (parseFloat(progress.value) / 100) * audioEl.duration;
+    });
+
+    audioEl.addEventListener("loadedmetadata", function () {
+      if (isFinite(audioEl.duration) && audioEl.duration > 0) {
+        durationLabel.textContent = _voiceDurationLabel(audioEl.duration * 1000);
+      }
+    });
+    audioEl.addEventListener("timeupdate", function () {
+      if (!isFinite(audioEl.duration) || audioEl.duration <= 0) return;
+      progress.value = String((audioEl.currentTime / audioEl.duration) * 100);
+    });
+    audioEl.addEventListener("play", _syncPlayPauseIcon);
+    audioEl.addEventListener("pause", _syncPlayPauseIcon);
+    audioEl.addEventListener("ended", function () {
+      progress.value = "100";
+      _syncPlayPauseIcon();
+    });
+    _syncPlayPauseIcon();
+
+    controlsRow.appendChild(playPauseBtn);
+    controlsRow.appendChild(backBtn);
+    controlsRow.appendChild(fwdBtn);
+    controlsRow.appendChild(durationLabel);
+    progressWrap.appendChild(progress);
+    voiceWrap.appendChild(audioEl);
+    voiceWrap.appendChild(controlsRow);
+    voiceWrap.appendChild(progressWrap);
+    return voiceWrap;
+  }
+
   function _renderVoiceRecordingState() {
     var durationEl = document.getElementById("vcRecordingDuration");
     var micBtn = document.getElementById("voiceRecordBtn");
@@ -2284,6 +2398,7 @@ function _renderReplyBanner() {
 
   function _renderMessages(forceBottom) {
     var container = _messagesContainerRef; if (!container) return;
+    _destroyActiveVoicePlayback();
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     var stickToBottom = !!forceBottom || _isUserNearBottom(container);
     var distanceFromBottom = container.scrollHeight - container.scrollTop;
@@ -2314,21 +2429,7 @@ function _renderReplyBanner() {
       }
 
       if (msg.type === "voice" && msg.audioData) {
-        var voiceWrap = document.createElement("div");
-        voiceWrap.className = "vc-msg-voice";
-        var audioEl = document.createElement("audio");
-        audioEl.className = "vc-msg-voice-player";
-        audioEl.controls = true;
-        audioEl.preload = "metadata";
-        audioEl.src = String(msg.audioData || "");
-        voiceWrap.appendChild(audioEl);
-        if (msg.durationMs) {
-          var voiceMeta = document.createElement("div");
-          voiceMeta.className = "vc-msg-voice-meta";
-          voiceMeta.textContent = _voiceDurationLabel(msg.durationMs);
-          voiceWrap.appendChild(voiceMeta);
-        }
-        bubble.appendChild(voiceWrap);
+        bubble.appendChild(_createVoiceMessageBubble(msg));
       } else {
         var msgText = document.createElement("div");
         msgText.className = "vc-msg-text";
