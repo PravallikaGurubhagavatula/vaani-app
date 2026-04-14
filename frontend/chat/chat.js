@@ -2127,7 +2127,24 @@ function _renderReplyBanner() {
       var senderId = msg && msg.senderId != null ? String(msg.senderId) : "";
       var isOwn = senderId === currentUid;
       var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
-      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
+      var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble";
+
+      // ── Reply preview ──────────────────────────────────────────
+      if (msg.replyTo && msg.replyTo.text) {
+        var replyPreview = document.createElement("div");
+        replyPreview.className = "vc-msg-reply-preview";
+        var replyIsOwn = msg.replyTo.senderId === currentUid;
+        var replyLabel = replyIsOwn ? "You" : (_selectedChatUser && _selectedChatUser.username ? "@" + _selectedChatUser.username : "Them");
+        replyPreview.innerHTML =
+          '<div class="vc-msg-reply-author">' + _esc(replyLabel) + '</div>' +
+          '<div class="vc-msg-reply-text">' + _esc(String(msg.replyTo.text).slice(0, 80) + (msg.replyTo.text.length > 80 ? "\u2026" : "")) + '</div>';
+        bubble.appendChild(replyPreview);
+      }
+
+      var msgText = document.createElement("div");
+      msgText.className = "vc-msg-text";
+      msgText.textContent = String(msg.text || "");
+      bubble.appendChild(msgText);
 
       // ── Swipe-to-reply (touch + mouse) ──────────────────────────
       var swipeStartX = 0, swipeStartY = 0, swipeDx = 0;
