@@ -2357,7 +2357,7 @@ function _renderReplyBanner() {
     var objectPath = "voiceMessages/" + String(chatId) + "/" + Date.now() + ".webm";
     console.log("[Vaani][Voice] Upload start", { strategy: "firebase-storage-modular", path: objectPath, size: blob.size, mimeType: mimeType, durationMs: durationMs });
 
-    var storage = getStorage();
+    var storage = getStorage(window.vaaniFirebase.app);
     var objectRef = storageRef(storage, objectPath);
     var metadata = { contentType: mimeType || "audio/webm", customMetadata: { durationMs: String(Math.max(0, Math.round(Number(durationMs || 0)))) } };
     var uploadCanceled = false;
