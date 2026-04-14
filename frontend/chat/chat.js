@@ -43,6 +43,7 @@ import {
   var _activeMessagesSignature = "";
   var _optimisticMessages = [];
   var _unsubscribeChatList = null;
+  var _replyToMessage = null; // { id, text, senderId }
   var _activeChatListListenerUid = null;
   var _connectedUidSet = new Set();
   var _connectionUsersByDocId = Object.create(null);
@@ -691,6 +692,7 @@ if (window.VaaniNav) window.VaaniNav.sync();
     _panelView = _selectedChatUser ? "chat" : (_panelView === "settings" ? "settings" : "home");
     if (!_selectedChatUser) {
       _emitTypingHeartbeat(false);
+      _replyToMessage = null; // clear reply on chat close
       _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
       _teardownMessageListener();
       _teardownStatusListeners();
@@ -2022,7 +2024,34 @@ if (avatarEl) {
       lastMessage: text, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }
+function _setReplyTo(msg) {
+  _replyToMessage = msg ? { id: msg.id || null, text: String(msg.text || ""), senderId: String(msg.senderId || "") } : null;
+  _renderReplyBanner();
+}
 
+function _renderReplyBanner() {
+  var bar = document.getElementById("vcReplyBanner");
+  if (!bar) return;
+  if (!_replyToMessage) {
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+  var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+  var isOwn = _replyToMessage.senderId === currentUid;
+  var label = isOwn ? "You" : ("@" + _esc(_replyToMessage.senderId));
+  bar.style.display = "flex";
+  bar.innerHTML =
+    '<div class="vc-reply-banner-content">' +
+      '<div class="vc-reply-banner-label">' + _esc(label) + '</div>' +
+      '<div class="vc-reply-banner-text">' + _esc(_replyToMessage.text.slice(0, 80) + (_replyToMessage.text.length > 80 ? "…" : "")) + '</div>' +
+    '</div>' +
+    '<button class="vc-reply-banner-close" id="vcReplyBannerClose" aria-label="Cancel reply">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+    '</button>';
+  var closeBtn = document.getElementById("vcReplyBannerClose");
+  if (closeBtn) closeBtn.addEventListener("click", function () { _setReplyTo(null); });
+}
   async function _sendMessage() {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
     var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
@@ -2090,6 +2119,17 @@ if (avatarEl) {
       var isOwn = senderId === currentUid;
       var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
       var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble"; bubble.textContent = String(msg.text || "");
+
+      // Reply on swipe-right or double-click
+      var pressTimer = null;
+      bubble.addEventListener("dblclick", function () { _setReplyTo(msg); });
+      bubble.addEventListener("touchstart", function () {
+        pressTimer = setTimeout(function () { _setReplyTo(msg); }, 500);
+      }, { passive: true });
+      bubble.addEventListener("touchend", function () {
+        if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+      }, { passive: true });
+
       row.appendChild(bubble); container.appendChild(row);
     });
     window.requestAnimationFrame(function () {
@@ -2215,8 +2255,11 @@ if (avatarEl) {
             "</div></div>" +
           '<div class="vc-chat-messages chat-messages" id="messagesContainer"></div>' +
           '<div class="vc-chat-input-bar chat-input">' +
-            '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
-            '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
+            '<div id="vcReplyBanner" class="vc-reply-banner" style="display:none;"></div>' +
+            '<div class="vc-chat-input-row">' +
+              '<input id="messageInput" class="vc-chat-input" type="text" placeholder="Type a message..." autocomplete="off" spellcheck="false">' +
+              '<button id="sendBtn" class="vc-chat-send" disabled aria-label="Send message">' + sendIconSVG + "</button>" +
+            '</div>' +
           "</div>" +
         "</div>" +
       "</div>";
