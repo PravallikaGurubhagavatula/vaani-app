@@ -2869,3 +2869,98 @@ body.vm-menu-open {
 #vaaniChat .vc-msg-bubble {
   will-change: transform;
 }
+
+/* ── Reply Banner ─────────────────────────────────────────────── */
+#vaaniChat .vc-chat-input-bar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+#vaaniChat .vc-reply-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  background: rgba(124, 58, 237, 0.08);
+  border-left: 3px solid #8E7BEF;
+  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+#vaaniChat .vc-reply-banner[style*="flex"] {
+  display: flex;
+}
+
+#vaaniChat .vc-reply-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+#vaaniChat .vc-reply-banner-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8E7BEF;
+  line-height: 1.3;
+}
+
+#vaaniChat .vc-reply-banner-text {
+  font-size: 12px;
+  color: var(--text2, #9a9ab2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+#vaaniChat .vc-reply-banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text2, #9a9ab2);
+  padding: 4px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+#vaaniChat .vc-reply-banner-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+#vaaniChat .vc-chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Light theme */
+[data-theme="light"] #vaaniChat .vc-reply-banner {
+  background: rgba(124, 58, 237, 0.06);
+  border-left-color: #7c3aed;
+}
+
+[data-theme="light"] #vaaniChat .vc-reply-banner-label {
+  color: #7c3aed;
+}
+
+[data-theme="light"] #vaaniChat .vc-reply-banner-text {
+  color: var(--text2, #5a5a72);
+}
+
+[data-theme="light"] #vaaniChat .vc-reply-banner-close {
+  color: var(--text2, #5a5a72);
+}
