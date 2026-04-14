@@ -2847,3 +2847,20 @@ body.vm-menu-open {
     font-size: 36px;
   }
 }
+
+.vc-reply-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(142, 123, 239, 0.12);
+  border-left: 3px solid #8E7BEF;
+  border-radius: 6px 6px 0 0;
+  gap: 8px;
+}
+.vc-reply-banner-content { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vc-reply-banner-label { font-size: 11px; font-weight: 600; color: #8E7BEF; }
+.vc-reply-banner-text { font-size: 12px; color: var(--text-secondary, #aaa); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vc-reply-banner-close { background: none; border: none; cursor: pointer; color: var(--text-secondary, #aaa); padding: 2px; flex-shrink: 0; }
+.vc-reply-banner-close:hover { color: var(--text, #e8e8f6); }
+.vc-chat-input-row { display: flex; align-items: center; gap: 8px; }
