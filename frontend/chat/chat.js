@@ -7,6 +7,12 @@ import {
   clearTyping,
   formatLastSeenLabel
 } from "./userStatus.js";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -81,7 +87,6 @@ import {
   var _searchDropdownRef = null;
   var _pendingOutgoingUidSet = new Set();
   var _pendingIncomingUidSet = new Set();
-  var VOICE_UPLOAD_API_BASE = _resolveVoiceUploadApiBase();
   var _voiceUploadInFlight = false;
   var _voiceUploadError = "";
   var _voicePendingDraft = null;
@@ -105,15 +110,6 @@ import {
 
   function _root() {
     return document.getElementById(CHAT_ROOT_ID);
-  }
-
-  function _resolveVoiceUploadApiBase() {
-    var explicit = String(window.API_URL || "").trim();
-    if (explicit) return explicit.replace(/\/+$/, "");
-    var origin = window.location && window.location.origin ? String(window.location.origin) : "";
-    if (!origin) return "https://vaani-app-ui0z.onrender.com";
-    if (/localhost|127\.0\.0\.1/.test(origin)) return "http://127.0.0.1:8000";
-    return origin.replace(/\/+$/, "");
   }
 
   function _esc(value) {
@@ -2078,7 +2074,8 @@ if (avatarEl) {
     var msgData = {
       text: String(text || ""), senderId: currentUid, receiverId: otherUid,
       participants: participants, chatId: chatId,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
     if (extraData && typeof extraData === "object") {
       if (extraData.type) msgData.type = String(extraData.type);
@@ -2087,6 +2084,7 @@ if (avatarEl) {
       if (extraData.audioMimeType) msgData.audioMimeType = String(extraData.audioMimeType);
       if (extraData.durationMs && Number(extraData.durationMs) > 0) {
         msgData.durationMs = Math.max(0, Math.round(Number(extraData.durationMs)));
+        msgData.duration = Math.max(0, Math.round(Number(extraData.durationMs) / 1000));
       }
     }
     if (replyTo && replyTo.id) {
@@ -2343,7 +2341,7 @@ function _renderReplyBanner() {
     }
   }
 
-  async function _uploadVoiceBlob(blob, mimeType, durationMs) {
+  async function _uploadVoiceBlob(blob, mimeType, durationMs, chatId) {
     if (!blob || !blob.size) throw new Error("Audio blob is empty");
     if (!mimeType || String(mimeType).indexOf("audio/") !== 0) {
       throw new Error("Invalid audio mime type: " + String(mimeType || "unknown"));
@@ -2354,82 +2352,36 @@ function _renderReplyBanner() {
     if (Math.max(0, Math.round(Number(durationMs || 0))) <= 0) {
       throw new Error("Voice message is empty.");
     }
+    if (!chatId) throw new Error("Missing chat id for voice upload.");
 
-    var ext = "webm";
-    if (mimeType.indexOf("mpeg") !== -1 || mimeType.indexOf("mp3") !== -1) ext = "mp3";
-    else if (mimeType.indexOf("wav") !== -1) ext = "wav";
-    else if (mimeType.indexOf("ogg") !== -1) ext = "ogg";
-    var currentUser = window._vaaniCurrentUser || null;
-    var uploaderUid = currentUser && currentUser.uid ? String(currentUser.uid) : "anon";
-    var objectPath = "voiceMessages/" + uploaderUid + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + "." + ext;
-    console.log("[Vaani][Voice] Upload start", { strategy: "firebase-storage", path: objectPath, size: blob.size, mimeType: mimeType, durationMs: durationMs });
+    var objectPath = "voiceMessages/" + String(chatId) + "/" + Date.now() + ".webm";
+    console.log("[Vaani][Voice] Upload start", { strategy: "firebase-storage-modular", path: objectPath, size: blob.size, mimeType: mimeType, durationMs: durationMs });
 
-    if (firebase && typeof firebase.storage === "function") {
-      var storage = firebase.storage();
-      var ref = storage.ref(objectPath);
-      var metadata = { contentType: mimeType, customMetadata: { durationMs: String(Math.max(0, Math.round(Number(durationMs || 0)))) } };
-      var uploadTask = ref.put(blob, metadata);
+    var storage = getStorage();
+    var objectRef = storageRef(storage, objectPath);
+    var metadata = { contentType: mimeType || "audio/webm", customMetadata: { durationMs: String(Math.max(0, Math.round(Number(durationMs || 0)))) } };
+    var uploadCanceled = false;
 
-      var taskPromise = new Promise(function (resolve, reject) {
-        var completed = false;
-        var timeoutId = setTimeout(function () {
-          try { uploadTask.cancel(); } catch (e) {}
-          if (completed) return;
-          completed = true;
-          reject(new Error("Voice upload timed out after " + Math.round(VOICE_UPLOAD_TIMEOUT_MS / 1000) + "s"));
-        }, VOICE_UPLOAD_TIMEOUT_MS);
-        _voiceUploadCancelFn = function () {
-          try { uploadTask.cancel(); } catch (e) {}
-        };
-        uploadTask.on("state_changed", null, function (error) {
-          if (completed) return;
-          completed = true;
-          clearTimeout(timeoutId);
-          reject(error || new Error("Voice upload failed"));
-        }, function () {
-          ref.getDownloadURL().then(function (audioUrl) {
-            if (completed) return;
-            completed = true;
-            clearTimeout(timeoutId);
-            resolve({ success: true, audioUrl: audioUrl, storagePath: objectPath });
-          }).catch(function (urlErr) {
-            if (completed) return;
-            completed = true;
-            clearTimeout(timeoutId);
-            reject(urlErr || new Error("Could not get uploaded voice URL"));
-          });
-        });
-      });
-      try {
-        var storagePayload = await taskPromise;
-        console.log("[Vaani][Voice] Upload success", { strategy: "firebase-storage", path: objectPath, audioUrl: storagePayload.audioUrl });
-        return storagePayload;
-      } finally {
-        _voiceUploadCancelFn = null;
-      }
-    }
+    var timeout = setTimeout(function () {
+      if (typeof _voiceUploadCancelFn === "function") _voiceUploadCancelFn();
+    }, VOICE_UPLOAD_TIMEOUT_MS);
 
-    console.warn("[Vaani][Voice] Firebase Storage unavailable, falling back to API:", VOICE_UPLOAD_API_BASE + "/chat/voice/upload");
-    var formData = new FormData();
-    formData.append("file", blob, "voice-message-" + Date.now() + "." + ext);
-    formData.append("duration_ms", String(Math.max(0, Math.round(Number(durationMs || 0)))));
-    var controller = new AbortController();
-    var timeout = setTimeout(function () { controller.abort(); }, VOICE_UPLOAD_TIMEOUT_MS);
-    _voiceUploadCancelFn = function () { controller.abort(); };
+    _voiceUploadCancelFn = function () {
+      uploadCanceled = true;
+    };
     try {
-      var response = await fetch(VOICE_UPLOAD_API_BASE + "/chat/voice/upload", { method: "POST", body: formData, signal: controller.signal });
-      if (!response.ok) {
-        var errText = "";
-        try { errText = await response.text(); } catch (e) {}
-        throw new Error("Upload failure (" + response.status + "): " + (errText || "Unknown upload error"));
-      }
-      var payload = await response.json().catch(function () { return null; });
-      if (!payload || payload.success === false || !payload.audioUrl) throw new Error("Upload API did not return audioUrl");
-      console.log("[Vaani][Voice] Upload success", { strategy: "api", audioUrl: payload.audioUrl });
-      return payload;
+      await uploadBytes(objectRef, blob, metadata);
+      if (uploadCanceled) throw new Error("Voice upload canceled.");
+      var audioUrl = await getDownloadURL(objectRef);
+      if (uploadCanceled) throw new Error("Voice upload canceled.");
+      if (!audioUrl) throw new Error("Could not get uploaded voice URL");
+      console.log("[Vaani][Voice] Upload success", { strategy: "firebase-storage-modular", path: objectPath, audioUrl: audioUrl });
+      return { success: true, audioUrl: audioUrl, storagePath: objectPath };
     } catch (err) {
-      var isAbort = err && (err.name === "AbortError" || String(err.message || "").toLowerCase().indexOf("abort") !== -1);
-      throw new Error(isAbort ? "Voice upload timed out. Please retry." : (err && err.message ? err.message : "Voice upload failed"));
+      var message = err && err.message ? err.message : "Voice upload failed";
+      var isNetworkFailure = /network|offline|unavailable|failed/i.test(message);
+      if (isNetworkFailure) throw new Error("Network failure during upload. Please retry.");
+      throw new Error(message);
     } finally {
       clearTimeout(timeout);
       _voiceUploadCancelFn = null;
@@ -2453,7 +2405,7 @@ function _renderReplyBanner() {
     _renderVoiceRecordingState();
     var tempId = "local-voice-" + Date.now() + "-" + Math.random().toString(36).slice(2);
     try {
-      var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs);
+      var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs, _activeChatId);
       var audioUrl = String(uploadPayload.audioUrl || "");
       if (!audioUrl) throw new Error("Upload succeeded but audio URL is missing");
       _optimisticMessages.push({

@@ -22,6 +22,8 @@ import { getAuth,
          signInWithPopup,
          signOut,
          onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 // ── STEP 1: PASTE YOUR FIREBASE CONFIG VALUES HERE ────────────────
 
@@ -38,7 +40,10 @@ const firebaseConfig = {
 
 const app      = initializeApp(firebaseConfig);
 const auth     = getAuth(app);
+const db       = getFirestore(app);
+const storage  = getStorage(app);
 const provider = new GoogleAuthProvider();
+window.vaaniFirebase = { app, auth, db, storage, config: firebaseConfig };
 
 // Always show account picker so switching accounts is easy
 provider.setCustomParameters({ prompt: "select_account" });
