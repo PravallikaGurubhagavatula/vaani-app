@@ -2039,15 +2039,15 @@ function _renderReplyBanner() {
   }
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
   var isOwn = _replyToMessage.senderId === currentUid;
-  var label = isOwn ? "You" : ("@" + _esc(_replyToMessage.senderId));
+  var senderLabel = isOwn ? "You" : (_selectedChatUser && _selectedChatUser.username ? "@" + _selectedChatUser.username : "@" + _esc(_replyToMessage.senderId));
   bar.style.display = "flex";
   bar.innerHTML =
     '<div class="vc-reply-banner-content">' +
-      '<div class="vc-reply-banner-label">' + _esc(label) + '</div>' +
-      '<div class="vc-reply-banner-text">' + _esc(_replyToMessage.text.slice(0, 80) + (_replyToMessage.text.length > 80 ? "…" : "")) + '</div>' +
+      '<div class="vc-reply-banner-label">' + _esc(senderLabel) + '</div>' +
+      '<div class="vc-reply-banner-text">' + _esc(_replyToMessage.text.slice(0, 80) + (_replyToMessage.text.length > 80 ? "\u2026" : "")) + '</div>' +
     '</div>' +
     '<button class="vc-reply-banner-close" id="vcReplyBannerClose" aria-label="Cancel reply">' +
-      '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
     '</button>';
   var closeBtn = document.getElementById("vcReplyBannerClose");
   if (closeBtn) closeBtn.addEventListener("click", function () { _setReplyTo(null); });
