@@ -772,12 +772,11 @@ if (window.VaaniNav) window.VaaniNav.sync();
   }
 
   function _scrollMessagesToBottom(force) {
-    if (!_messagesContainerRef) return;
-    if (!force && !_shouldStickToBottom) return;
-    window.requestAnimationFrame(function () {
-      if (_messagesContainerRef) _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
-    });
-  }
+  if (!_messagesContainerRef) return;
+  if (!force && !_shouldStickToBottom) return;
+  // Use scrollTop directly for optimistic renders — no rAF stutter
+  _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
+}
 
   function _teardownMessageListener() {
     if (_unsubscribeMessages) { _unsubscribeMessages(); _unsubscribeMessages = null; }
@@ -2195,8 +2194,8 @@ if (avatarEl) {
     var msgData = {
       text: String(text || ""), senderId: currentUid, receiverId: otherUid,
       participants: participants, chatId: chatId,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      timestamp: firebase.firestore.Timestamp.fromDate(new Date()),
+createdAt: firebase.firestore.Timestamp.fromDate(new Date())
     };
     if (extraData && typeof extraData === "object") {
       if (extraData.type) msgData.type = String(extraData.type);
@@ -2625,71 +2624,85 @@ function _renderReplyBanner() {
     });
   }
   async function _sendMessage() {
-    var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
-    var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
-    var inputEl = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
+  var currentUser = window._vaaniCurrentUser || null, selectedUser = _selectedChatUser || null;
+  var inputEl = document.getElementById("messageInput"), sendBtn = document.getElementById("sendBtn");
 
-    if (!db)                                { console.error("[Vaani] _sendMessage: db unavailable");      return; }
-    if (!currentUser || !currentUser.uid)   { console.error("[Vaani] _sendMessage: no current user");    return; }
-    if (!selectedUser || !selectedUser.uid) { console.error("[Vaani] _sendMessage: no selected user");   return; }
-    if (!inputEl)                           { console.error("[Vaani] _sendMessage: input not found");    return; }
-    if (sendBtn && sendBtn.disabled)        return;
+  if (!db || !currentUser || !currentUser.uid || !selectedUser || !selectedUser.uid || !inputEl) return;
+  if (sendBtn && sendBtn.disabled) return;
 
-    var inputMessage = (inputEl.value || "").trim(); if (!inputMessage) return;
-    var currentUid = String(currentUser.uid), otherUid = String(selectedUser.uid);
+  var inputMessage = (inputEl.value || "").trim();
+  if (!inputMessage) return;
 
-    if (!_activeChatId) {
-      console.log("[Vaani] _sendMessage: no activeChatId — calling _getOrCreateChat");
-      try { _activeChatId = await _getOrCreateChat(otherUid); }
-      catch (err) { console.error("[Vaani] _sendMessage: _getOrCreateChat threw:", err); return; }
-      if (!_activeChatId) { console.error("[Vaani] _sendMessage: chatId still null — abort"); return; }
-      if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
+  var currentUid = String(currentUser.uid), otherUid = String(selectedUser.uid);
+
+  // ── PAINT OPTIMISTIC MESSAGE IMMEDIATELY (before any async) ──────────
+  var replySnapshot = _replyToMessage || null;
+  var tempId = _makeOptimisticId();
+  var optimisticMessage = {
+    _optimisticId: tempId,
+    id: tempId,
+    clientNonce: tempId,
+    clientCreatedAt: Date.now(),
+    text: inputMessage,
+    senderId: currentUid,
+    timestamp: new Date(),          // local clock — sorts correctly
+    pending: true,
+    failed: false,
+    replyTo: replySnapshot && replySnapshot.id ? {
+      id: String(replySnapshot.id),
+      text: _messagePreviewText(replySnapshot).slice(0, 200),
+      senderId: String(replySnapshot.senderId || "")
+    } : null
+  };
+  _upsertOptimisticMessage(optimisticMessage);
+
+  // Clear input and reply banner NOW, before async work
+  inputEl.value = "";
+  _setInputMessage("");
+  _setReplyTo(null);
+  if (sendBtn) sendBtn.disabled = true;
+
+  // Render immediately — this is the frame the user sees
+  _renderMessages(true);
+  _emitTypingHeartbeat(false);
+
+  // ── ASYNC: ensure chat exists ─────────────────────────────────────────
+  if (!_activeChatId) {
+    try {
+      _activeChatId = await _getOrCreateChat(otherUid);
+    } catch (err) {
+      console.error("[Vaani] _sendMessage: _getOrCreateChat threw:", err);
+      _markOptimisticMessageFailed(tempId);
+      _renderMessages(true);
+      return;
     }
-
-    _activeChatId = String(_activeChatId || "");
-    if (!_activeChatId) { console.error("[Vaani] _sendMessage: empty chatId — abort"); return; }
-
-    console.log("[Vaani] _sendMessage: chatId =", _activeChatId, "| text =", inputMessage);
-
-    var replySnapshot = _replyToMessage || null;
-    var tempId = _makeOptimisticId();
-    var optimisticMessage = {
-      _optimisticId: tempId,
-      id: tempId,
-      clientNonce: tempId,
-      clientCreatedAt: Date.now(),
-      text: inputMessage,
-      senderId: currentUid,
-      timestamp: new Date(),
-      pending: true,
-      failed: false,
-      replyTo: replySnapshot && replySnapshot.id ? {
-        id: String(replySnapshot.id),
-        text: _messagePreviewText(replySnapshot).slice(0, 200),
-        senderId: String(replySnapshot.senderId || "")
-      } : null
-    };
-    _upsertOptimisticMessage(optimisticMessage);
-    _renderMessages(true);
-    _emitTypingHeartbeat(false);
-    inputEl.value = "";
-    _setInputMessage("");
-    _setReplyTo(null);
-    if (sendBtn) sendBtn.disabled = _voiceUploadInFlight || !_inputMessage.trim();
-
-    sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot, { clientNonce: tempId })
-      .then(function (firestoreMessageId) {
-        _markOptimisticMessageSent(tempId, firestoreMessageId);
-        _renderMessages(true);
-        console.log("[Vaani] _sendMessage: write succeeded");
-      })
-      .catch(function (err) {
-        _markOptimisticMessageFailed(tempId);
-        _renderMessages(true);
-        console.error("[Vaani] _sendMessage: write failed:", err);
-        if (typeof window.showToast === "function") window.showToast("Message failed to send — tap Retry.");
-      });
+    if (!_activeChatId) {
+      _markOptimisticMessageFailed(tempId);
+      _renderMessages(true);
+      return;
+    }
+    if (!_unsubscribeMessages) _listenToMessages(_activeChatId);
   }
+
+  // ── ASYNC: write to Firestore ─────────────────────────────────────────
+  sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot, { clientNonce: tempId })
+    .then(function (firestoreId) {
+      _markOptimisticMessageSent(tempId, firestoreId);
+      // No re-render needed — onSnapshot will arrive and clean up
+    })
+    .catch(function (err) {
+      _markOptimisticMessageFailed(tempId);
+      _renderMessages(true);
+      console.error("[Vaani] _sendMessage: write failed:", err);
+      if (typeof window.showToast === "function") window.showToast("Message failed — tap Retry.");
+    })
+    .finally(function () {
+      if (sendBtn) {
+        sendBtn.disabled = _voiceUploadInFlight || !(inputEl.value || "").trim();
+      }
+    });
+}
 
   function _retryMessageSend(messageId) {
     var idx = _findOptimisticIndexById(messageId);
@@ -2731,7 +2744,8 @@ function _renderReplyBanner() {
 
   function _renderMessages(forceBottom) {
     var container = _messagesContainerRef; if (!container) return;
-    _destroyActiveVoicePlayback();
+    var _hasVoiceMessages = _mergeMessagesForRender().some(function(m) { return m.type === "voice"; });
+if (_hasVoiceMessages) _destroyActiveVoicePlayback();
     var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
     var stickToBottom = !!forceBottom || _isUserNearBottom(container);
     var distanceFromBottom = container.scrollHeight - container.scrollTop;
@@ -2853,15 +2867,15 @@ function _renderReplyBanner() {
 
       row.appendChild(bubble); container.appendChild(row);
     });
-    window.requestAnimationFrame(function () {
-      if (!_messagesContainerRef) return;
-      if (stickToBottom) {
-        _scrollMessagesToBottom(true);
-        return;
-      }
+    if (stickToBottom) {
+  _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
+} else {
+  window.requestAnimationFrame(function () {
+    if (_messagesContainerRef) {
       _messagesContainerRef.scrollTop = Math.max(0, _messagesContainerRef.scrollHeight - distanceFromBottom);
-    });
-  }
+    }
+  });
+}
 
   // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
   function listenToMessages(chatId) {
@@ -2894,9 +2908,10 @@ function _renderReplyBanner() {
             String(_messageTimestampMillis(d)), String(d.clientNonce || ""));
         });
         var nextSig = sigParts.join("|");
-        if (!firstFire && nextSig === _activeMessagesSignature) {
-          console.log("[Vaani] listenToMessages: unchanged, skipping render."); return;
-        }
+        var hasPendingOptimistic = _optimisticMessages.some(function(m) { return m && (m.pending || m.failed); });
+if (!firstFire && nextSig === _activeMessagesSignature && !hasPendingOptimistic) {
+  return;
+}
         firstFire = false; _activeMessagesSignature = nextSig;
         _cleanupOptimisticMessages(messages);
         _setServerMessages(messages); _renderMessages();
