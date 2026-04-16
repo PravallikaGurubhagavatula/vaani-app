@@ -3146,71 +3146,124 @@ if (chatAvatar && _selectedChatUser) {
     console.log("[Vaani] Chat UI ready — chatId:", _activeChatId, "| with:", username);
   }
 
+
+function _tryLoadSessionProfile(uid) {
+  try {
+    var key = "vaani_auth_profile_" + String(uid || "");
+    var raw = sessionStorage.getItem(key);
+    if (raw) {
+      var entry = JSON.parse(raw);
+      if (entry && entry.profile && (Date.now() - (entry.cachedAt || 0)) < 30 * 60 * 1000) {
+        return entry.profile;
+      }
+    }
+  } catch (_) {}
+
+  return _loadProfileCache(uid);
+}
+
+function _tryRehydrateActiveChat(db, uid) {
+  try {
+    var saved = sessionStorage.getItem("vaani_active_chat_" + uid);
+    if (!saved) return;
+    var state = JSON.parse(saved);
+    if (!state || !state.chatId || !state.otherUid) return;
+
+    db.collection("users").doc(state.otherUid).get()
+      .then(function (profileDoc) {
+        var otherProfile = profileDoc.exists ? profileDoc.data() : {};
+        otherProfile.uid = state.otherUid;
+        _openChatUI(state.chatId, otherProfile);
+      })
+      .catch(function (err) {
+        console.warn("[Vaani] rehydrate failed:", err);
+        sessionStorage.removeItem("vaani_active_chat_" + uid);
+      });
+  } catch (e) {}
+}
+    
   // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
     _currentView: "home",
     _chatList: [],
     open: function () {
   var root = _root();
-  if (window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function") {
-    var auth = window.vaaniRouter.getAuth();
-    if (auth) {
-      var user = auth.currentUser;
-      if (!user || !window._vaaniCurrentUser) {
-        _renderLogin();
+  var auth = window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function"
+    ? window.vaaniRouter.getAuth()
+    : null;
+
+  if (!auth) return;
+
+  var user = auth.currentUser;
+  if (!user || !window._vaaniCurrentUser) {
+    _renderLogin();
+    return;
+  }
+
+  var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function"
+    ? window.vaaniRouter.getDb()
+    : null;
+
+  if (!db) return;
+
+  var shellAlreadyMounted = root && root.querySelector(".vc-shell");
+  if (shellAlreadyMounted) {
+    if (typeof _createChatListListener === "function" &&
+        _activeChatListListenerUid !== String(user.uid)) {
+      _createChatListListener();
+    }
+    _tryRehydrateActiveChat(db, user.uid);
+    return;
+  }
+
+  var cachedProfile = _tryLoadSessionProfile(user.uid);
+
+  if (cachedProfile) {
+    _renderChat(user, cachedProfile);
+    _tryRehydrateActiveChat(db, user.uid);
+
+    db.collection("users").doc(user.uid).get()
+      .then(function (doc) {
+        if (!doc.exists || !doc.data().username) return;
+        var fresh = doc.data();
+        _saveProfileCache(user.uid, fresh);
+
+        if (window.vaaniRouter && typeof window.vaaniRouter.writeProfileCache === "function") {
+          window.vaaniRouter.writeProfileCache(user.uid, fresh);
+        }
+      })
+      .catch(function () {});
+
+    return;
+  }
+
+  if (root && !root.querySelector(".vc-shell")) {
+    root.innerHTML =
+      '<div class="vg-screen vg-loading-screen">' +
+        '<div class="vg-spinner"></div>' +
+        '<p>Loading…</p>' +
+      '</div>';
+  }
+
+  db.collection("users").doc(user.uid).get()
+    .then(function (doc) {
+      if (!doc.exists || !doc.data().username) {
+        _renderProfile(user);
         return;
       }
+      var freshProfile = doc.data();
+      _saveProfileCache(user.uid, freshProfile);
 
-      var db = window.vaaniRouter.getDb();
-      var cachedProfile = _loadProfileCache(user.uid);
-      var renderedFromCache = false;
-      if (cachedProfile) {
-        renderedFromCache = true;
-        _renderChat(user, cachedProfile);
-      } else if (root && !root.children.length) {
-        root.innerHTML = '<div class="vg-screen vg-loading-screen"><div class="vg-spinner"></div><p>Loading profile…</p></div>';
+      if (window.vaaniRouter && typeof window.vaaniRouter.writeProfileCache === "function") {
+        window.vaaniRouter.writeProfileCache(user.uid, freshProfile);
       }
 
-      var profilePromise = db.collection("users").doc(user.uid).get();
-      var activeChatPromise = Promise.resolve().then(function () {
-        try {
-          var saved = sessionStorage.getItem("vaani_active_chat_" + user.uid);
-          return saved ? JSON.parse(saved) : null;
-        } catch (e) { return null; }
-      });
-
-      Promise.all([profilePromise, activeChatPromise]).then(function (results) {
-        var doc = results[0];
-        var state = results[1];
-        if (!doc.exists || !doc.data().username) {
-          _renderProfile(user);
-          return;
-        }
-
-        var freshProfile = doc.data();
-        _saveProfileCache(user.uid, freshProfile);
-
-        if (!renderedFromCache) {
-          _renderChat(user, freshProfile);
-        }
-
-        if (state && state.chatId && state.otherUid) {
-          db.collection("users").doc(state.otherUid).get()
-            .then(function (profileDoc) {
-              var otherProfile = profileDoc.exists ? profileDoc.data() : {};
-              otherProfile.uid = state.otherUid;
-              _openChatUI(state.chatId, otherProfile);
-            })
-            .catch(function (err) {
-              console.warn("[Vaani] rehydrate: profile fetch failed:", err);
-              sessionStorage.removeItem("vaani_active_chat_" + user.uid);
-            });
-        }
-      }).catch(function () {
-        if (!renderedFromCache) _renderProfile(user);
-      });
-    }
-  }
+      _renderChat(user, freshProfile);
+      _tryRehydrateActiveChat(db, user.uid);
+    })
+    .catch(function () {
+      _renderProfile(user);
+    });
 },
 
     openChatWithUser: async function (uid) {
