@@ -549,25 +549,28 @@ export function dispatchProfileAction(action, user) {
       return false;
     },
 
-    create: async function (user, username, city) {
-      var auth = _getAuth();
-      if (!auth) throw new Error("Auth not available. Please refresh.");
-      if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
-      // FIX: 'cleaned' is not in scope here; use an empty array as the correct default
-      var profile = await saveProfile(user.uid, {
-        name: user.displayName || "",
-        username: username,
-        socialLinks: [],
-        city: city || "Unknown",
-        status: {
-          isOnline: true,
-          isTyping: false,
-          showStatus: true,
-          lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
-        }
-      });
-      return profile;
-    },
+    async function (user, username, city) {
+     var auth = _getAuth();
+     if (!auth) throw new Error("Auth not available. Please refresh.");
+     if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
+     var profile = await saveProfile(user.uid, {
+       name: user.displayName || "",
+       username: username,
+       socialLinks: [],
+       city: city || "Unknown",
+       status: {
+         isOnline: true,
+         isTyping: false,
+         showStatus: true,
+         lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+       }
+     });
+       if (window.vaaniRouter && typeof window.vaaniRouter.writeProfileCache === "function") {
+       window.vaaniRouter.writeProfileCache(user.uid, profile);
+     }
+
+     return profile;
+   },
 
     validateUsername: _validateUsername,
     normalizeProfileData: _normalizeProfileData,
