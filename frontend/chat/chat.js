@@ -2096,9 +2096,15 @@ if (avatarEl) {
     }
     var previewText = hasVoice ? "\ud83c\udfa4 Voice message" : String(text || "");
     await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add(msgData);
-    await db.collection(CHATS_COLLECTION).doc(chatId).update({
-      lastMessage: previewText, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    try {
+      await db.collection(CHATS_COLLECTION).doc(chatId).set({
+        participants: participants,
+        lastMessage: previewText,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (chatMetaErr) {
+      console.warn("[Vaani] sendMessage: message saved but chat preview update failed:", chatMetaErr);
+    }
   }
 function _setReplyTo(msg) {
   _replyToMessage = msg ? { id: msg.id || null, text: _messagePreviewText(msg), senderId: String(msg.senderId || "") } : null;
@@ -2514,27 +2520,41 @@ function _renderReplyBanner() {
 
     console.log("[Vaani] _sendMessage: chatId =", _activeChatId, "| text =", inputMessage);
 
+    var replySnapshot = _replyToMessage || null;
     var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-    _optimisticMessages.push({ _optimisticId: tempId, text: inputMessage, senderId: currentUid, timestamp: new Date() });
+    _optimisticMessages.push({
+      _optimisticId: tempId,
+      text: inputMessage,
+      senderId: currentUid,
+      timestamp: new Date(),
+      replyTo: replySnapshot && replySnapshot.id ? {
+        id: String(replySnapshot.id),
+        text: _messagePreviewText(replySnapshot).slice(0, 200),
+        senderId: String(replySnapshot.senderId || "")
+      } : null
+    });
     _renderMessages(true);
     _emitTypingHeartbeat(false);
 
     inputEl.disabled = true; if (sendBtn) sendBtn.disabled = true;
-    inputEl.value = ""; _setInputMessage("");
 
     try {
-      var replySnapshot = _replyToMessage || null;
       await sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot);
+      inputEl.value = "";
+      _setInputMessage("");
       _setReplyTo(null); // clear reply banner after successful send
       console.log("[Vaani] _sendMessage: write succeeded");
     } catch (err) {
       _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
-      _setInputMessage(inputMessage); inputEl.value = inputMessage; _renderMessages(true);
+      _setInputMessage(inputMessage);
+      inputEl.value = inputMessage;
+      _renderMessages(true);
       console.error("[Vaani] _sendMessage: write failed:", err);
       if (typeof window.showToast === "function") window.showToast("Message failed to send — please try again");
     } finally {
       inputEl.disabled = false; _setInputMessage(inputEl.value || "");
-      if (sendBtn) sendBtn.disabled = !_inputMessage.trim(); inputEl.focus();
+      if (sendBtn) sendBtn.disabled = _voiceUploadInFlight || !_inputMessage.trim();
+      inputEl.focus();
     }
   }
 
