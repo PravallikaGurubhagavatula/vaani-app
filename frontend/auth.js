@@ -1,36 +1,49 @@
 /* ================================================================
-   Vaani — auth.js  v2.0  ROUTING CONTROLLER
+   Vaani — auth.js  v2.1  ROUTING CONTROLLER  (perf-optimised)
    ================================================================
-   THIS IS THE SINGLE SOURCE OF TRUTH FOR ALL ROUTING.
-
-   One listener. Three possible screens. No race conditions.
-
-   FLOW:
+   WHAT CHANGED FROM v2.0
    ─────────────────────────────────────────────────────────────────
+   PERF FIX 1 — Profile cache in sessionStorage
+     handlePostLogin() checks sessionStorage before making any
+     Firestore read. On repeat sign-ins (tab refresh, token refresh)
+     the "Checking your profile…" screen is skipped entirely and
+     the chat UI renders in the same microtask as onAuthStateChanged.
+
+   PERF FIX 2 — Eliminated redundant Firestore read in chat.js open()
+     The profile fetched here is passed directly to _renderChat()
+     via goToChat(), so chat.js never needs to re-fetch it.
+     (See companion patch for chat.js open().)
+
+   PERF FIX 3 — Optimistic render for cached users
+     If a valid session profile exists in cache, we call
+     loadChatHome() immediately (no spinner) and then validate
+     the Firestore doc silently in the background. If the doc has
+     been deleted we redirect to onboarding; otherwise we do nothing.
+
+   PERF FIX 4 — _showLoadingScreen() guarded behind cache miss
+     The loading spinner is only shown when there is genuinely no
+     cached profile to show — i.e. first-ever sign-in.
+
+   PERF FIX 5 — Single onAuthStateChanged listener; no race conditions
+     Architecture unchanged. All routing still flows through the
+     single onAuthStateChanged entry point.
+   ─────────────────────────────────────────────────────────────────
+   FLOW (updated):
      onAuthStateChanged fires
        │
-       ├─ user == null  ──────────────────────► Login screen
+       ├─ user == null  ──────────────────────────────► Login screen
        │
        └─ user exists
              │
-             ├─ Firestore users/{uid} exists ─► Chat screen
+             ├─ sessionStorage cache hit ────────────► Chat screen IMMEDIATELY
+             │     └─ background validate → onboarding if doc deleted
              │
-             └─ Firestore users/{uid} missing ► Profile screen
-
-   KEY DECISIONS:
-   ─────────────────────────────────────────────────────────────────
-   • Uses the "vaani-chat-v2" named compat app (same as chat.js/
-     profile.js) so auth and Firestore are on the SAME instance.
-     No cross-instance mirroring needed for routing.
-
-   • onAuthStateChanged is the ONLY trigger for routing. Nothing
-     else calls showLoginUI / showProfileUI / showChatUI.
-
-   • window.vaaniRouter is exposed so profile.js can call
-     window.vaaniRouter.goToChat(profile) after creation.
-
-   • window.vaaniAuth is kept for backward compat (chat.js uses it
-     for the sign-in popup inside _renderLoginUI).
+             └─ cache miss (first sign-in or cleared)
+                   │
+                   ├─ show spinner (first time only)
+                   ├─ fetch Firestore profile
+                   ├─ profile exists ──────────────► Chat screen
+                   └─ profile missing ─────────────► Profile onboarding
 ================================================================ */
 
 (function () {
@@ -48,6 +61,55 @@
 
   var _auth = null;
   var _db   = null;
+
+  /* ─────────────────────────────────────────────────────────────────
+     PERF FIX 1 — Thin profile cache backed by sessionStorage
+     Key:   "vaani_auth_profile_<uid>"
+     TTL:   30 minutes (sufficient for a browser session; avoids
+            serving stale data after a long idle tab)
+     This is separate from the localStorage session-user cache in
+     app.js — that one stores auth identity; this one stores the
+     Firestore profile document.
+  ───────────────────────────────────────────────────────────────── */
+  var PROFILE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 min
+
+  function _profileCacheKey(uid) {
+    return "vaani_auth_profile_" + String(uid || "");
+  }
+
+  function _readProfileCache(uid) {
+    if (!uid) return null;
+    try {
+      var raw = sessionStorage.getItem(_profileCacheKey(uid));
+      if (!raw) return null;
+      var entry = JSON.parse(raw);
+      if (!entry || typeof entry !== "object") return null;
+      if (Date.now() - (entry.cachedAt || 0) > PROFILE_CACHE_TTL_MS) {
+        sessionStorage.removeItem(_profileCacheKey(uid));
+        return null;
+      }
+      return entry.profile || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _writeProfileCache(uid, profile) {
+    if (!uid || !profile) return;
+    try {
+      sessionStorage.setItem(_profileCacheKey(uid), JSON.stringify({
+        profile: profile,
+        cachedAt: Date.now(),
+      }));
+    } catch (_) {
+      // sessionStorage full or unavailable — non-fatal
+    }
+  }
+
+  function _clearProfileCache(uid) {
+    if (!uid) return;
+    try { sessionStorage.removeItem(_profileCacheKey(uid)); } catch (_) {}
+  }
 
   /* ── Wait for compat SDK ─────────────────────────────────────── */
   function _waitForCompat(cb, tries) {
@@ -112,17 +174,43 @@
   }
 
   /**
-   * Required post-login gate:
-   *  - users/{uid} exists  -> chat home
-   *  - users/{uid} missing -> profile onboarding
+   * PERF FIX 2 & 3 — handlePostLogin with optimistic cache path
+   *
+   * Fast path (cache hit):
+   *   1. Render chat UI immediately from cache — zero Firestore reads
+   *   2. Kick off a background Firestore read to validate the doc
+   *   3. If doc is gone → redirect to onboarding; otherwise no-op
+   *
+   * Slow path (cache miss — first sign-in):
+   *   1. Show loading spinner
+   *   2. Fetch Firestore profile
+   *   3. Cache the result
+   *   4. Render chat UI or onboarding
    */
   async function handlePostLogin(user) {
-    _showLoadingScreen();
-
     if (!user || !user.uid) {
       _showLoginScreen();
       return;
     }
+
+    var uid = user.uid;
+
+    /* ── FAST PATH: profile is already cached ─────────────────── */
+    var cachedProfile = _readProfileCache(uid);
+    if (cachedProfile) {
+      console.log("[Vaani Router] Cache hit — rendering chat immediately for @" + (cachedProfile.username || uid));
+
+      // Render NOW, before any async work
+      loadChatHome(user, cachedProfile);
+
+      // Background validation — don't block the UI
+      _validateProfileInBackground(user, cachedProfile);
+      return;
+    }
+
+    /* ── SLOW PATH: first sign-in or cache expired ────────────── */
+    // Only show spinner when we have nothing to render yet
+    _showLoadingScreen();
 
     try {
       var getUserProfile =
@@ -131,6 +219,7 @@
           : (window.vaaniProfile && typeof window.vaaniProfile.get === "function"
             ? window.vaaniProfile.get.bind(window.vaaniProfile)
             : null);
+
       var showProfileOnboarding =
         (typeof window.showProfileOnboarding === "function")
           ? window.showProfileOnboarding
@@ -140,34 +229,72 @@
         throw new Error("Profile module not ready.");
       }
 
-      var profile = await getUserProfile(user.uid);
+      var profile = await getUserProfile(uid);
+
       if (!profile) {
-        console.log("[Vaani Router] Profile check → none");
-        await showProfileOnboarding(user.uid);
+        console.log("[Vaani Router] No profile found — showing onboarding");
+        await showProfileOnboarding(uid);
         return;
       }
 
-      console.log("[Vaani Router] Profile check →", profile.username ? "@" + profile.username : "exists");
+      // Cache the fetched profile so next auth event is instant
+      _writeProfileCache(uid, profile);
+
+      console.log("[Vaani Router] Profile fetched → @" + (profile.username || uid));
       loadChatHome(user, profile);
+
     } catch (err) {
       console.error("[Vaani Router] Profile read error:", err.message);
       if (typeof window.showToast === "function") {
         window.showToast("Could not verify profile. Please try again.");
       }
-      // Fail closed: onboarding screen blocks chat access on error.
       _showProfileScreen(user);
+    }
+  }
+
+  /**
+   * PERF FIX 3 — Background profile validation after optimistic render
+   * Runs silently; only acts if the profile document has been deleted.
+   */
+  async function _validateProfileInBackground(user, cachedProfile) {
+    try {
+      if (!_db || !user || !user.uid) return;
+
+      // Use a direct Firestore read (not getUserProfile) to minimise
+      // the call stack depth — we just need to know if the doc exists.
+      var doc = await _db.collection("users").doc(user.uid).get();
+
+      if (!doc.exists) {
+        // Profile was deleted — clear cache and send to onboarding
+        console.warn("[Vaani Router] Background check: profile doc missing — redirecting to onboarding");
+        _clearProfileCache(user.uid);
+        var showProfileOnboarding =
+          (typeof window.showProfileOnboarding === "function")
+            ? window.showProfileOnboarding
+            : function () { _showProfileScreen(user); };
+        await showProfileOnboarding(user.uid);
+        return;
+      }
+
+      // Profile exists — refresh the cache with the latest data
+      var freshProfile = doc.data();
+      if (freshProfile) {
+        _writeProfileCache(user.uid, freshProfile);
+      }
+
+      console.log("[Vaani Router] Background check: profile valid ✓");
+    } catch (err) {
+      // Non-fatal — user is already in chat; log and move on
+      console.warn("[Vaani Router] Background profile validation failed (non-fatal):", err.message);
     }
   }
 
   /* ════════════════════════════════════════════════════════════════
      SCREEN CONTROLLERS
-     Each function:
-       1. Tells chat.js to stop/start
-       2. Delegates rendering to the relevant module
   ════════════════════════════════════════════════════════════════ */
 
   function _showLoadingScreen() {
-    // Show spinner in the chat area while profile check runs
+    // PERF FIX 4 — only called on genuine cache miss (first sign-in)
     var root = document.getElementById("vaaniChat");
     if (root) {
       root.innerHTML =
@@ -176,24 +303,21 @@
           '<p>Checking your profile…</p>' +
         '</div>';
     }
-    // Stop any stale Firestore listener
     if (window.vaaniChat && typeof window.vaaniChat.close === "function") {
       window.vaaniChat.close();
     }
   }
 
   function _showLoginScreen() {
-    // Clear window globals
+    _clearProfileCache(window._vaaniCurrentUser && window._vaaniCurrentUser.uid);
     window._vaaniCurrentUser = null;
     window.VAANI_AUTH_READY  = true;
     if (typeof window._vaaniOnAuthChange === "function") {
       window._vaaniOnAuthChange(null);
     }
-    // Stop chat listener
     if (window.vaaniChat && typeof window.vaaniChat.close === "function") {
       window.vaaniChat.close();
     }
-    // Render login UI
     if (window.vaaniChat && typeof window.vaaniChat._renderLogin === "function") {
       window.vaaniChat._renderLogin(_auth);
     } else {
@@ -202,11 +326,9 @@
   }
 
   function _showProfileScreen(user) {
-    // Stop chat listener
     if (window.vaaniChat && typeof window.vaaniChat.close === "function") {
       window.vaaniChat.close();
     }
-    // Render profile creation UI
     if (window.vaaniChat && typeof window.vaaniChat._renderProfile === "function") {
       window.vaaniChat._renderProfile(user);
     } else {
@@ -215,13 +337,12 @@
   }
 
   function _showChatScreen(user, profile) {
-    // Render full chat UI
     if (window.vaaniChat && typeof window.vaaniChat._renderChat === "function") {
       window.vaaniChat._renderChat(user, profile);
     }
   }
 
-  /* ── Fallback renderers (used if chat.js hasn't loaded yet) ─── */
+  /* ── Fallback renderers ──────────────────────────────────────── */
   function _renderLoginFallback() {
     var root = document.getElementById("vaaniChat");
     if (!root) return;
@@ -276,11 +397,18 @@
 
     /** Called by profile.js after successful profile creation */
     goToChat: function (user, profile) {
+      // Also cache the newly created profile so next load is instant
+      if (user && user.uid && profile) {
+        _writeProfileCache(user.uid, profile);
+      }
       _showChatScreen(user, profile);
     },
 
     /** Called by chat.js sign-out button */
     signOut: async function () {
+      // Clear profile cache on sign-out so next user gets a fresh fetch
+      var uid = _auth && _auth.currentUser && _auth.currentUser.uid;
+      if (uid) _clearProfileCache(uid);
       try {
         if (typeof window.signOutUser === "function") {
           await window.signOutUser();
@@ -297,9 +425,12 @@
     getAuth: function () { return _auth; },
     getDb:   function () { return _db;   },
     handlePostLogin: handlePostLogin,
+
+    /** Expose cache helpers so profile.js can bust/update the cache */
+    writeProfileCache: _writeProfileCache,
+    clearProfileCache: _clearProfileCache,
   };
 
-  // Expose explicitly as requested for direct usage in login flows.
   window.handlePostLogin = handlePostLogin;
 
   /* Keep window.vaaniAuth for backward compat */
@@ -310,6 +441,6 @@
   };
 
   _waitForCompat(_init);
-  console.log("[Vaani Router] auth.js v2.0 loaded ✓");
+  console.log("[Vaani Router] auth.js v2.1 loaded ✓");
 
 })();
