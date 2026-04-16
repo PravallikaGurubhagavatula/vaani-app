@@ -2115,13 +2115,44 @@ if (avatarEl) {
 
   function _cleanupOptimisticMessages(serverMessages) {
     var serverIds = new Set((serverMessages || []).map(function (msg) { return String(msg && msg.id || ""); }).filter(Boolean));
+    var serverNonces = new Set((serverMessages || []).map(function (msg) { return String(msg && msg.clientNonce || ""); }).filter(Boolean));
     _optimisticMessages = _optimisticMessages.filter(function (msg) {
       if (!msg || typeof msg !== "object") return false;
       if (msg.failed) return true;
       var id = String(msg.id || "");
+      var nonce = String(msg.clientNonce || msg._optimisticId || "");
       if (id && serverIds.has(id)) return false;
+      if (nonce && serverNonces.has(nonce)) return false;
       return true;
     });
+  }
+
+  function _messageTimestampMillis(msg) {
+    if (!msg || typeof msg !== "object") return 0;
+    var ts = msg.timestamp || msg.createdAt || msg.clientCreatedAt || null;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === "function") return ts.toMillis();
+    if (ts instanceof Date) return ts.getTime();
+    if (typeof ts === "number" && isFinite(ts)) return ts;
+    return 0;
+  }
+
+  function _sortMessagesStable(list) {
+    return (Array.isArray(list) ? list.slice() : []).sort(function (a, b) {
+      var aTs = _messageTimestampMillis(a);
+      var bTs = _messageTimestampMillis(b);
+      if (aTs !== bTs) return aTs - bTs;
+      var aPending = a && a.pending ? 1 : 0;
+      var bPending = b && b.pending ? 1 : 0;
+      if (aPending !== bPending) return aPending - bPending;
+      var aKey = String(a && (a.id || a._optimisticId || a.clientNonce) || "");
+      var bKey = String(b && (b.id || b._optimisticId || b.clientNonce) || "");
+      return aKey.localeCompare(bKey);
+    });
+  }
+
+  function _setServerMessages(nextServerMessages) {
+    _messages = _sortMessagesStable(Array.isArray(nextServerMessages) ? nextServerMessages : []);
   }
 
   function _mergeMessagesForRender() {
@@ -2150,7 +2181,7 @@ if (avatarEl) {
     }
     (Array.isArray(_optimisticMessages) ? _optimisticMessages : []).forEach(function (msg) { _append(msg, 1); });
     (Array.isArray(_messages) ? _messages : []).forEach(function (msg) { _append(msg, 2); });
-    return ordered;
+    return _sortMessagesStable(ordered);
   }
 
   // ── FIX 6: sendMessage — always include sorted participants[] ────────────
@@ -2172,6 +2203,7 @@ if (avatarEl) {
       if (extraData.audioUrl) msgData.audioUrl = String(extraData.audioUrl);
       if (extraData.audioData) msgData.audioData = String(extraData.audioData);
       if (extraData.audioMimeType) msgData.audioMimeType = String(extraData.audioMimeType);
+      if (extraData.clientNonce) msgData.clientNonce = String(extraData.clientNonce);
       if (extraData.durationMs && Number(extraData.durationMs) > 0) {
         msgData.durationMs = Math.max(0, Math.round(Number(extraData.durationMs)));
         msgData.duration = Math.max(0, Math.round(Number(extraData.durationMs) / 1000));
@@ -2508,6 +2540,8 @@ function _renderReplyBanner() {
       _upsertOptimisticMessage({
         _optimisticId: tempId,
         id: tempId,
+        clientNonce: tempId,
+        clientCreatedAt: Date.now(),
         type: "voice",
         text: "",
         audioUrl: audioUrl,
@@ -2522,6 +2556,7 @@ function _renderReplyBanner() {
       _renderMessages(true);
       var replySnapshot = _replyToMessage || null;
       var firestoreMessageId = await sendMessage(_activeChatId, "", currentUid, otherUid, replySnapshot, {
+        clientNonce: tempId,
         type: "voice",
         audioUrl: audioUrl,
         audioData: audioUrl,
@@ -2621,6 +2656,8 @@ function _renderReplyBanner() {
     var optimisticMessage = {
       _optimisticId: tempId,
       id: tempId,
+      clientNonce: tempId,
+      clientCreatedAt: Date.now(),
       text: inputMessage,
       senderId: currentUid,
       timestamp: new Date(),
@@ -2640,7 +2677,7 @@ function _renderReplyBanner() {
     _setReplyTo(null);
     if (sendBtn) sendBtn.disabled = _voiceUploadInFlight || !_inputMessage.trim();
 
-    sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot)
+    sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot, { clientNonce: tempId })
       .then(function (firestoreMessageId) {
         _markOptimisticMessageSent(tempId, firestoreMessageId);
         _renderMessages(true);
@@ -2677,6 +2714,9 @@ function _renderReplyBanner() {
         durationMs: Math.max(0, Math.round(Number(msg.durationMs || 0)))
       };
     }
+
+    if (!retryExtraData) retryExtraData = {};
+    retryExtraData.clientNonce = String(msg.clientNonce || msg._optimisticId || msg.id || "");
 
     sendMessage(_activeChatId, String(msg.text || ""), currentUid, otherUid, msg.replyTo || null, retryExtraData)
       .then(function (firestoreMessageId) {
@@ -2847,11 +2887,11 @@ function _renderReplyBanner() {
           console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId); return;
         }
         var messages = snapshot.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data() || {}); });
+        messages = _sortMessagesStable(messages);
         var sigParts = [];
-        snapshot.docs.forEach(function (doc) {
-          var d = doc.data() || {};
-          sigParts.push(doc.id, String(d.text || ""), String(d.senderId || ""),
-            String(d.timestamp && typeof d.timestamp.toMillis === "function" ? d.timestamp.toMillis() : ""));
+        messages.forEach(function (d) {
+          sigParts.push(String(d.id || ""), String(d.text || ""), String(d.senderId || ""),
+            String(_messageTimestampMillis(d)), String(d.clientNonce || ""));
         });
         var nextSig = sigParts.join("|");
         if (!firstFire && nextSig === _activeMessagesSignature) {
@@ -2859,7 +2899,7 @@ function _renderReplyBanner() {
         }
         firstFire = false; _activeMessagesSignature = nextSig;
         _cleanupOptimisticMessages(messages);
-        _setMessages(messages); _renderMessages();
+        _setServerMessages(messages); _renderMessages();
         console.log("[Vaani] listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
       }, function (err) {
         console.error("[Vaani] listenToMessages: error for chatId:", chatId, err);
