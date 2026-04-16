@@ -241,8 +241,12 @@ export function dispatchProfileAction(action, user) {
       payload.joinedDate = firebase.firestore.FieldValue.serverTimestamp();
     }
 
-    await docRef.set(payload, { merge: true });
-    return Object.assign({}, existing.exists ? existing.data() : {}, payload);
+     await docRef.set(payload, { merge: true });
+     if (window.vaaniRouter && typeof window.vaaniRouter.writeProfileCache === "function") {
+     window.vaaniRouter.writeProfileCache(uid, payload);
+   }
+
+   return Object.assign({}, existing.exists ? existing.data() : {}, payload);
   }
 
   // ── FIX 1: _readFormState correctly reads social link inputs ──────
