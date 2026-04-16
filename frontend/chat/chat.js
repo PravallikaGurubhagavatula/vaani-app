@@ -48,6 +48,7 @@ import {
   var _activeMessageListenerKey = null;
   var _activeMessagesSignature = "";
   var _optimisticMessages = [];
+  var _optimisticCounter = 0;
   var _unsubscribeChatList = null;
   var _replyToMessage = null; // { id, text, senderId }
   var _activeChatListListenerUid = null;
@@ -2063,6 +2064,95 @@ if (avatarEl) {
     return "";
   }
 
+  function _makeOptimisticId() {
+    _optimisticCounter += 1;
+    return "temp_" + Date.now() + "_" + _optimisticCounter;
+  }
+
+  function _findOptimisticIndexById(messageId) {
+    var targetId = String(messageId || "").trim();
+    if (!targetId) return -1;
+    for (var i = 0; i < _optimisticMessages.length; i += 1) {
+      if (String(_optimisticMessages[i] && _optimisticMessages[i].id || "") === targetId) return i;
+    }
+    return -1;
+  }
+
+  function _findOptimisticIndexByTempId(tempId) {
+    var targetId = String(tempId || "").trim();
+    if (!targetId) return -1;
+    for (var i = 0; i < _optimisticMessages.length; i += 1) {
+      if (String(_optimisticMessages[i] && _optimisticMessages[i]._optimisticId || "") === targetId) return i;
+    }
+    return -1;
+  }
+
+  function _upsertOptimisticMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    var idx = _findOptimisticIndexByTempId(msg._optimisticId || msg.id);
+    if (idx >= 0) _optimisticMessages[idx] = Object.assign({}, _optimisticMessages[idx], msg);
+    else _optimisticMessages.push(msg);
+  }
+
+  function _markOptimisticMessageSent(tempId, firestoreId) {
+    var idx = _findOptimisticIndexByTempId(tempId);
+    if (idx < 0) return;
+    _optimisticMessages[idx] = Object.assign({}, _optimisticMessages[idx], {
+      id: String(firestoreId || _optimisticMessages[idx].id || tempId),
+      pending: false,
+      failed: false
+    });
+  }
+
+  function _markOptimisticMessageFailed(tempId) {
+    var idx = _findOptimisticIndexByTempId(tempId);
+    if (idx < 0) return;
+    _optimisticMessages[idx] = Object.assign({}, _optimisticMessages[idx], {
+      pending: false,
+      failed: true
+    });
+  }
+
+  function _cleanupOptimisticMessages(serverMessages) {
+    var serverIds = new Set((serverMessages || []).map(function (msg) { return String(msg && msg.id || ""); }).filter(Boolean));
+    _optimisticMessages = _optimisticMessages.filter(function (msg) {
+      if (!msg || typeof msg !== "object") return false;
+      if (msg.failed) return true;
+      var id = String(msg.id || "");
+      if (id && serverIds.has(id)) return false;
+      return true;
+    });
+  }
+
+  function _mergeMessagesForRender() {
+    var mergedMap = Object.create(null);
+    var ordered = [];
+    function _append(msg, sourcePriority) {
+      if (!msg || typeof msg !== "object") return;
+      var id = String(msg.id || msg._optimisticId || "");
+      var key = id || ("anon_" + ordered.length + "_" + Date.now());
+      var existing = mergedMap[key];
+      if (!existing) {
+        mergedMap[key] = Object.assign({ _sourcePriority: sourcePriority }, msg);
+        ordered.push(mergedMap[key]);
+        return;
+      }
+      if ((existing._sourcePriority || 0) <= sourcePriority) {
+        mergedMap[key] = Object.assign({}, existing, msg, { _sourcePriority: sourcePriority });
+        for (var i = 0; i < ordered.length; i += 1) {
+          var existingKey = String(ordered[i] && (ordered[i].id || ordered[i]._optimisticId) || "");
+          if (existingKey === key) {
+            ordered[i] = mergedMap[key];
+            break;
+          }
+        }
+      }
+    }
+    (Array.isArray(_optimisticMessages) ? _optimisticMessages : []).forEach(function (msg) { _append(msg, 1); });
+    (Array.isArray(_messages) ? _messages : []).forEach(function (msg) { _append(msg, 2); });
+    return ordered;
+  }
+
   // ── FIX 6: sendMessage — always include sorted participants[] ────────────
   async function sendMessage(chatId, text, currentUid, otherUid, replyTo, extraData) {
     var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
@@ -2095,7 +2185,7 @@ if (avatarEl) {
       };
     }
     var previewText = hasVoice ? "\ud83c\udfa4 Voice message" : String(text || "");
-    await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add(msgData);
+    var docRef = await db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION).add(msgData);
     try {
       await db.collection(CHATS_COLLECTION).doc(chatId).set({
         participants: participants,
@@ -2105,6 +2195,7 @@ if (avatarEl) {
     } catch (chatMetaErr) {
       console.warn("[Vaani] sendMessage: message saved but chat preview update failed:", chatMetaErr);
     }
+    return docRef && docRef.id ? String(docRef.id) : "";
   }
 function _setReplyTo(msg) {
   _replyToMessage = msg ? { id: msg.id || null, text: _messagePreviewText(msg), senderId: String(msg.senderId || "") } : null;
@@ -2409,13 +2500,14 @@ function _renderReplyBanner() {
     _voiceUploadError = "";
     _voicePendingDraft = { blob: blob, mimeType: mimeType, durationMs: durationMs };
     _renderVoiceRecordingState();
-    var tempId = "local-voice-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    var tempId = _makeOptimisticId();
     try {
       var uploadPayload = await _uploadVoiceBlob(blob, mimeType, durationMs, _activeChatId);
       var audioUrl = String(uploadPayload.audioUrl || "");
       if (!audioUrl) throw new Error("Upload succeeded but audio URL is missing");
-      _optimisticMessages.push({
+      _upsertOptimisticMessage({
         _optimisticId: tempId,
+        id: tempId,
         type: "voice",
         text: "",
         audioUrl: audioUrl,
@@ -2423,11 +2515,13 @@ function _renderReplyBanner() {
         audioMimeType: mimeType || "audio/webm",
         durationMs: Math.max(0, Math.round(Number(durationMs || 0))),
         senderId: currentUid,
-        timestamp: new Date()
+        timestamp: new Date(),
+        pending: true,
+        failed: false
       });
       _renderMessages(true);
       var replySnapshot = _replyToMessage || null;
-      await sendMessage(_activeChatId, "", currentUid, otherUid, replySnapshot, {
+      var firestoreMessageId = await sendMessage(_activeChatId, "", currentUid, otherUid, replySnapshot, {
         type: "voice",
         audioUrl: audioUrl,
         audioData: audioUrl,
@@ -2435,12 +2529,14 @@ function _renderReplyBanner() {
         durationMs: durationMs,
         duration: Math.max(0, Math.round(Number(durationMs || 0) / 1000))
       });
+      _markOptimisticMessageSent(tempId, firestoreMessageId);
+      _renderMessages(true);
       _voicePendingDraft = null;
       _setReplyTo(null);
       _scrollMessagesToBottom(true);
     } catch (err) {
       console.error("[Vaani] _sendVoiceMessage failed:", err && err.message ? err.message : err);
-      _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
+      _markOptimisticMessageFailed(tempId);
       _renderMessages(true);
       _voiceUploadError = "Upload failed";
       if (typeof window.showToast === "function") window.showToast("Voice message failed to send — please try again");
@@ -2521,41 +2617,76 @@ function _renderReplyBanner() {
     console.log("[Vaani] _sendMessage: chatId =", _activeChatId, "| text =", inputMessage);
 
     var replySnapshot = _replyToMessage || null;
-    var tempId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-    _optimisticMessages.push({
+    var tempId = _makeOptimisticId();
+    var optimisticMessage = {
       _optimisticId: tempId,
+      id: tempId,
       text: inputMessage,
       senderId: currentUid,
       timestamp: new Date(),
+      pending: true,
+      failed: false,
       replyTo: replySnapshot && replySnapshot.id ? {
         id: String(replySnapshot.id),
         text: _messagePreviewText(replySnapshot).slice(0, 200),
         senderId: String(replySnapshot.senderId || "")
       } : null
-    });
+    };
+    _upsertOptimisticMessage(optimisticMessage);
     _renderMessages(true);
     _emitTypingHeartbeat(false);
+    inputEl.value = "";
+    _setInputMessage("");
+    _setReplyTo(null);
+    if (sendBtn) sendBtn.disabled = _voiceUploadInFlight || !_inputMessage.trim();
 
-    inputEl.disabled = true; if (sendBtn) sendBtn.disabled = true;
+    sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot)
+      .then(function (firestoreMessageId) {
+        _markOptimisticMessageSent(tempId, firestoreMessageId);
+        _renderMessages(true);
+        console.log("[Vaani] _sendMessage: write succeeded");
+      })
+      .catch(function (err) {
+        _markOptimisticMessageFailed(tempId);
+        _renderMessages(true);
+        console.error("[Vaani] _sendMessage: write failed:", err);
+        if (typeof window.showToast === "function") window.showToast("Message failed to send — tap Retry.");
+      });
+  }
 
-    try {
-      await sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot);
-      inputEl.value = "";
-      _setInputMessage("");
-      _setReplyTo(null); // clear reply banner after successful send
-      console.log("[Vaani] _sendMessage: write succeeded");
-    } catch (err) {
-      _optimisticMessages = _optimisticMessages.filter(function (m) { return m._optimisticId !== tempId; });
-      _setInputMessage(inputMessage);
-      inputEl.value = inputMessage;
-      _renderMessages(true);
-      console.error("[Vaani] _sendMessage: write failed:", err);
-      if (typeof window.showToast === "function") window.showToast("Message failed to send — please try again");
-    } finally {
-      inputEl.disabled = false; _setInputMessage(inputEl.value || "");
-      if (sendBtn) sendBtn.disabled = _voiceUploadInFlight || !_inputMessage.trim();
-      inputEl.focus();
+  function _retryMessageSend(messageId) {
+    var idx = _findOptimisticIndexById(messageId);
+    if (idx < 0) return;
+    var msg = _optimisticMessages[idx];
+    if (!msg || !msg.failed || !msg.senderId) return;
+    var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? String(window._vaaniCurrentUser.uid) : "";
+    var selectedUser = _selectedChatUser || null;
+    var otherUid = selectedUser && selectedUser.uid ? String(selectedUser.uid) : "";
+    if (!currentUid || !otherUid || !_activeChatId) return;
+
+    _optimisticMessages[idx] = Object.assign({}, msg, { pending: true, failed: false, timestamp: new Date() });
+    _renderMessages(true);
+
+    var retryExtraData = null;
+    if (msg.type === "voice" && (msg.audioUrl || msg.audioData)) {
+      retryExtraData = {
+        type: "voice",
+        audioUrl: String(msg.audioUrl || ""),
+        audioData: String(msg.audioData || msg.audioUrl || ""),
+        audioMimeType: String(msg.audioMimeType || "audio/webm"),
+        durationMs: Math.max(0, Math.round(Number(msg.durationMs || 0)))
+      };
     }
+
+    sendMessage(_activeChatId, String(msg.text || ""), currentUid, otherUid, msg.replyTo || null, retryExtraData)
+      .then(function (firestoreMessageId) {
+        _markOptimisticMessageSent(msg._optimisticId || msg.id, firestoreMessageId);
+        _renderMessages(true);
+      })
+      .catch(function () {
+        _markOptimisticMessageFailed(msg._optimisticId || msg.id);
+        _renderMessages(true);
+      });
   }
 
   function _renderMessages(forceBottom) {
@@ -2566,7 +2697,7 @@ function _renderReplyBanner() {
     var distanceFromBottom = container.scrollHeight - container.scrollTop;
     _shouldStickToBottom = stickToBottom;
     container.innerHTML = "";
-    var messages = (Array.isArray(_messages) ? _messages : []).concat(Array.isArray(_optimisticMessages) ? _optimisticMessages : []);
+    var messages = _mergeMessagesForRender();
     if (!messages.length) {
       var emptyState = document.createElement("div");
       emptyState.className = "vc-chat-empty"; emptyState.textContent = "Start a conversation";
@@ -2597,6 +2728,28 @@ function _renderReplyBanner() {
         msgText.className = "vc-msg-text";
         msgText.textContent = _messagePreviewText(msg);
         bubble.appendChild(msgText);
+      }
+
+      if (msg.pending || msg.failed) {
+        var stateRow = document.createElement("div");
+        stateRow.className = "vc-msg-state" + (msg.failed ? " is-failed" : "");
+        if (msg.pending) {
+          stateRow.textContent = "Sending...";
+        } else if (msg.failed) {
+          stateRow.textContent = "Failed";
+          var canRetry = !!String(msg.text || "").trim() || (msg.type === "voice" && !!(msg.audioUrl || msg.audioData));
+          if (canRetry) {
+            var retryBtn = document.createElement("button");
+            retryBtn.type = "button";
+            retryBtn.className = "vc-msg-retry";
+            retryBtn.textContent = "Retry";
+            retryBtn.addEventListener("click", function (retryId) {
+              return function () { _retryMessageSend(retryId); };
+            }(msg.id || msg._optimisticId));
+            stateRow.appendChild(retryBtn);
+          }
+        }
+        bubble.appendChild(stateRow);
       }
 
       // ── Swipe-to-reply (touch + mouse) ──────────────────────────
@@ -2704,7 +2857,8 @@ function _renderReplyBanner() {
         if (!firstFire && nextSig === _activeMessagesSignature) {
           console.log("[Vaani] listenToMessages: unchanged, skipping render."); return;
         }
-        firstFire = false; _activeMessagesSignature = nextSig; _optimisticMessages = [];
+        firstFire = false; _activeMessagesSignature = nextSig;
+        _cleanupOptimisticMessages(messages);
         _setMessages(messages); _renderMessages();
         console.log("[Vaani] listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
       }, function (err) {
