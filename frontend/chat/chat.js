@@ -3183,6 +3183,7 @@ function _tryRehydrateActiveChat(db, uid) {
     
   // ── Public API ────────────────────────────────────────────────────────────
   window.vaaniChat = {
+    ready: true,
     _currentView: "home",
     _chatList: [],
     open: function (chatId) {
@@ -3323,6 +3324,9 @@ function _tryRehydrateActiveChat(db, uid) {
   };
 
   console.log("[Vaani] chat.js v4.2 loaded ✓");
+  document.dispatchEvent(new CustomEvent("vaani:chat-ready", {
+    detail: { ready: true }
+  }));
 
 /* ========================================================= */ 
    // ── Profile Modal ─────────────────────────────────────────────

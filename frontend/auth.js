@@ -61,6 +61,7 @@
 
   var _auth = null;
   var _db   = null;
+  var PROFILE_READY_TIMEOUT_MS = 7000;
 
   /* ─────────────────────────────────────────────────────────────────
      PERF FIX 1 — Thin profile cache backed by sessionStorage
@@ -145,6 +146,47 @@
     }
   }
 
+  async function _waitForProfileModuleReady(timeoutMs) {
+    timeoutMs = typeof timeoutMs === "number" ? timeoutMs : PROFILE_READY_TIMEOUT_MS;
+
+    if (window.vaaniProfile && typeof window.vaaniProfile.get === "function") {
+      return window.vaaniProfile;
+    }
+
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      function done(err, value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        document.removeEventListener("vaani:profile-ready", onReady);
+        if (err) reject(err); else resolve(value);
+      }
+      function onReady() {
+        if (window.vaaniProfile && typeof window.vaaniProfile.get === "function") {
+          done(null, window.vaaniProfile);
+        }
+      }
+
+      var timer = setTimeout(function () {
+        done(new Error("Profile module readiness timeout."));
+      }, timeoutMs);
+
+      document.addEventListener("vaani:profile-ready", onReady, { once: true });
+      onReady();
+    });
+  }
+
+  function _signalVaaniReady(user, profile) {
+    document.dispatchEvent(new CustomEvent("vaani:ready", {
+      detail: {
+        authReady: true,
+        profileReady: !!profile,
+        uid: user && user.uid ? String(user.uid) : "",
+      }
+    }));
+  }
+
   /* ════════════════════════════════════════════════════════════════
      THE ROUTER — onAuthStateChanged is the ONLY entry point
   ════════════════════════════════════════════════════════════════ */
@@ -155,6 +197,7 @@
       function renderProfile(currentUser) { _showProfileScreen(currentUser); }
       function renderChat(currentUser, profile) { _showChatScreen(currentUser, profile); }
       async function getUserProfile(uid) {
+        await _waitForProfileModuleReady();
         var getter =
           (typeof window.getUserProfile === "function")
             ? window.getUserProfile
@@ -366,6 +409,7 @@
     if (window.vaaniChat && typeof window.vaaniChat._renderChat === "function") {
       window.vaaniChat._renderChat(user, profile);
     }
+    _signalVaaniReady(user, profile);
   }
 
   /* ── Fallback renderers ──────────────────────────────────────── */
