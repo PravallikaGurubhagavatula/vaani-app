@@ -66,6 +66,40 @@ const LANGUAGE_CODES = {
   "Urdu":          { google: "ur",  bhashini: "ur"  }
 };
 
+// ── Romanized Telugu keyword patterns ────────────────────────────────────────
+// These are high-confidence Telugu romanized words that don't appear in Hindi/English
+const TELUGU_ROMANIZED_MARKERS = [
+  /\b(bagunnava|bagunnav|bagunna|bagunnara|bagunnaru)\b/i,
+  /\b(emchesthunnavu|emchestunnav|emchestunna|chesthunna)\b/i,
+  /\b(ippudu|ipudu|ipdu)\b/i,
+  /\b(chala|chaala)\b/i,       // "very" in Telugu
+  /\b(undi|undi|untundi)\b/i,
+  /\b(chesi|chesanu|chesindi)\b/i,
+  /\b(ra\b|raa\b)/i,           // Telugu casual suffix
+  /\b(nenu|meeru|mee|memu|okka)\b/i,
+  /\b(ayindi|avutundi|aindi)\b/i,
+  /\b(ledu|leda|ledaa)\b/i,
+  /\b(ante|antav|antaru|antundi)\b/i,
+  /\b(kadhu|kadu|kaadu)\b/i,
+  /\b(matladatam|matladanu|matladindi)\b/i,
+  /\b(vachadu|vachindi|vasthanu)\b/i,
+  /\b(pedda|chinna|paina|kinda)\b/i,
+  /\b(anni|anni|oka|okka)\b/i,
+];
+
+// High-confidence Hindi romanized markers (to avoid misclassifying Hindi as Telugu)
+const HINDI_ROMANIZED_MARKERS = [
+  /\b(kya|kyun|kyunki|kyuki)\b/i,
+  /\b(nahi|nahin|nhi)\b/i,
+  /\b(hain|hai|ho|hum|tum|aap)\b/i,
+  /\b(karo|karna|karunga|karegi)\b/i,
+  /\b(mujhe|tumhe|unhe|usse)\b/i,
+  /\b(abhi|phir|toh|aur|par)\b/i,
+  /\b(bahut|bohot|thoda|zyada)\b/i,
+  /\b(bhai|yaar|dost|bhaiya)\b/i,
+  /\b(ghar|kaam|paisa|log|duniya)\b/i,
+];
+
 function withTimeout(ms) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ms);
@@ -80,30 +114,53 @@ function preserveTrailingWhitespace(originalText, translatedText) {
   return result.replace(/\s+$/, "") + trailing[0];
 }
 
+/**
+ * Detect the language/script of a message.
+ *
+ * Returns:
+ *   - An ISO language code string ("te", "hi", "bn", etc.) for non-Latin scripts
+ *   - "romanized_te"  — Latin-script text that is likely romanized Telugu
+ *   - "romanized_hi"  — Latin-script text that is likely romanized Hindi
+ *   - "romanized"     — Latin-script text of unknown Indian language
+ *   - "en"            — Confident English (no Indian language markers found)
+ */
 export async function detectLanguage(text) {
   try {
     const input = String(text || "");
     if (!input.trim()) return "hi";
 
-    // Script-based detection (high confidence for non-Latin scripts)
+    // ── Script-based detection (high confidence) ─────────────────────────────
     if (/[\u0C00-\u0C7F]/.test(input)) return "te";  // Telugu script
     if (/[\u0B80-\u0BFF]/.test(input)) return "ta";  // Tamil script
     if (/[\u0C80-\u0CFF]/.test(input)) return "kn";  // Kannada script
     if (/[\u0D00-\u0D7F]/.test(input)) return "ml";  // Malayalam script
     if (/[\u0A80-\u0AFF]/.test(input)) return "gu";  // Gujarati script
-    if (/[\u0A00-\u0A7F]/.test(input)) return "pa";  // Gurmukhi script
+    if (/[\u0A00-\u0A7F]/.test(input)) return "pa";  // Gurmukhi (Punjabi) script
     if (/[\u0B00-\u0B7F]/.test(input)) return "or";  // Odia script
     if (/[\u0980-\u09FF]/.test(input)) return "bn";  // Bengali script
     if (/[\u0900-\u097F]/.test(input)) return "hi";  // Devanagari script
     if (/[\u0600-\u06FF]/.test(input)) return "ur";  // Arabic/Urdu script
 
-    // Latin script — could be English OR romanized Indian language.
-    // For this app, most Latin-script chat messages are romanized Indian
-    // language (Telugu, Hindi, Tamil etc written in English letters).
-    // We MUST NOT skip translation for Latin-script text.
-    // Return a sentinel value "romanized" so the same-language skip is
-    // never triggered when target is English.
-    // The backend will auto-detect the actual source language.
+    // ── Latin-script heuristic detection ─────────────────────────────────────
+    // Count keyword matches for each language
+    const teScore = TELUGU_ROMANIZED_MARKERS.filter(rx => rx.test(input)).length;
+    const hiScore = HINDI_ROMANIZED_MARKERS.filter(rx => rx.test(input)).length;
+
+    // Telugu wins if it has ≥1 strong marker and outscores Hindi
+    if (teScore > 0 && teScore >= hiScore) {
+      return "romanized_te";
+    }
+    // Hindi wins if it has ≥2 markers and outscores Telugu
+    if (hiScore >= 2 && hiScore > teScore) {
+      return "romanized_hi";
+    }
+    // Single Hindi marker with no Telugu — likely Hindi
+    if (hiScore === 1 && teScore === 0) {
+      return "romanized_hi";
+    }
+
+    // If neither language is detected, it's either English or unknown Indian
+    // language. We pass "romanized" (auto-detect on backend).
     return "romanized";
   } catch (err) {
     return "hi";
@@ -111,19 +168,38 @@ export async function detectLanguage(text) {
 }
 
 async function callProxy(payload) {
-  // Resolve the actual source language code.
-  // "romanized" means Latin-script text whose actual language is unknown —
-  // pass "auto" to tell the backend to detect it, and pass "hi" to finalTranslate
-  // as a safe default (Devanagari-family languages are most common in this app).
   const rawSrc = payload.sourceLanguage || "hi";
-  const srcForBackend = (rawSrc === "romanized") ? "auto" : rawSrc;
-  const srcForPipeline = (rawSrc === "romanized") ? "hi" : rawSrc;
+
+  // ── Map detected language sentinel to concrete codes ─────────────────────
+  let srcForBackend;
+  let srcForPipeline;
+
+  if (rawSrc === "romanized_te") {
+    // Romanized Telugu → send as Telugu to backend
+    srcForBackend = "te";
+    srcForPipeline = "te";
+  } else if (rawSrc === "romanized_hi") {
+    // Romanized Hindi → send as Hindi to backend
+    srcForBackend = "hi";
+    srcForPipeline = "hi";
+  } else if (rawSrc === "romanized") {
+    // Unknown romanized → let backend auto-detect
+    srcForBackend = "auto";
+    srcForPipeline = "hi"; // safe fallback for finalTranslate pipeline
+  } else {
+    srcForBackend = rawSrc;
+    srcForPipeline = rawSrc;
+  }
+
   const targetCode = payload.targetGoogleCode || "en";
 
+  // If source and target are the same language, skip translation
+  if (srcForBackend !== "auto" && srcForBackend === targetCode) {
+    return null;
+  }
+
   try {
-    // ── LAYER 1: window.finalTranslate (translationIntegration.js pipeline)
-    // This is the existing working engine: Bhashini → Vaani backend → contextEnhancer.
-    // Only use for translate mode (not transliterate).
+    // ── LAYER 1: window.finalTranslate (translationIntegration.js pipeline) ──
     if (payload.mode === "translate" && typeof window.finalTranslate === "function") {
       try {
         const result = await window.finalTranslate(
@@ -134,19 +210,28 @@ async function callProxy(payload) {
         if (
           result &&
           typeof result === "string" &&
-          result.trim() &&
-          result.trim().toLowerCase() !== payload.text.trim().toLowerCase()
+          result.trim().length > 0
         ) {
-          return { result: result.trim() };
+          // ── Quality check: reject if output is suspiciously similar to input ──
+          // This catches cases where the backend echoes the romanized input back
+          const inputNorm = payload.text.trim().toLowerCase().replace(/\s+/g, " ");
+          const resultNorm = result.trim().toLowerCase().replace(/\s+/g, " ");
+
+          // Allow short outputs that differ at all — they may be valid 1-word translations
+          const isTooSimilar = inputNorm === resultNorm ||
+            (inputNorm.length > 10 && _similarityRatio(inputNorm, resultNorm) > 0.85);
+
+          if (!isTooSimilar) {
+            return { result: result.trim() };
+          }
+          console.warn("[translationService] finalTranslate returned too-similar output — falling through to backend");
         }
-        // If result === input, fall through — don't return a passthrough
-        console.warn("[translationService] finalTranslate returned passthrough — trying backend directly");
       } catch (e) {
         console.warn("[translationService] finalTranslate threw:", e && e.message);
       }
     }
 
-    // ── LAYER 2: Direct call to Vaani backend (translate endpoint)
+    // ── LAYER 2: Direct call to Vaani backend ─────────────────────────────────
     const API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
     const { controller, timeoutId } = withTimeout(12000);
 
@@ -180,8 +265,16 @@ async function callProxy(payload) {
       ""
     ).trim();
 
-    if (!translated || translated.toLowerCase() === payload.text.trim().toLowerCase()) {
-      console.warn("[translationService] backend returned passthrough or empty");
+    if (!translated) {
+      console.warn("[translationService] backend returned empty result");
+      return null;
+    }
+
+    // Reject passthroughs
+    const inputNorm = payload.text.trim().toLowerCase().replace(/\s+/g, " ");
+    const translatedNorm = translated.toLowerCase().replace(/\s+/g, " ");
+    if (inputNorm === translatedNorm) {
+      console.warn("[translationService] backend returned passthrough");
       return null;
     }
 
@@ -193,14 +286,48 @@ async function callProxy(payload) {
   }
 }
 
+/**
+ * Simple character-level similarity ratio between two strings.
+ * Returns a value between 0 (completely different) and 1 (identical).
+ * Used to detect when a "translation" is just a superficially modified echo.
+ */
+function _similarityRatio(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const longer = a.length > b.length ? a : b;
+  const shorter = a.length > b.length ? b : a;
+  // Count characters in shorter that appear in longer (rough overlap)
+  let matches = 0;
+  const longerArr = longer.split("");
+  shorter.split("").forEach(function(ch) {
+    const idx = longerArr.indexOf(ch);
+    if (idx !== -1) {
+      matches++;
+      longerArr.splice(idx, 1);
+    }
+  });
+  return (matches * 2) / (a.length + b.length);
+}
+
 export async function translateMessage(text, targetLanguageName, options = {}) {
   try {
     const input = String(text || "");
     if (!input) return null;
+
     const targetCodes = LANGUAGE_CODES[targetLanguageName];
     if (!targetCodes) return null;
+
     const sourceCode = await detectLanguage(input);
-    if (sourceCode !== "romanized" && sourceCode === targetCodes.google) return input;
+
+    // ── Skip translation if source matches target (for non-romanized scripts) ──
+    if (
+      sourceCode !== "romanized" &&
+      sourceCode !== "romanized_te" &&
+      sourceCode !== "romanized_hi" &&
+      sourceCode === targetCodes.google
+    ) {
+      return input;
+    }
 
     const data = await callProxy({
       text: input,
@@ -210,7 +337,9 @@ export async function translateMessage(text, targetLanguageName, options = {}) {
       sourceLanguage: sourceCode,
       targetGoogleCode: targetCodes.google,
       targetBhashiniCode: targetCodes.bhashini,
-      contextMessages: Array.isArray(options.contextMessages) ? options.contextMessages.slice(-2) : []
+      contextMessages: Array.isArray(options.contextMessages)
+        ? options.contextMessages.slice(-2)
+        : []
     });
 
     if (!data || !data.result) return null;
@@ -224,6 +353,7 @@ export async function transliterateMessage(text, targetLanguageName, options = {
   try {
     const input = String(text || "");
     if (!input) return null;
+
     const targetCodes = LANGUAGE_CODES[targetLanguageName];
     if (!targetCodes) return null;
 
@@ -235,7 +365,9 @@ export async function transliterateMessage(text, targetLanguageName, options = {
       sourceLanguage: await detectLanguage(input),
       targetGoogleCode: targetCodes.google,
       targetBhashiniCode: targetCodes.bhashini,
-      contextMessages: Array.isArray(options.contextMessages) ? options.contextMessages.slice(-2) : []
+      contextMessages: Array.isArray(options.contextMessages)
+        ? options.contextMessages.slice(-2)
+        : []
     });
 
     if (!data || !data.result) return null;
