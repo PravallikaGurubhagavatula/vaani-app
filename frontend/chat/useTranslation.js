@@ -1,5 +1,5 @@
-import { translateMessage, transliterateMessage, detectLanguage } from "../../src/services/translationService.js";
-import cacheStore, { getCached, setCached, clearCached, getCacheKeys } from "../../src/services/translationCache.js";
+import { translateMessage, transliterateMessage, detectLanguage } from "../translationService.js";
+import cacheStore, { getCached, setCached, clearCached, getCacheKeys } from "../translationCache.js";
 
 const inProgressKeys = new Set();
 const inFlightControllers = new Map();
