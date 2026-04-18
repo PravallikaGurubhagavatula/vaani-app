@@ -126,6 +126,25 @@ function preserveTrailingWhitespace(originalText, translatedText) {
  */
 export async function detectLanguage(text) {
   try {
+    // ── Mixed Telugu+English: check for Telugu words in otherwise Latin text ──
+const TELUGU_SINGLE_WORD_MARKERS = [
+  /\bni\b/i,        // "your" in Telugu
+  /\bnee\b/i,       // "you" in Telugu  
+  /\bmee\b/i,       // "your" (formal)
+  /\badi\b/i,       // "that"
+  /\bidi\b/i,       // "this"
+  /\bemi\b/i,       // "what"
+  /\bela\b/i,       // "how"
+  /\bekkada\b/i,    // "where"
+  /\beppudu\b/i,    // "when"
+  /\bevaru\b/i,     // "who"
+];
+
+const mixedTeluguScore = TELUGU_SINGLE_WORD_MARKERS.filter(rx => rx.test(input)).length;
+if (mixedTeluguScore >= 1 && teScore === 0 && hiScore === 0) {
+  return "romanized_te"; // Mixed Telugu-English sentence
+}
+    
     const input = String(text || "");
     if (!input.trim()) return "hi";
 
@@ -329,6 +348,21 @@ export async function translateMessage(text, targetLanguageName, options = {}) {
       return input;
     }
 
+    // ── Skip translation for likely proper names / repeated-char exclamations ──
+function _isUntranslatable(text) {
+  const t = text.trim();
+  // Single word, all same repeated chars (e.g. "Pikaaaaaaa", "heyyyy")
+  if (/^(.)\1{3,}$/i.test(t)) return true;
+  // Very short (1-2 chars) — likely initials or noise
+  if (t.length <= 2) return true;
+  // Looks like a proper name (single capitalized word, no spaces)
+  if (/^[A-Z][a-z]{1,12}$/.test(t)) return true;
+  return false;
+}
+    
+    // Don't attempt to translate names/exclamations — return as-is
+if (_isUntranslatable(input)) return input;
+    
     const data = await callProxy({
       text: input,
       targetLanguage: targetLanguageName,
