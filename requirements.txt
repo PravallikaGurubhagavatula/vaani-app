@@ -6,3 +6,4 @@ pytesseract
 Pillow
 python-multipart
 requests
+anthropic>=0.25.0
