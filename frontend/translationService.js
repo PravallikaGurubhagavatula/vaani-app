@@ -84,77 +84,112 @@ export async function detectLanguage(text) {
   try {
     const input = String(text || "");
     if (!input.trim()) return "hi";
-    if (/[\u0C00-\u0C7F]/.test(input)) return "te";
-    if (/[\u0B80-\u0BFF]/.test(input)) return "ta";
-    if (/[\u0C80-\u0CFF]/.test(input)) return "kn";
-    if (/[\u0D00-\u0D7F]/.test(input)) return "ml";
-    if (/[\u0A80-\u0AFF]/.test(input)) return "gu";
-    if (/[\u0A00-\u0A7F]/.test(input)) return "pa";
-    if (/[\u0B00-\u0B7F]/.test(input)) return "or";
-    if (/[\u0980-\u09FF]/.test(input)) return "bn";
-    if (/[\u0900-\u097F]/.test(input)) return "hi";
-    if (/[A-Za-z]/.test(input)) return "en";
-    return "hi";
+
+    // Script-based detection (high confidence for non-Latin scripts)
+    if (/[\u0C00-\u0C7F]/.test(input)) return "te";  // Telugu script
+    if (/[\u0B80-\u0BFF]/.test(input)) return "ta";  // Tamil script
+    if (/[\u0C80-\u0CFF]/.test(input)) return "kn";  // Kannada script
+    if (/[\u0D00-\u0D7F]/.test(input)) return "ml";  // Malayalam script
+    if (/[\u0A80-\u0AFF]/.test(input)) return "gu";  // Gujarati script
+    if (/[\u0A00-\u0A7F]/.test(input)) return "pa";  // Gurmukhi script
+    if (/[\u0B00-\u0B7F]/.test(input)) return "or";  // Odia script
+    if (/[\u0980-\u09FF]/.test(input)) return "bn";  // Bengali script
+    if (/[\u0900-\u097F]/.test(input)) return "hi";  // Devanagari script
+    if (/[\u0600-\u06FF]/.test(input)) return "ur";  // Arabic/Urdu script
+
+    // Latin script — could be English OR romanized Indian language.
+    // For this app, most Latin-script chat messages are romanized Indian
+    // language (Telugu, Hindi, Tamil etc written in English letters).
+    // We MUST NOT skip translation for Latin-script text.
+    // Return a sentinel value "romanized" so the same-language skip is
+    // never triggered when target is English.
+    // The backend will auto-detect the actual source language.
+    return "romanized";
   } catch (err) {
     return "hi";
   }
 }
 
 async function callProxy(payload) {
-  try {
-    const API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
+  // Resolve the actual source language code.
+  // "romanized" means Latin-script text whose actual language is unknown —
+  // pass "auto" to tell the backend to detect it, and pass "hi" to finalTranslate
+  // as a safe default (Devanagari-family languages are most common in this app).
+  const rawSrc = payload.sourceLanguage || "hi";
+  const srcForBackend = (rawSrc === "romanized") ? "auto" : rawSrc;
+  const srcForPipeline = (rawSrc === "romanized") ? "hi" : rawSrc;
+  const targetCode = payload.targetGoogleCode || "en";
 
-    if (payload.mode === "translate") {
-      if (typeof window.finalTranslate === "function") {
+  try {
+    // ── LAYER 1: window.finalTranslate (translationIntegration.js pipeline)
+    // This is the existing working engine: Bhashini → Vaani backend → contextEnhancer.
+    // Only use for translate mode (not transliterate).
+    if (payload.mode === "translate" && typeof window.finalTranslate === "function") {
+      try {
         const result = await window.finalTranslate(
           payload.text,
-          payload.sourceLanguage || "hi",
-          payload.targetGoogleCode || "en"
+          srcForPipeline,
+          targetCode
         );
-        if (result && result.trim() && result.trim() !== payload.text.trim()) {
+        if (
+          result &&
+          typeof result === "string" &&
+          result.trim() &&
+          result.trim().toLowerCase() !== payload.text.trim().toLowerCase()
+        ) {
           return { result: result.trim() };
         }
+        // If result === input, fall through — don't return a passthrough
+        console.warn("[translationService] finalTranslate returned passthrough — trying backend directly");
+      } catch (e) {
+        console.warn("[translationService] finalTranslate threw:", e && e.message);
       }
-
-      const { controller, timeoutId } = withTimeout(10000);
-      const response = await fetch(API + "/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: payload.text,
-          from_lang: payload.sourceLanguage || "hi",
-          to_lang: payload.targetGoogleCode || "en"
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) return null;
-      const data = await response.json();
-      const translated = (data.translated || data.result || "").trim();
-      return translated ? { result: translated } : null;
     }
 
-    if (payload.mode === "transliterate") {
-      const { controller, timeoutId } = withTimeout(10000);
-      const response = await fetch(API + "/transliterate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: payload.text,
-          lang: payload.sourceLanguage
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) return { result: payload.text };
-      const data = await response.json();
-      const transliterated = (data.transliterated || data.result || "").trim();
-      return transliterated ? { result: transliterated } : { result: payload.text };
+    // ── LAYER 2: Direct call to Vaani backend (translate endpoint)
+    const API = window.API_URL || "https://vaani-app-ui0z.onrender.com";
+    const { controller, timeoutId } = withTimeout(12000);
+
+    const endpoint = payload.mode === "transliterate"
+      ? API + "/transliterate"
+      : API + "/translate";
+
+    const body = payload.mode === "transliterate"
+      ? JSON.stringify({ text: payload.text, lang: srcForBackend })
+      : JSON.stringify({ text: payload.text, from_lang: srcForBackend, to_lang: targetCode });
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn("[translationService] backend returned", response.status);
+      return null;
     }
 
-    return null;
+    const data = await response.json();
+    const translated = (
+      data.translated ||
+      data.result ||
+      data.output ||
+      data.text ||
+      ""
+    ).trim();
+
+    if (!translated || translated.toLowerCase() === payload.text.trim().toLowerCase()) {
+      console.warn("[translationService] backend returned passthrough or empty");
+      return null;
+    }
+
+    return { result: translated };
+
   } catch (err) {
-    return payload.mode === "transliterate" ? { result: payload.text } : null;
+    console.warn("[translationService] callProxy error:", err && err.message);
+    return null;
   }
 }
 
@@ -165,7 +200,7 @@ export async function translateMessage(text, targetLanguageName, options = {}) {
     const targetCodes = LANGUAGE_CODES[targetLanguageName];
     if (!targetCodes) return null;
     const sourceCode = await detectLanguage(input);
-    if (sourceCode === targetCodes.google) return input;
+    if (sourceCode !== "romanized" && sourceCode === targetCodes.google) return input;
 
     const data = await callProxy({
       text: input,
