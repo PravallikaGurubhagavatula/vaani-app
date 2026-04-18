@@ -6,3 +6,7 @@ pytesseract
 Pillow
 python-multipart
 requests
+fasttext-wheel
+indic-transliteration
+transformers
+torch

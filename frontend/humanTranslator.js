@@ -163,6 +163,24 @@
     }
   }
 
+  
+  async function _pipelineFallback(text, fromLang, toLang) {
+    try {
+      var apiBase = _getApiBase();
+      var resp = await fetch(apiBase + "/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, from_lang: fromLang || "auto", target_language: toLang || "en", options: { transliterate: true } }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!resp.ok) return null;
+      var data = await resp.json();
+      return (data.translated || "").trim() || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════
   // MAIN ENTRY POINT
   // ══════════════════════════════════════════════════════════════
@@ -208,7 +226,9 @@
       return result;
     }
 
-    // Final fallback: machine → normalized original
+    // Final fallback: translation pipeline -> machine -> original
+    var pipelineResult = await _pipelineFallback(normalized, fromLang, toLang);
+    if (pipelineResult) return pipelineResult;
     console.warn("[HumanTranslator] All layers failed — falling back to machine translation");
     return machineTranslation || normalized || originalText;
   }

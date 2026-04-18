@@ -33,6 +33,9 @@ import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import requests, io, os, re, json, base64, time
 import anthropic
+from translation_pipeline import translate_pipeline
+from transliteration import transliterate_romanized
+from language_detection import detect_language
 
 # ══════════════════════════════════════════════════════════════════
 # APP INIT  ← MUST be at the top, before any @app routes
@@ -743,99 +746,37 @@ def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
 
 @app.post("/translate")
 async def translate_text(data: dict):
-    """
-    Main translation endpoint.
-    Engine priority:
-      1. Bhashini NMT (best for Indian scripts)
-      2. Google Cloud Translation API v2 (best for romanized/mixed)
-      3. tw-ob romanized waterfall (fallback)
-      4. gtx + deep_translator (final fallback)
-    """
+    """Unified translation/transliteration pipeline endpoint."""
     text = (data.get("text") or "").strip()
-    src  = data.get("from_lang", "auto")
-    dest = data.get("to_lang", "en")
+    target = data.get("target_language") or data.get("to_lang") or "en"
+    source = data.get("from_lang", "auto")
+    options = data.get("options") or {}
 
     if not text:
         return JSONResponse(status_code=400, content={"error": "No text provided"})
-    if src == dest and src != "auto":
-        return {"translated": text, "engine": "passthrough"}
 
-    cache_key = f"{text}|||{src}|||{dest}"
-    cached = cache_get(cache_key)
-    if cached:
-        return {"translated": cached, "engine": "cache"}
-
-    # ── Detect actual language for romanized / mixed text ─────────
-    # This is the KEY fix for "ni profile appeared here" being
-    # misdetected as English. We always try detection for Latin-script
-    # messages when src is a non-Latin language.
-    working_src = src
-    if src in NON_LATIN_LANGS and text.isascii():
-        # Text is in Latin script but supposedly from a non-Latin language.
-        # Try Google API detection — it may return "te", "hi", etc.
-        detected = detect_language_google_api(text)
-        if detected and detected != "en":
-            working_src = detected
-            print(f"[Auto-detect] '{text[:40]}' → {detected}")
-        else:
-            # Google still said "en" — keep the user-specified src
-            # so romanized waterfall can use the right hint
-            print(f"[Auto-detect] kept user src={src} (Google returned en or failed)")
-
-    is_romanized = (
-        src in NON_LATIN_LANGS
-        and text.isascii()
-        and any(c.isalpha() for c in text)
-        and len(text.strip()) >= 2
-    )
-
-    working_text = text
-
-    # ── Step 1: Bhashini transliterate romanized → native script ──
-    if is_romanized and bhashini_available():
-        native = bhashini_transliterate(text, src)
-        if native and not native.isascii():
-            working_text = native
-            print(f"[Bhashini Translit] '{text}' → '{native}'")
-
-    # ── Step 2: Bhashini NMT ──────────────────────────────────────
-    if bhashini_available() and working_src not in ("auto", "en"):
-        result = bhashini_translate(working_text, working_src, dest)
-        if result and result.strip() and result.strip().lower() != working_text.lower():
-            cache_set(cache_key, result)
-            return {"translated": result, "engine": "bhashini"}
-
-    # ── Step 3: Google Cloud Translation API v2 ───────────────────
-    # Pass src=None/"auto" so Google's own detection handles mixed text.
-    # This correctly handles "ni profile appeared here" → Telugu detected.
-    result = google_translate_api_v2(text, "auto", dest)
-    if result and result.strip() and result.lower() != text.lower():
-        cache_set(cache_key, result)
-        return {"translated": result, "engine": "google-cloud-v2"}
-
-    # ── Step 4: Romanized waterfall ───────────────────────────────
-    if is_romanized:
-        result = translate_romanized_robust(text, src, dest)
-        if result and result.strip() and result.lower() != text.lower():
-            cache_set(cache_key, result)
-            return {"translated": result, "engine": "google-romanized"}
-        working_src = "auto"
-
-    # ── Step 5: gtx + deep_translator ────────────────────────────
     try:
-        chunks = split_text(working_text)
-        parts  = [translate_chunk(c, working_src, dest) for c in chunks]
-        result = " ".join(parts)
-        if result and result.lower() != text.lower():
-            cache_set(cache_key, result)
-            return {"translated": result, "engine": "google-gtx"}
+        result = translate_pipeline(text, target_language=target, options=options, source_hint=source)
+        return {
+            "original": result.original,
+            "transliterated": result.transliterated,
+            "translated": result.translated,
+            "confidence": result.confidence,
+            "source_language": result.source_language,
+            "target_language": result.target_language,
+            "engine": result.engine,
+            "cached": result.cached,
+        }
     except Exception as e:
-        print(f"[translate fallback] {e}")
-
-    return JSONResponse(
-        status_code=500,
-        content={"error": "All translation engines failed", "translated": ""}
-    )
+        return JSONResponse(status_code=500, content={
+            "original": text,
+            "transliterated": None,
+            "translated": text,
+            "confidence": 0.0,
+            "source_language": source if source != "auto" else "unknown",
+            "target_language": target,
+            "error": str(e),
+        })
 
 
 @app.post("/speak")
@@ -955,28 +896,23 @@ async def image_translate(
 @app.post("/transliterate")
 async def transliterate_endpoint(data: dict):
     text = (data.get("text") or "").strip()
-    lang = data.get("lang","hi")
+    lang = data.get("lang", "auto")
     if not text:
-        return JSONResponse(status_code=400, content={"error":"No text"})
-    native = bhashini_transliterate(text, lang)
-    if native:
-        return {"transliterated": native, "engine": "bhashini"}
-    gt_code = BHASHINI_LANG_MAP.get(lang, lang)
-    words   = text.split()
-    results = []
-    for word in words:
-        try:
-            url = f"https://inputtools.google.com/request?text={word}&itc={gt_code}-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=demopage"
-            r   = requests.get(url, timeout=5)
-            if r.ok:
-                d = r.json()
-                if d[0] == "SUCCESS" and d[1] and d[1][0] and d[1][0][1]:
-                    results.append(d[1][0][1][0])
-                    continue
-        except Exception:
-            pass
-        results.append(word)
-    return {"transliterated": " ".join(results), "engine": "google-input-tools"}
+        return JSONResponse(status_code=400, content={"error": "No text"})
+
+    detection = detect_language(text)
+    if lang and lang != "auto":
+        detection.language = lang
+        detection.is_romanized = text.isascii()
+
+    native = transliterate_romanized(text, detection)
+    return {
+        "original": text,
+        "transliterated": native or text,
+        "source_language": detection.language,
+        "confidence": detection.confidence,
+        "engine": "indic-transliteration" if native else "fallback-original",
+    }
 
 
 @app.get("/ping")

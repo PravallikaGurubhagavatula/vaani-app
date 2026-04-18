@@ -86,7 +86,7 @@
       var resp = await fetch(API + "/translate", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ text: text, from_lang: fromLang, to_lang: toLang }),
+        body:    JSON.stringify({ text: text, from_lang: fromLang, target_language: toLang, options: { transliterate: true } }),
         signal:  AbortSignal.timeout(22000),
       });
       if (resp.ok) {

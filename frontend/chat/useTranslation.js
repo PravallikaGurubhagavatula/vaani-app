@@ -56,10 +56,11 @@ async function processMessage(message, config, options) {
   var cached = getCached(messageId, targetLanguage, mode);
   if (cached) {
     return {
-      translated: mode === "translate" ? cached.result : "",
-      transliterated: mode === "transliterate" ? cached.result : "",
+      translated: cached.translated || (mode === "translate" ? cached.result : ""),
+      transliterated: cached.transliterated || (mode === "transliterate" ? cached.result : ""),
       detectedLang: cached.detectedLang || "",
-      unavailable: !!cached.unavailable,
+      confidence: Number(cached.confidence || 0),
+      unavailable: false,
       fromCache: true
     };
   }
@@ -68,41 +69,37 @@ async function processMessage(message, config, options) {
   inProgressKeys.add(cacheKey);
 
   try {
-    await _debounceByRaf(cacheKey, typeof opts.debounceMs === "number" ? opts.debounceMs : 300);
+    await _debounceByRaf(cacheKey, typeof opts.debounceMs === "number" ? opts.debounceMs : 220);
 
-    var controller = new AbortController();
-    inFlightControllers.set(cacheKey, controller);
     var detectedLang = await detectLanguage(text);
-    var output = null;
-    if (mode === "translate") {
-      output = await translateMessage(text, targetLanguage, {
-        messageId: messageId,
-        contextMessages: opts.contextMessages || []
-      });
-    } else {
-      output = await transliterateMessage(text, targetLanguage, {
-        messageId: messageId,
-        contextMessages: opts.contextMessages || []
-      });
+    var result = mode === "translate"
+      ? await translateMessage(text, targetLanguage, { messageId: messageId, contextMessages: opts.contextMessages || [] })
+      : await transliterateMessage(text, targetLanguage, { messageId: messageId, contextMessages: opts.contextMessages || [] });
+
+    if (!result) {
+      return { translated: text, transliterated: "", detectedLang: detectedLang, confidence: 0, unavailable: false };
     }
 
-    if (!output) return { translated: "", transliterated: "", detectedLang: detectedLang, unavailable: true };
-
-    setCached(messageId, targetLanguage, mode, {
-      result: output,
-      detectedLang: detectedLang,
-      unavailable: false,
+    const payload = {
+      result: mode === "translate" ? (result.translated || text) : (result.transliterated || ""),
+      translated: result.translated || text,
+      transliterated: result.transliterated || "",
+      detectedLang: result.sourceLanguage || detectedLang,
+      confidence: Number(result.confidence || 0),
       mode: mode
-    });
+    };
+
+    setCached(messageId, targetLanguage, mode, payload);
 
     return {
-      translated: mode === "translate" ? output : "",
-      transliterated: mode === "transliterate" ? output : "",
-      detectedLang: detectedLang,
+      translated: result.translated || text,
+      transliterated: result.transliterated || "",
+      detectedLang: result.sourceLanguage || detectedLang,
+      confidence: Number(result.confidence || 0),
       unavailable: false
     };
   } catch (err) {
-    return null;
+    return { translated: text, transliterated: "", detectedLang: "auto", confidence: 0, unavailable: false };
   } finally {
     inProgressKeys.delete(cacheKey);
     inFlightControllers.delete(cacheKey);
