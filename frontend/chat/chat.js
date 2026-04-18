@@ -2867,13 +2867,14 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
       row.appendChild(bubble); container.appendChild(row);
     });
     if (stickToBottom) {
-  _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
-} else {
-  window.requestAnimationFrame(function () {
-    if (_messagesContainerRef) {
-      _messagesContainerRef.scrollTop = Math.max(0, _messagesContainerRef.scrollHeight - distanceFromBottom);
-    }
-  });
+    _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
+  } else {
+    window.requestAnimationFrame(function () {
+      if (_messagesContainerRef) {
+        _messagesContainerRef.scrollTop = Math.max(0, _messagesContainerRef.scrollHeight - distanceFromBottom);
+      }
+    });
+  }
 }
 
   // ── FIX 4 + 5: listenToMessages — firstFire + chatId guard ──────────────
@@ -3574,4 +3575,4 @@ function _closeProfileModal() {
 
 
  /* ========================================================= */   
-})();
+}();
