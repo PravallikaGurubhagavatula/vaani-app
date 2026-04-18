@@ -34,6 +34,323 @@ from PIL import Image, ImageEnhance, ImageFilter
 import requests, io, os, re, json, base64, hashlib, time
 from functools import lru_cache
 
+# Add these imports at the top of main.py (after existing imports)
+import anthropic
+import httpx
+
+# ── Add your API keys to environment variables ──
+ANTHROPIC_API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "")
+GOOGLE_TRANSLATE_API_KEY = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "")
+
+# ══════════════════════════════════════════════════════════════════
+# GOOGLE TRANSLATE API v2 (Cloud Translation API)
+# Much better than gtx (unofficial) for Indian language detection
+# ══════════════════════════════════════════════════════════════════
+
+GOOGLE_TRANSLATE_SUPPORTED_LANGS = {
+    "te", "ta", "hi", "kn", "ml", "bn", "mr", "gu", "pa", "ur",
+    "or", "as", "ne", "mai", "sa", "en", "fr", "de", "es", "ja",
+    "ko", "zh", "ar", "ru", "pt", "it", "tr", "vi", "th", "id",
+}
+
+GOOGLE_TRANSLATE_CODE_MAP = {
+    "mni-Mtei": "mni",
+    "brx": "brx",
+    "sat": "sat",
+    "kok": "gom",
+    "gom": "gom",
+    "awa": "hi",
+    "mag": "hi",
+    "hne": "hi",
+    "bgc": "hi",
+    "raj": "raj",
+    "mwr": "mwr",
+    "tcy": "kn",
+    "lus": "lus",
+    "kha": "kha",
+    "lep": "ne",
+    "trp": "bn",
+    "lmn": "te",
+    "bho": "bho",
+    "doi": "doi",
+    "sd": "sd",
+}
+
+def google_translate_api_v2(text: str, src_lang: str, dest_lang: str) -> str | None:
+    """
+    Use Google Cloud Translation API v2 — much more accurate than gtx
+    for Indian languages, especially romanized text auto-detection.
+    """
+    if not GOOGLE_TRANSLATE_API_KEY:
+        return None
+
+    # Map our internal codes to Google's codes
+    gt_src = GOOGLE_TRANSLATE_CODE_MAP.get(src_lang, src_lang)
+    gt_dest = GOOGLE_TRANSLATE_CODE_MAP.get(dest_lang, dest_lang)
+
+    try:
+        url = "https://translation.googleapis.com/language/translate/v2"
+        params = {
+            "key": GOOGLE_TRANSLATE_API_KEY,
+            "q": text,
+            "target": gt_dest,
+            "format": "text",
+        }
+        # Only set source if we know it (not auto)
+        if gt_src and gt_src != "auto":
+            params["source"] = gt_src
+
+        resp = requests.post(url, params=params, timeout=15)
+        if not resp.ok:
+            print(f"[Google Translate API] HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        data = resp.json()
+        translations = data.get("data", {}).get("translations", [])
+        if translations:
+            result = translations[0].get("translatedText", "").strip()
+            if result and result.lower() != text.lower():
+                return result
+    except Exception as e:
+        print(f"[Google Translate API v2] Exception: {e}")
+
+    return None
+
+
+def detect_language_google_api(text: str) -> str | None:
+    """
+    Use Google Cloud Translation API to detect the language of text.
+    Returns BCP-47 language code or None.
+    """
+    if not GOOGLE_TRANSLATE_API_KEY:
+        return None
+
+    try:
+        url = "https://translation.googleapis.com/language/translate/v2/detect"
+        params = {"key": GOOGLE_TRANSLATE_API_KEY, "q": text}
+        resp = requests.post(url, params=params, timeout=10)
+        if resp.ok:
+            data = resp.json()
+            detections = data.get("data", {}).get("detections", [[]])
+            if detections and detections[0]:
+                detected = detections[0][0]
+                lang = detected.get("language", "")
+                confidence = detected.get("confidence", 0)
+                if lang and confidence > 0.5:
+                    print(f"[Google Detect] '{text[:30]}' → {lang} ({confidence:.2f})")
+                    return lang
+    except Exception as e:
+        print(f"[Google Detect API] Exception: {e}")
+
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════
+# CLAUDE TRANSLATION PROXY ENDPOINT
+# Solves the CORS problem — browser calls this, we call Anthropic
+# ══════════════════════════════════════════════════════════════════
+
+LANG_NAMES_FOR_PROMPT = {
+    "te": "Telugu",   "hi": "Hindi",      "ta": "Tamil",
+    "kn": "Kannada",  "ml": "Malayalam",  "bn": "Bengali",
+    "mr": "Marathi",  "gu": "Gujarati",   "pa": "Punjabi",
+    "ur": "Urdu",     "or": "Odia",       "as": "Assamese",
+    "sa": "Sanskrit", "ne": "Nepali",     "sd": "Sindhi",
+    "mai":"Maithili", "bho":"Bhojpuri",   "kok":"Konkani",
+    "ks": "Kashmiri", "doi":"Dogri",      "brx":"Bodo",
+    "sat":"Santali",  "mwr":"Marwari",    "tcy":"Tulu",
+    "lus":"Mizo",     "awa":"Awadhi",     "mag":"Magahi",
+    "hne":"Chhattisgarhi", "bgc":"Haryanvi", "raj":"Rajasthani",
+    "kha":"Khasi",    "lep":"Lepcha",     "mni":"Meitei",
+    "en": "English",  "auto": "auto-detected Indian language",
+}
+
+
+def _build_claude_prompt(text: str, from_lang: str, to_lang: str, machine_translation: str = "") -> str:
+    src_name = LANG_NAMES_FOR_PROMPT.get(from_lang, from_lang)
+    tgt_name = LANG_NAMES_FOR_PROMPT.get(to_lang, to_lang)
+
+    return f"""You are a human interpreter specialising in Indian languages for a chat app called Vaani.
+Your job is to produce a natural, conversational {tgt_name} translation.
+
+SOURCE LANGUAGE: {src_name}
+TARGET LANGUAGE: {tgt_name}
+ORIGINAL INPUT: {text}
+MACHINE TRANSLATION (reference only, may be wrong): {machine_translation or "(unavailable)"}
+
+TRANSLATION RULES:
+1. Understand the MEANING and INTENT — not just individual words.
+2. Detect the TONE: casual / friendly / question / emotional / excited / urgent / respectful.
+3. If the input is a QUESTION, output must be a question.
+4. If it is an EXCLAMATION (like "Pikaaaaaaa"), transliterate the emotion — keep the energy (e.g. "Pikaaaaa" stays expressive).
+5. For mixed-language input (e.g. Telugu words mixed with English), translate the whole sentence as a unit.
+6. For "Ni profile appeared here" — "Ni" is Telugu for "Your", so the full meaning is "Your profile appeared here".
+7. Preserve casual slang markers that are natural to the original (bro, yaar, da, machan). Do NOT add slang that wasn't there.
+8. NEVER produce a single-word output for a multi-word input.
+9. Output must sound like a real human speaking — short and natural.
+10. Output ONLY the final translation. No explanations, no quotes, no labels, no prefix like "Translation:".
+
+Now translate the original input to {tgt_name}:"""
+
+
+@app.post("/claude-translate")
+async def claude_translate_proxy(data: dict):
+    """
+    Proxy endpoint — receives translation request from browser,
+    calls Anthropic API server-side (no CORS issue),
+    returns natural human-quality translation.
+    """
+    text               = (data.get("text") or "").strip()
+    from_lang          = data.get("from_lang", "auto")
+    to_lang            = data.get("to_lang", "en")
+    machine_translation = (data.get("machine_translation") or "").strip()
+
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "No text provided"})
+
+    if not ANTHROPIC_API_KEY:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Claude API not configured on server", "translated": machine_translation or text}
+        )
+
+    # Cache check
+    cache_key = f"claude||{text}||{from_lang}||{to_lang}"
+    cached = cache_get(cache_key)
+    if cached:
+        return {"translated": cached, "engine": "claude-cached"}
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        prompt = _build_claude_prompt(text, from_lang, to_lang, machine_translation)
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        result = ""
+        for block in message.content:
+            if block.type == "text":
+                result += block.text
+
+        result = result.strip().strip('"\'').strip()
+
+        if not result:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Empty response from Claude", "translated": machine_translation or text}
+            )
+
+        # Reject obvious passthroughs
+        if result.lower() == text.lower():
+            return {
+                "translated": machine_translation or text,
+                "engine": "claude-passthrough-fallback"
+            }
+
+        cache_set(cache_key, result)
+        print(f"[Claude Proxy] '{text[:40]}' ({from_lang}→{to_lang}) → '{result[:40]}'")
+        return {"translated": result, "engine": "claude"}
+
+    except anthropic.APIError as e:
+        print(f"[Claude Proxy] Anthropic API error: {e}")
+        return JSONResponse(
+            status_code=502,
+            content={"error": f"Anthropic API error: {str(e)}", "translated": machine_translation or text}
+        )
+    except Exception as e:
+        print(f"[Claude Proxy] Unexpected error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "translated": machine_translation or text}
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
+# UPDATED /translate ENDPOINT — now uses Google API v2 + Claude
+# ══════════════════════════════════════════════════════════════════
+# REPLACE your existing @app.post("/translate") with this:
+
+@app.post("/translate")
+async def translate_text(data: dict):
+    text      = (data.get("text") or "").strip()
+    src       = data.get("from_lang", "auto")
+    dest      = data.get("to_lang", "en")
+
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "No text provided"})
+
+    if src == dest and src != "auto":
+        return {"translated": text, "engine": "passthrough"}
+
+    cache_key = f"{text}|||{src}|||{dest}"
+    cached = cache_get(cache_key)
+    if cached:
+        return {"translated": cached, "engine": "cache"}
+
+    # ── Auto-detect language for romanized text ──────────────────
+    working_src = src
+    if src == "auto" or (src in NON_LATIN_LANGS and text.isascii()):
+        detected = detect_language_google_api(text)
+        if detected:
+            working_src = detected
+            print(f"[Auto-detect] '{text[:30]}' detected as: {detected}")
+
+    is_romanized = (
+        src in NON_LATIN_LANGS
+        and text.isascii()
+        and any(c.isalpha() for c in text)
+        and len(text.strip()) >= 2
+    )
+
+    working_text = text
+
+    # ── Step 1: Bhashini transliterate romanized → native script ─
+    if is_romanized and bhashini_available():
+        native = bhashini_transliterate(text, src)
+        if native and not native.isascii():
+            working_text = native
+            print(f"[Bhashini Translit] '{text}' → '{native}'")
+
+    # ── Step 2: Bhashini NMT (most accurate for Indian languages) ─
+    if bhashini_available() and working_src != "auto":
+        result = bhashini_translate(working_text, working_src, dest)
+        if result and result.strip() and result.strip().lower() != working_text.lower():
+            cache_set(cache_key, result)
+            return {"translated": result, "engine": "bhashini"}
+
+    # ── Step 3: Google Cloud Translation API v2 (official) ───────
+    result = google_translate_api_v2(text, working_src if working_src != "auto" else "auto", dest)
+    if result and result.strip() and result.lower() != text.lower():
+        cache_set(cache_key, result)
+        return {"translated": result, "engine": "google-api-v2"}
+
+    # ── Step 4: Romanized fallback (tw-ob waterfall) ─────────────
+    if is_romanized:
+        result = translate_romanized_robust(text, src, dest)
+        if result and result.strip() and result.lower() != text.lower():
+            cache_set(cache_key, result)
+            return {"translated": result, "engine": "google-romanized"}
+        working_src = "auto"
+
+    # ── Step 5: gtx + deep_translator fallback ───────────────────
+    try:
+        chunks = split_text(working_text)
+        parts  = [translate_chunk(c, working_src, dest) for c in chunks]
+        result = " ".join(parts)
+        if result and result.lower() != text.lower():
+            cache_set(cache_key, result)
+            return {"translated": result, "engine": "google-gtx"}
+    except Exception as e:
+        print(f"[translate fallback] {e}")
+
+    return JSONResponse(
+        status_code=500,
+        content={"error": "All translation engines failed", "translated": ""}
+    )
+
 app = FastAPI(title="Vaani API", version="3.0")
 
 app.add_middleware(
