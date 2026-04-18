@@ -1611,6 +1611,12 @@ body.vm-menu-open {
   border-color: rgba(15, 23, 42, 0.14);
 }
 
+[data-theme="light"] #vaaniChat .vc-msg-own .vc-msg-bubble {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  border-color: transparent;
+  color: #fff;
+}
+
 #vaaniChat .vc-profile-view-wrap {
   flex: 1;
   min-height: 0;
