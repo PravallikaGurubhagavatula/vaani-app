@@ -1561,6 +1561,26 @@ body.vm-menu-open {
   background: rgba(15, 23, 42, 0.06);
 }
 
+[data-theme="light"] #vaaniChat .vc-search-btn {
+  background: #f3edff;
+  border-color: rgba(109, 40, 217, 0.35);
+  color: #5b21b6;
+}
+
+[data-theme="light"] #vaaniChat .vc-message-btn {
+  background: #e8fff4;
+  border-color: rgba(5, 150, 105, 0.45);
+  color: #047857;
+}
+
+[data-theme="light"] #vaaniChat .vc-search-btn:disabled {
+  opacity: 1;
+  background: #ede9fe;
+  border-color: rgba(124, 58, 237, 0.22);
+  color: #7c3aed;
+  cursor: not-allowed;
+}
+
 [data-theme="light"] #vaaniChat .vc-chat-header,
 [data-theme="light"] #vaaniChat .vc-chat-input-bar {
   background: var(--bg, #f4f4fc);
