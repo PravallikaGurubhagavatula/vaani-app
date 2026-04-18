@@ -3184,6 +3184,196 @@ body.vm-menu-open {
   padding: 0;
 }
 
+#vaaniChat .vc-chat-hactions {
+  position: relative;
+  gap: 8px;
+  align-items: center;
+}
+
+#vaaniChat .vaani-tl-toggle-btn {
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  padding: 0;
+}
+
+#vaaniChat .vaani-tl-panel-host {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+}
+
+#vaaniChat .vaani-tl-panel {
+  width: 300px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--bg2, #151523);
+  border: 0.5px solid rgba(127, 119, 221, 0.25);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.13);
+}
+
+#vaaniChat .vaani-tl-section-label {
+  color: #7F77DD;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+}
+
+#vaaniChat .vaani-tl-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+#vaaniChat .vaani-tl-toggle-label {
+  color: var(--text, #e8e8f6);
+  font-size: 13px;
+}
+
+#vaaniChat .vaani-tl-pill {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: #E0E0E0;
+  border: 0;
+  position: relative;
+  cursor: pointer;
+  transition: 0.2s ease;
+  padding: 2px;
+}
+
+#vaaniChat .vaani-tl-pill.is-on {
+  background: #7F77DD;
+}
+
+#vaaniChat .vaani-tl-pill-thumb {
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  display: block;
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+
+#vaaniChat .vaani-tl-pill.is-on .vaani-tl-pill-thumb {
+  transform: translateX(20px);
+}
+
+#vaaniChat .vaani-tl-dropdown {
+  margin-bottom: 12px;
+}
+
+#vaaniChat .vaani-tl-language-search {
+  width: 100%;
+  border: 1px solid rgba(127, 119, 221, 0.3);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text, #e8e8f6);
+  padding: 8px 10px;
+  outline: none;
+}
+
+#vaaniChat .vaani-tl-language-search:focus {
+  box-shadow: 0 0 0 2px rgba(127, 119, 221, 0.35);
+}
+
+#vaaniChat .vaani-tl-language-list {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+#vaaniChat .vaani-tl-language-option {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text, #e8e8f6);
+  padding: 7px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#vaaniChat .vaani-tl-language-option:hover {
+  background: rgba(127,119,221,0.1);
+}
+
+#vaaniChat .vaani-tl-language-option.is-selected {
+  color: #7F77DD;
+}
+
+#vaaniChat .vaani-tl-layer {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 0.5px solid rgba(127,119,221,0.18);
+}
+
+#vaaniChat .vaani-tl-layer.vaani-tl-hidden {
+  display: none;
+}
+
+#vaaniChat .vaani-tl-text {
+  font-size: 12.5px;
+  color: rgba(127,119,221,0.85);
+  line-height: 1.5;
+  margin: 0;
+  font-style: normal;
+}
+
+#vaaniChat .vaani-tl-romanized {
+  font-size: 12px;
+  color: var(--color-text-secondary, #888);
+  line-height: 1.5;
+  margin: 3px 0 0 0;
+  font-style: italic;
+}
+
+#vaaniChat .vaani-tl-indicator {
+  font-size: 10.5px;
+  color: rgba(127,119,221,0.6);
+  display: block;
+  margin-top: 4px;
+  animation: vaani-tl-fade 1500ms ease forwards;
+}
+
+@keyframes vaani-tl-fade {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+#vaaniChat .vaani-tl-context-menu {
+  margin-top: 8px;
+  border: 1px solid rgba(127,119,221,0.24);
+  border-radius: 10px;
+  background: var(--bg2, #151523);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#vaaniChat .vaani-tl-context-menu > button {
+  border: 0;
+  background: transparent;
+  color: var(--text, #e8e8f6);
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+#vaaniChat .vaani-tl-context-menu > button:hover {
+  background: rgba(127,119,221,0.1);
+}
+
 #vaaniChat .vc-msg-voice-seek {
   font-size: 11px;
   font-weight: 600;

@@ -13,6 +13,8 @@ import {
   uploadBytes,
   getDownloadURL
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import { createVaaniTranslationPanel } from "./VaaniTranslationPanel.js";
+import { processMessage, translationCache, clearCache, cancelMessageProcessing } from "./useTranslation.js";
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -92,6 +94,19 @@ import {
   var _voiceUploadError = "";
   var _voicePendingDraft = null;
   var _voiceUploadCancelFn = null;
+  var _translationPanelController = null;
+  var _translationConfig = {
+    panelOpen: false,
+    translateEnabled: false,
+    transliterateEnabled: false,
+    targetLanguage: "English",
+    showBelowOriginal: true,
+    languageQuery: "",
+    featureEnabled: true
+  };
+  var _translationResultsById = new Map();
+  var _translationContextMenuEl = null;
+  var _translationContextDismissors = [];
   var VOICE_UPLOAD_TIMEOUT_MS = 10000;
   var VOICE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -759,6 +774,9 @@ if (window.VaaniNav) window.VaaniNav.sync();
       _emitTypingHeartbeat(false);
       _replyToMessage = null; // clear reply on chat close
       _activeChatId = null; _messages = []; _inputMessage = ""; _messagesContainerRef = null;
+      _translationResultsById.clear();
+      clearCache();
+      if (_translationPanelController) { _translationPanelController.destroy(); _translationPanelController = null; }
       _teardownMessageListener();
       _teardownStatusListeners();
       _teardownViewportSync();
@@ -780,6 +798,15 @@ if (window.VaaniNav) window.VaaniNav.sync();
 
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
   function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
+  function _setTranslationConfig(patch) {
+    _translationConfig = Object.assign({}, _translationConfig, patch || {});
+    if (_translationPanelController) _translationPanelController.update();
+    _renderMessages();
+  }
+
+  function openTranslationPanel() {
+    _setTranslationConfig({ panelOpen: true, featureEnabled: true });
+  }
 
   function _isUserNearBottom(container, thresholdPx) {
     var el = container || _messagesContainerRef;
@@ -2784,6 +2811,133 @@ function _renderReplyBanner() {
       });
   }
 
+  function _appendTranslationLayer(bubble, msg) {
+    var msgId = String(msg && msg.id || "");
+    if (!msgId || !bubble) return;
+    var translationResult = _translationResultsById.get(msgId) || translationCache.get(msgId);
+    if (!translationResult) return;
+    var layer = bubble.querySelector(".vaani-tl-layer");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = "vaani-tl-layer";
+      bubble.appendChild(layer);
+    }
+    layer.classList.toggle("vaani-tl-hidden", _translationConfig.showBelowOriginal === false || _translationConfig.featureEnabled === false);
+    var html = "";
+    if (translationResult.translated) html += '<p class="vaani-tl-text">' + _esc(translationResult.translated) + "</p>";
+    if (translationResult.transliterated) html += '<p class="vaani-tl-romanized">' + _esc(translationResult.transliterated) + "</p>";
+    layer.innerHTML = html;
+
+    if (translationResult.detectedLang) {
+      var indicator = document.createElement("span");
+      indicator.className = "vaani-tl-indicator";
+      indicator.textContent = "Translated from " + translationResult.detectedLang;
+      indicator.addEventListener("animationend", function () {
+        if (indicator.parentNode) indicator.parentNode.removeChild(indicator);
+      }, { once: true });
+      layer.appendChild(indicator);
+    }
+  }
+
+  function _processAndAppendMessageTranslation(msg, bubble) {
+    if (!msg || !msg.id) return;
+    processMessage({ id: msg.id, text: _messagePreviewText(msg) }, _translationConfig, { debounceMs: 300 })
+      .then(function (result) {
+        if (!result) return;
+        _translationResultsById.set(String(msg.id), result);
+        var activeBubble = bubble && bubble.isConnected
+          ? bubble
+          : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + String(msg.id) + '"]');
+        if (activeBubble) _appendTranslationLayer(activeBubble, msg);
+      });
+  }
+
+  function _dismissTranslationContextMenu() {
+    while (_translationContextDismissors.length) {
+      var remove = _translationContextDismissors.pop();
+      try { remove(); } catch (e) {}
+    }
+    if (_translationContextMenuEl && _translationContextMenuEl.parentNode) {
+      _translationContextMenuEl.parentNode.removeChild(_translationContextMenuEl);
+    }
+    _translationContextMenuEl = null;
+  }
+
+  function _showTranslationContextMenu(event, bubble, msg) {
+    _dismissTranslationContextMenu();
+    var menu = document.createElement("div");
+    menu.className = "vaani-tl-context-menu";
+    menu.innerHTML =
+      '<button type="button" data-action="translate">Translate</button>' +
+      '<button type="button" data-action="transliterate">Transliterate</button>' +
+      '<button type="button" data-action="copy">Copy</button>' +
+      '<button type="button" data-action="reply">Reply</button>';
+    bubble.appendChild(menu);
+    _translationContextMenuEl = menu;
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+
+    menu.querySelector('[data-action="translate"]').addEventListener("click", function () {
+      _dismissTranslationContextMenu();
+      processMessage({ id: msg.id, text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: true, transliterateEnabled: false }), { debounceMs: 0 })
+        .then(function (result) { if (result) { _translationResultsById.set(String(msg.id), result); _appendTranslationLayer(bubble, msg); } });
+    });
+    menu.querySelector('[data-action="transliterate"]').addEventListener("click", function () {
+      _dismissTranslationContextMenu();
+      processMessage({ id: String(msg.id) + "::transliterate", text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: false, transliterateEnabled: true }), { debounceMs: 0 })
+        .then(function (result) { if (result) { _translationResultsById.set(String(msg.id), result); _appendTranslationLayer(bubble, msg); } });
+    });
+    menu.querySelector('[data-action="copy"]').addEventListener("click", function () {
+      _dismissTranslationContextMenu();
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(_messagePreviewText(msg)).catch(function () {});
+      }
+    });
+    menu.querySelector('[data-action="reply"]').addEventListener("click", function () {
+      _dismissTranslationContextMenu();
+      _setReplyTo(msg);
+    });
+
+    function outsideHandler(e) { if (!menu.contains(e.target)) _dismissTranslationContextMenu(); }
+    function scrollHandler() { _dismissTranslationContextMenu(); }
+    document.addEventListener("mousedown", outsideHandler, true);
+    if (_messagesContainerRef) _messagesContainerRef.addEventListener("scroll", scrollHandler, { passive: true, once: true });
+    _translationContextDismissors.push(function () { document.removeEventListener("mousedown", outsideHandler, true); });
+    _translationContextDismissors.push(function () { if (_messagesContainerRef) _messagesContainerRef.removeEventListener("scroll", scrollHandler); });
+  }
+
+  function _attachTranslationContextMenuHandlers(bubble, msg) {
+    var holdFrame = null;
+    var holdStart = 0;
+    function clearHold() {
+      if (holdFrame) cancelAnimationFrame(holdFrame);
+      holdFrame = null;
+      holdStart = 0;
+    }
+    function holdTick(ts) {
+      if (!holdStart) holdStart = ts;
+      if ((ts - holdStart) >= 500) {
+        clearHold();
+        _showTranslationContextMenu(null, bubble, msg);
+        return;
+      }
+      holdFrame = requestAnimationFrame(holdTick);
+    }
+
+    bubble.addEventListener("pointerdown", function (event) {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      _dismissTranslationContextMenu();
+      clearHold();
+      holdFrame = requestAnimationFrame(holdTick);
+    });
+    bubble.addEventListener("pointerup", clearHold);
+    bubble.addEventListener("pointercancel", clearHold);
+    bubble.addEventListener("pointerleave", clearHold);
+    bubble.addEventListener("contextmenu", function (event) {
+      _showTranslationContextMenu(event, bubble, msg);
+    });
+  }
+
   function _renderMessages(forceBottom) {
     var container = _messagesContainerRef; if (!container) return;
     var _hasVoiceMessages = _mergeMessagesForRender().some(function(m) { return m.type === "voice"; });
@@ -2804,6 +2958,7 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
       var isOwn = senderId === currentUid;
       var row = document.createElement("div"); row.className = isOwn ? "vc-msg-row vc-msg-own" : "vc-msg-row vc-msg-other";
       var bubble = document.createElement("div"); bubble.className = "vc-msg-bubble";
+      bubble.setAttribute("data-message-id", String(msg.id || ""));
 
       // ── Reply preview ──────────────────────────────────────────
       if (msg.replyTo && msg.replyTo.text) {
@@ -2825,6 +2980,7 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
         msgText.textContent = _messagePreviewText(msg);
         bubble.appendChild(msgText);
       }
+      _appendTranslationLayer(bubble, msg);
 
       if (msg.pending || msg.failed) {
         var stateRow = document.createElement("div");
@@ -2906,8 +3062,10 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
         document.addEventListener("mousemove", onMouseMove);
         document.addEventListener("mouseup",   onMouseUp);
       });
+      _attachTranslationContextMenuHandlers(bubble, msg);
 
       row.appendChild(bubble); container.appendChild(row);
+      window.requestAnimationFrame(function () { _processAndAppendMessageTranslation(msg, bubble); });
     });
     if (stickToBottom) {
     _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
@@ -3031,7 +3189,9 @@ if (!firstFire && nextSig === _activeMessagesSignature && !hasPendingOptimistic)
             '<div class="vc-chat-hinfo"><div class="vc-chat-hname">@' + _esc(username) + "</div>" +
             '<div class="vc-chat-hsub" id="vcChatHeaderStatus"></div></div>' +
             '<div class="vc-chat-hactions">' +
+              '<button class="vc-header-action-btn vaani-tl-toggle-btn" id="vaaniTlToggleBtn" title="Translation & Transliteration Settings" aria-label="Open translation settings">🌐</button>' +
               '<button class="vc-header-action-btn" id="chatMenuBtn" aria-label="More options">' + menuIconSVG + "</button>" +
+              '<div class="vaani-tl-panel-host" id="vaaniTranslationPanelHost"></div>' +
             "</div></div>" +
           '<div class="vc-chat-messages chat-messages" id="messagesContainer"></div>' +
           '<div class="vc-chat-input-bar chat-input">' +
@@ -3073,9 +3233,28 @@ if (!firstFire && nextSig === _activeMessagesSignature && !hasPendingOptimistic)
       }
     };
     var menuBtn = document.getElementById("chatMenuBtn");
+    var tlToggleBtn = document.getElementById("vaaniTlToggleBtn");
+    var tlPanelHost = document.getElementById("vaaniTranslationPanelHost");
     if (menuBtn) menuBtn.onclick = function () {
       console.log("[Vaani] Menu action tapped for:", username);
     };
+    if (tlToggleBtn) {
+      tlToggleBtn.onclick = function () { openTranslationPanel(); };
+    }
+    if (tlPanelHost) {
+      if (_translationPanelController) _translationPanelController.destroy();
+      _translationPanelController = createVaaniTranslationPanel({
+        getConfig: function () { return _translationConfig; },
+        onConfigChange: function (patch) {
+          _setTranslationConfig(patch || {});
+          if (_translationConfig.featureEnabled === false) {
+            Array.from(translationCache.keys()).forEach(function (id) { cancelMessageProcessing(id); });
+          }
+        },
+        onClose: function () { _setTranslationConfig({ panelOpen: false }); }
+      });
+      _translationPanelController.mount(tlPanelHost);
+    }
 
 var chatAvatar = chatScreen.querySelector('.vc-chat-avatar');
 if (chatAvatar && _selectedChatUser) {
