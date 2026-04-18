@@ -2290,13 +2290,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // FIX 12 — reduced from 5000 → 4000 ms for snappier signed-out fallback
   setTimeout(() => {
     if (!window.VAANI_AUTH_READY) {
-      console.warn("[Vaani] Auth timeout — defaulting to signed out");
-      window.VAANI_AUTH_READY  = true;
-      window._vaaniCurrentUser = null;
-      _applyUserToUI(null);
+      console.warn("[Vaani] Auth timeout — VAANI_AUTH_READY flag set, but keeping existing user session");
+      window.VAANI_AUTH_READY = true;
+      // Do NOT clear _vaaniCurrentUser or call _applyUserToUI(null) here.
+      // The real onAuthStateChanged will handle sign-out if needed.
       _refreshAuthSensitivePages();
     }
-  }, 4000);
+  }, 8000);
 
   detectUserLocation();
 
