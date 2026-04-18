@@ -241,7 +241,13 @@ import {
           writes += 1;
         });
         if (writes > 0) { await batch.commit(); console.log("[Vaani] Legacy chat backfill created " + writes + " chat doc(s)."); }
-      } catch (err) { console.error("[Vaani] Legacy chat backfill failed:", err); }
+      } catch (err) {
+        if (err && err.code === "permission-denied") {
+          console.log("[Vaani] Legacy chat backfill skipped (no legacy data access).");
+        } else {
+          console.warn("[Vaani] Legacy chat backfill failed:", err && err.message);
+        }
+      }
     })();
     return _chatBackfillPromisesByUid[currentUid];
   }
@@ -310,7 +316,14 @@ import {
           migrated++; console.log("[Vaani] migrated:", doc.id, "→", chatId);
         } catch (docErr) { errors++; console.error("[Vaani] _migrateLegacyMessages: error on", doc.id, ":", docErr); }
       }
-    } catch (fatalErr) { console.error("[Vaani] _migrateLegacyMessages: fatal:", fatalErr); return; }
+    } catch (fatalErr) {
+      if (fatalErr && fatalErr.code === "permission-denied") {
+        console.log("[Vaani] _migrateLegacyMessages: skipped (no legacy collection access).");
+      } else {
+        console.warn("[Vaani] _migrateLegacyMessages: fatal:", fatalErr && fatalErr.message);
+      }
+      return;
+    }
 
     sessionStorage.setItem(sessionKey, "1");
     console.log("[Vaani] _migrateLegacyMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
@@ -381,7 +394,14 @@ import {
           migrated++; console.log("[Vaani] _migrateTopLevelMessages: migrated", doc.id, "→", chatId);
         } catch (docErr) { errors++; console.error("[Vaani] _migrateTopLevelMessages: error on", doc.id, docErr); }
       }
-    } catch (fatalErr) { console.error("[Vaani] _migrateTopLevelMessages: fatal:", fatalErr); return; }
+    } catch (fatalErr) {
+      if (fatalErr && fatalErr.code === "permission-denied") {
+        console.log("[Vaani] _migrateTopLevelMessages: skipped (no /messages collection access).");
+      } else {
+        console.warn("[Vaani] _migrateTopLevelMessages: fatal:", fatalErr && fatalErr.message);
+      }
+      return;
+    }
 
     sessionStorage.setItem(sessionKey, "1");
     console.log("[Vaani] _migrateTopLevelMessages: done —", migrated, "migrated |", skipped, "skipped |", errors, "errors");
@@ -1677,7 +1697,7 @@ if (avatarEl) {
     }
     listEl.innerHTML = requests.map(function (r) {
       var createdAt = _formatRequestTime(r.createdAt);
-      return '<div class="vc-request-item vc-request-item-sent">' +
+      return '<div class="vc-request-item vc-request-item-sent" style="cursor:pointer;" data-to-uid="' + _esc(r.toUid || "") + '">' +
         '<div class="vc-request-meta">' +
         '<div class="vc-request-copy">@' + _esc(r.toUsername || "user") + "</div>" +
         '<div class="vc-request-copy">' + _esc(r.statusLabel || "Pending") + (createdAt ? " • " + _esc(createdAt) : "") + "</div>" +
@@ -1862,8 +1882,18 @@ if (avatarEl) {
       incomingRequests = incomingRequests.filter(function (request) { return request.id !== requestId; });
       _renderIncomingRequests(incomingRequests);
       try {
-        if (acceptBtn) await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
-        else           await _rejectConnectionRequest(db, requestId);
+        if (acceptBtn) {
+          await _acceptConnectionRequest(db, requestId, currentUid, fromUid);
+          // Open chat immediately after accepting
+          if (fromUid) {
+            panel.classList.remove("vc-open");
+            _openChatWithUser({ uid: fromUid }).catch(function (e) {
+              console.warn("[Vaani] open chat after accept failed:", e);
+            });
+          }
+        } else {
+          await _rejectConnectionRequest(db, requestId);
+        }
       } catch (err) {
         console.error("[Vaani] request action failed:", err);
         if (err && err.message === "REQUEST_ALREADY_HANDLED") {
@@ -1879,8 +1909,21 @@ if (avatarEl) {
   function _bindSentRequestActions() {
     var toggleBtn = document.getElementById("vcSentRequestsToggle");
     var panel = document.getElementById("vcSentRequestsPanel");
+    var listEl = document.getElementById("vcSentRequestsList");
     if (!toggleBtn || !panel) return;
     toggleBtn.addEventListener("click", function () { panel.classList.toggle("vc-open"); });
+    if (listEl) {
+      listEl.addEventListener("click", function (event) {
+        var item = event.target.closest(".vc-request-item-sent");
+        if (!item) return;
+        var toUid = item.getAttribute("data-to-uid");
+        if (!toUid) return;
+        panel.classList.remove("vc-open");
+        _openChatWithUser({ uid: toUid }).catch(function (err) {
+          console.warn("[Vaani] open chat from sent request failed:", err);
+        });
+      });
+    }
   }
 
   async function _fetchUsersByPrefix(query, dropdown) {
