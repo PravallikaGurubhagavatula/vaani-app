@@ -151,21 +151,47 @@
 
   function _startRouter() {
     _auth.onAuthStateChanged(async function (user) {
-      console.log("[Vaani Router] Auth state:", user ? user.email : "signed out");
+      function renderLogin() { _showLoginScreen(); }
+      function renderProfile(currentUser) { _showProfileScreen(currentUser); }
+      function renderChat(currentUser, profile) { _showChatScreen(currentUser, profile); }
+      async function getUserProfile(uid) {
+        var getter =
+          (typeof window.getUserProfile === "function")
+            ? window.getUserProfile
+            : (window.vaaniProfile && typeof window.vaaniProfile.get === "function"
+              ? window.vaaniProfile.get.bind(window.vaaniProfile)
+              : null);
+        if (!getter) throw new Error("Profile module not ready.");
+        return getter(uid);
+      }
 
       if (!user) {
-        _showLoginScreen();
+        renderLogin();
         return;
       }
 
-      // Sync this user into window globals so app.js (History/Favs) works
       window._vaaniCurrentUser = user;
       window.VAANI_AUTH_READY  = true;
       if (typeof window._vaaniOnAuthChange === "function") {
         window._vaaniOnAuthChange(user);
       }
 
-      await handlePostLogin(user);
+      try {
+        var profile = _readProfileCache(user.uid);
+        if (!profile) {
+          _showLoadingScreen();
+          profile = await getUserProfile(user.uid);
+          if (profile) _writeProfileCache(user.uid, profile);
+        }
+
+        if (!profile) {
+          renderProfile(user);
+        } else {
+          renderChat(user, profile);
+        }
+      } catch (err) {
+        console.error("Auth flow error:", err);
+      }
     });
   }
 

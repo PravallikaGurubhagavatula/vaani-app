@@ -675,14 +675,12 @@ if (window.VaaniNav) window.VaaniNav.sync();
 
     // Attach listener first for fast initial render; run migrations in background.
     _createChatListListener();
-    console.log("[Vaani] _renderChat: running migrations in background…");
-    Promise.allSettled([
-      _backfillChatsFromLegacyMessages(),
-      _migrateLegacyMessages(),
-      _migrateTopLevelMessages()
-    ]).then(function () {
-      console.log("[Vaani] _renderChat: background migrations finished.");
-    });
+    console.log("[Vaani] _renderChat: scheduling background migrations…");
+    setTimeout(function () {
+      _backfillChatsFromLegacyMessages();
+      _migrateLegacyMessages();
+      _migrateTopLevelMessages();
+    }, 2000);
     _setSelectedChatUser(null);
   }
 
@@ -1003,6 +1001,7 @@ function _saveChatListCache(uid, data) {
   var db = window.vaaniRouter && typeof window.vaaniRouter.getDb === "function" ? window.vaaniRouter.getDb() : null;
   var currentUid = window._vaaniCurrentUser && window._vaaniCurrentUser.uid ? window._vaaniCurrentUser.uid : null;
   if (!db || !currentUid) return;
+  if (_activeChatListListenerUid === String(currentUid)) return;
   if (_unsubscribeChatList) {
     _unsubscribeChatList();
     _unsubscribeChatList = null;
@@ -2194,8 +2193,8 @@ if (avatarEl) {
     var msgData = {
       text: String(text || ""), senderId: currentUid, receiverId: otherUid,
       participants: participants, chatId: chatId,
-      timestamp: firebase.firestore.Timestamp.fromDate(new Date()),
-createdAt: firebase.firestore.Timestamp.fromDate(new Date())
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
     if (extraData && typeof extraData === "object") {
       if (extraData.type) msgData.type = String(extraData.type);
@@ -3186,7 +3185,10 @@ function _tryRehydrateActiveChat(db, uid) {
   window.vaaniChat = {
     _currentView: "home",
     _chatList: [],
-    open: function () {
+    open: function (chatId) {
+  if (chatId) {
+    console.log("Opening chat:", chatId);
+  }
   var root = _root();
   var auth = window.vaaniRouter && typeof window.vaaniRouter.getAuth === "function"
     ? window.vaaniRouter.getAuth()
@@ -3219,6 +3221,7 @@ function _tryRehydrateActiveChat(db, uid) {
   var cachedProfile = _tryLoadSessionProfile(user.uid);
 
   if (cachedProfile) {
+    _loading = false;
     _renderChat(user, cachedProfile);
     _tryRehydrateActiveChat(db, user.uid);
 
@@ -3238,6 +3241,7 @@ function _tryRehydrateActiveChat(db, uid) {
   }
 
   if (root && !root.querySelector(".vc-shell")) {
+    _loading = true;
     root.innerHTML =
       '<div class="vg-screen vg-loading-screen">' +
         '<div class="vg-spinner"></div>' +
@@ -3263,6 +3267,9 @@ function _tryRehydrateActiveChat(db, uid) {
     })
     .catch(function () {
       _renderProfile(user);
+    })
+    .finally(function () {
+      _loading = false;
     });
 },
 
