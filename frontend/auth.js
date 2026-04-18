@@ -223,8 +223,12 @@
         var profile = _readProfileCache(user.uid);
         if (!profile) {
           _showLoadingScreen();
-          profile = await getUserProfile(user.uid);
-          if (profile) _writeProfileCache(user.uid, profile);
+          try {
+            profile = await getUserProfile(user.uid);
+            if (profile) _writeProfileCache(user.uid, profile);
+          } catch (profileErr) {
+            console.warn("[Vaani Router] getUserProfile threw — falling back to onboarding:", profileErr.message);
+          }
         }
 
         if (!profile) {
