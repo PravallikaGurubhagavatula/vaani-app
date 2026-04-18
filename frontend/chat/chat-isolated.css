@@ -3317,6 +3317,14 @@ body.vm-menu-open {
   border-top: 0.5px solid rgba(127,119,221,0.18);
 }
 
+#vaaniChat .vc-msg-own .vaani-tl-layer {
+  border-top-color: rgba(255,255,255,0.22);
+}
+
+#vaaniChat .vc-msg-other .vaani-tl-layer {
+  border-top-color: rgba(127,119,221,0.25);
+}
+
 #vaaniChat .vaani-tl-layer.vaani-tl-hidden {
   display: none;
 }
@@ -3329,12 +3337,32 @@ body.vm-menu-open {
   font-style: normal;
 }
 
+#vaaniChat .vc-msg-own .vaani-tl-text {
+  color: rgba(255,255,255,0.82);
+}
+
+#vaaniChat .vc-msg-other .vaani-tl-text {
+  color: #A89FF5;
+}
+
+[data-theme="light"] #vaaniChat .vc-msg-other .vaani-tl-text {
+  color: #6C63CC;
+}
+
 #vaaniChat .vaani-tl-romanized {
   font-size: 12px;
   color: var(--color-text-secondary, #888);
   line-height: 1.5;
   margin: 3px 0 0 0;
   font-style: italic;
+}
+
+#vaaniChat .vc-msg-own .vaani-tl-romanized {
+  color: rgba(255,255,255,0.68);
+}
+
+#vaaniChat .vc-msg-other .vaani-tl-romanized {
+  color: #8B83D9;
 }
 
 #vaaniChat .vaani-tl-indicator {
