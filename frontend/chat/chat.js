@@ -14,7 +14,7 @@ import {
   getDownloadURL
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { createVaaniTranslationPanel } from "./VaaniTranslationPanel.js";
-import { processMessage, translationCache, clearCache, cancelMessageProcessing } from "./useTranslation.js";
+import { processMessage, translationCache, clearCache, cancelMessageProcessing, getCached, setCached } from "./useTranslation.js";
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -105,6 +105,7 @@ import { processMessage, translationCache, clearCache, cancelMessageProcessing }
     featureEnabled: true
   };
   var _translationResultsById = new Map();
+  var _translationLoadingById = new Map();
   var _translationContextMenuEl = null;
   var _translationContextDismissors = [];
   var VOICE_UPLOAD_TIMEOUT_MS = 10000;
@@ -799,7 +800,13 @@ if (window.VaaniNav) window.VaaniNav.sync();
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
   function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
   function _setTranslationConfig(patch) {
+    var previous = Object.assign({}, _translationConfig);
     _translationConfig = Object.assign({}, _translationConfig, patch || {});
+    var languageChanged = previous.targetLanguage !== _translationConfig.targetLanguage;
+    if (languageChanged) {
+      clearCache();
+      _translationResultsById.clear();
+    }
     if (_translationPanelController) _translationPanelController.update();
     _renderMessages();
   }
@@ -2758,6 +2765,28 @@ function _renderReplyBanner() {
   sendMessage(_activeChatId, inputMessage, currentUid, otherUid, replySnapshot, { clientNonce: tempId })
     .then(function (firestoreId) {
       _markOptimisticMessageSent(tempId, firestoreId);
+      var resolvedId = String(firestoreId || tempId);
+      if (_translationConfig.translateEnabled === true) {
+        _translationLoadingById.set(resolvedId, { translate: true, transliterate: false });
+        processMessage({ id: resolvedId, text: inputMessage }, _translationConfig, { debounceMs: 0, mode: "translate", force: true })
+          .then(function (result) {
+            var existing = _translationResultsById.get(resolvedId) || {};
+            if (!result) {
+              _translationResultsById.set(resolvedId, Object.assign({}, existing, { unavailable: true }));
+              return;
+            }
+            _translationResultsById.set(resolvedId, {
+              translated: result.translated || "",
+              transliterated: existing.transliterated || "",
+              detectedLang: result.detectedLang || existing.detectedLang || "",
+              unavailable: !!result.unavailable
+            });
+            _renderMessages(false);
+          })
+          .finally(function () {
+            _translationLoadingById.set(resolvedId, { translate: false, transliterate: false });
+          });
+      }
       // No re-render needed — onSnapshot will arrive and clean up
     })
     .catch(function (err) {
@@ -2814,24 +2843,38 @@ function _renderReplyBanner() {
   function _appendTranslationLayer(bubble, msg) {
     var msgId = String(msg && msg.id || "");
     if (!msgId || !bubble) return;
-    var translationResult = _translationResultsById.get(msgId) || translationCache.get(msgId);
-    if (!translationResult) return;
+    var targetLanguage = String(_translationConfig.targetLanguage || "English");
+    var cachedTranslate = getCached(msgId, targetLanguage, "translate");
+    var cachedTransliterate = getCached(msgId, targetLanguage, "transliterate");
+    var translationResult = _translationResultsById.get(msgId) || {};
+    var translatedText = translationResult.translated || (cachedTranslate && cachedTranslate.result) || "";
+    var transliteratedText = translationResult.transliterated || (cachedTransliterate && cachedTransliterate.result) || "";
+    var unavailable = !!translationResult.unavailable;
+
     var layer = bubble.querySelector(".vaani-tl-layer");
     if (!layer) {
       layer = document.createElement("div");
       layer.className = "vaani-tl-layer";
       bubble.appendChild(layer);
     }
-    layer.classList.toggle("vaani-tl-hidden", _translationConfig.showBelowOriginal === false || _translationConfig.featureEnabled === false);
+    var loadingState = _translationLoadingById.get(msgId);
+    var isHidden = _translationConfig.showBelowOriginal === false || _translationConfig.featureEnabled === false || _translationConfig.translateEnabled === false;
+    layer.classList.toggle("vaani-tl-hidden", isHidden);
+
     var html = "";
-    if (translationResult.translated) html += '<p class="vaani-tl-text">' + _esc(translationResult.translated) + "</p>";
-    if (translationResult.transliterated) html += '<p class="vaani-tl-romanized">' + _esc(translationResult.transliterated) + "</p>";
+    if (loadingState && (loadingState.translate || loadingState.transliterate)) {
+      html += '<p class="vaani-tl-text">...</p>';
+    }
+    if (translatedText) html += '<p class="vaani-tl-text">' + _esc(translatedText) + "</p>";
+    if (unavailable) html += '<p class="vaani-tl-text">Translation unavailable</p>';
+    if (transliteratedText) html += '<p class="vaani-tl-romanized">' + _esc(transliteratedText) + "</p>";
     layer.innerHTML = html;
 
-    if (translationResult.detectedLang) {
+    var detected = translationResult.detectedLang || (cachedTranslate && cachedTranslate.detectedLang) || "";
+    if (detected) {
       var indicator = document.createElement("span");
       indicator.className = "vaani-tl-indicator";
-      indicator.textContent = "Translated from " + translationResult.detectedLang;
+      indicator.textContent = "Translated from " + detected;
       indicator.addEventListener("animationend", function () {
         if (indicator.parentNode) indicator.parentNode.removeChild(indicator);
       }, { once: true });
@@ -2839,15 +2882,46 @@ function _renderReplyBanner() {
     }
   }
 
-  function _processAndAppendMessageTranslation(msg, bubble) {
-    if (!msg || !msg.id) return;
-    processMessage({ id: msg.id, text: _messagePreviewText(msg) }, _translationConfig, { debounceMs: 300 })
+  function _processAndAppendMessageTranslation(msg, bubble, contextMessages) {
+    if (!msg || !msg.id || _translationConfig.translateEnabled !== true) return;
+    var msgId = String(msg.id);
+    var targetLanguage = String(_translationConfig.targetLanguage || "English");
+    var cached = getCached(msgId, targetLanguage, "translate");
+    if (cached) {
+      _translationResultsById.set(msgId, {
+        translated: cached.result || "",
+        transliterated: (_translationResultsById.get(msgId) || {}).transliterated || "",
+        detectedLang: cached.detectedLang || "",
+        unavailable: !!cached.unavailable
+      });
+      var cachedBubble = bubble && bubble.isConnected ? bubble : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
+      if (cachedBubble) _appendTranslationLayer(cachedBubble, msg);
+      return;
+    }
+
+    _translationLoadingById.set(msgId, { translate: true, transliterate: false });
+    _appendTranslationLayer(bubble, msg);
+
+    processMessage({ id: msgId, text: _messagePreviewText(msg) }, _translationConfig, { debounceMs: 300, mode: "translate", contextMessages: contextMessages || [] })
       .then(function (result) {
         if (!result) return;
-        _translationResultsById.set(String(msg.id), result);
+        var prior = _translationResultsById.get(msgId) || {};
+        _translationResultsById.set(msgId, {
+          translated: result.translated || prior.translated || "",
+          transliterated: prior.transliterated || "",
+          detectedLang: result.detectedLang || prior.detectedLang || "",
+          unavailable: !!result.unavailable
+        });
         var activeBubble = bubble && bubble.isConnected
           ? bubble
-          : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + String(msg.id) + '"]');
+          : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
+        if (activeBubble) _appendTranslationLayer(activeBubble, msg);
+      })
+      .finally(function () {
+        _translationLoadingById.set(msgId, { translate: false, transliterate: false });
+        var activeBubble = bubble && bubble.isConnected
+          ? bubble
+          : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
         if (activeBubble) _appendTranslationLayer(activeBubble, msg);
       });
   }
@@ -2879,13 +2953,81 @@ function _renderReplyBanner() {
 
     menu.querySelector('[data-action="translate"]').addEventListener("click", function () {
       _dismissTranslationContextMenu();
-      processMessage({ id: msg.id, text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: true, transliterateEnabled: false }), { debounceMs: 0 })
-        .then(function (result) { if (result) { _translationResultsById.set(String(msg.id), result); _appendTranslationLayer(bubble, msg); } });
+      var msgId = String(msg.id);
+      var targetLanguage = String(_translationConfig.targetLanguage || "English");
+      var cached = getCached(msgId, targetLanguage, "translate");
+      if (cached) {
+        var existing = _translationResultsById.get(msgId) || {};
+        _translationResultsById.set(msgId, {
+          translated: cached.result || "",
+          transliterated: existing.transliterated || "",
+          detectedLang: cached.detectedLang || existing.detectedLang || "",
+          unavailable: !!cached.unavailable
+        });
+        _appendTranslationLayer(bubble, msg);
+        return;
+      }
+      _translationLoadingById.set(msgId, { translate: true, transliterate: false });
+      _appendTranslationLayer(bubble, msg);
+      processMessage({ id: msgId, text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: true, transliterateEnabled: false }), { debounceMs: 0, mode: "translate", force: true })
+        .then(function (result) {
+          var existing = _translationResultsById.get(msgId) || {};
+          if (!result) {
+            _translationResultsById.set(msgId, Object.assign({}, existing, { unavailable: true }));
+            return;
+          }
+          _translationResultsById.set(msgId, {
+            translated: result.translated || "",
+            transliterated: existing.transliterated || "",
+            detectedLang: result.detectedLang || existing.detectedLang || "",
+            unavailable: !!result.unavailable
+          });
+        })
+        .finally(function () {
+          _translationLoadingById.set(msgId, { translate: false, transliterate: false });
+          _appendTranslationLayer(bubble, msg);
+        });
     });
     menu.querySelector('[data-action="transliterate"]').addEventListener("click", function () {
       _dismissTranslationContextMenu();
-      processMessage({ id: String(msg.id) + "::transliterate", text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: false, transliterateEnabled: true }), { debounceMs: 0 })
-        .then(function (result) { if (result) { _translationResultsById.set(String(msg.id), result); _appendTranslationLayer(bubble, msg); } });
+      var msgId = String(msg.id);
+      var targetLanguage = String(_translationConfig.targetLanguage || "English");
+      var cached = getCached(msgId, targetLanguage, "transliterate");
+      if (cached) {
+        var prior = _translationResultsById.get(msgId) || {};
+        _translationResultsById.set(msgId, {
+          translated: prior.translated || "",
+          transliterated: cached.result || "",
+          detectedLang: prior.detectedLang || cached.detectedLang || "",
+          unavailable: !!prior.unavailable
+        });
+        _appendTranslationLayer(bubble, msg);
+        return;
+      }
+      _translationLoadingById.set(msgId, { translate: false, transliterate: true });
+      _appendTranslationLayer(bubble, msg);
+      processMessage({ id: msgId, text: _messagePreviewText(msg) }, Object.assign({}, _translationConfig, { translateEnabled: false, transliterateEnabled: true }), { debounceMs: 0, mode: "transliterate", force: true })
+        .then(function (result) {
+          if (!result) return;
+          var prior = _translationResultsById.get(msgId) || {};
+          var translitResult = result.transliterated || _messagePreviewText(msg);
+          setCached(msgId, targetLanguage, "transliterate", {
+            result: translitResult,
+            detectedLang: result.detectedLang || prior.detectedLang || "",
+            unavailable: false,
+            mode: "transliterate"
+          });
+          _translationResultsById.set(msgId, {
+            translated: prior.translated || "",
+            transliterated: translitResult,
+            detectedLang: prior.detectedLang || result.detectedLang || "",
+            unavailable: !!prior.unavailable
+          });
+        })
+        .finally(function () {
+          _translationLoadingById.set(msgId, { translate: false, transliterate: false });
+          _appendTranslationLayer(bubble, msg);
+        });
     });
     menu.querySelector('[data-action="copy"]').addEventListener("click", function () {
       _dismissTranslationContextMenu();
@@ -3065,7 +3207,12 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
       _attachTranslationContextMenuHandlers(bubble, msg);
 
       row.appendChild(bubble); container.appendChild(row);
-      window.requestAnimationFrame(function () { _processAndAppendMessageTranslation(msg, bubble); });
+      var currentTs = msg && msg.timestamp && typeof msg.timestamp.toMillis === "function" ? msg.timestamp.toMillis() : Number(msg && msg._sortTs || 0);
+      var contextMessages = messages.filter(function (m) {
+        var candidateTs = m && m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : Number(m && m._sortTs || 0);
+        return String(m && m.senderId || "") === String(msg && msg.senderId || "") && candidateTs <= currentTs;
+      }).slice(-3, -1).map(function (m) { return _messagePreviewText(m); });
+      window.requestAnimationFrame(function () { _processAndAppendMessageTranslation(msg, bubble, contextMessages); });
     });
     if (stickToBottom) {
     _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;

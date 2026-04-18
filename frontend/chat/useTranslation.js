@@ -1,11 +1,13 @@
-const translationCache = new Map();
-const inProgressMessageIds = new Set();
+import { translateMessage, transliterateMessage, detectLanguage } from "../../src/services/translationService.js";
+import cacheStore, { getCached, setCached, clearCached, getCacheKeys } from "../../src/services/translationCache.js";
+
+const inProgressKeys = new Set();
 const inFlightControllers = new Map();
 const debounceHandles = new Map();
 
 function clearCache() {
-  translationCache.clear();
-  inProgressMessageIds.clear();
+  clearCached();
+  inProgressKeys.clear();
   inFlightControllers.forEach(function (controller) {
     if (controller && typeof controller.abort === "function") controller.abort();
   });
@@ -16,65 +18,22 @@ function clearCache() {
   debounceHandles.clear();
 }
 
-function _unicodeRangeDetectedLanguage(text) {
-  var input = String(text || "");
-  if (!input.trim()) return "English";
-  var tests = [
-    { name: "Hindi", regex: /[\u0900-\u097F]/ },
-    { name: "Bengali", regex: /[\u0980-\u09FF]/ },
-    { name: "Punjabi", regex: /[\u0A00-\u0A7F]/ },
-    { name: "Gujarati", regex: /[\u0A80-\u0AFF]/ },
-    { name: "Odia", regex: /[\u0B00-\u0B7F]/ },
-    { name: "Tamil", regex: /[\u0B80-\u0BFF]/ },
-    { name: "Telugu", regex: /[\u0C00-\u0C7F]/ },
-    { name: "Kannada", regex: /[\u0C80-\u0CFF]/ },
-    { name: "Malayalam", regex: /[\u0D00-\u0D7F]/ },
-    { name: "Urdu", regex: /[\u0600-\u06FF]/ }
-  ];
-  for (var i = 0; i < tests.length; i += 1) {
-    if (tests[i].regex.test(input)) return tests[i].name;
-  }
-  return "English";
-}
-
-async function _translateText(text, fromLang, toLang, signal) {
-  var input = String(text || "");
-  if (!input.trim()) return "";
-  if (typeof window.finalTranslate === "function") {
-    return String(await window.finalTranslate(input, fromLang, toLang, { signal }) || "").trim();
-  }
-  if (typeof window.translateText === "function") {
-    return String(await window.translateText(input, fromLang, toLang, { signal }) || "").trim();
-  }
-  return input;
-}
-
-async function _transliterateText(text, signal) {
-  var input = String(text || "");
-  if (!input.trim()) return "";
-  if (/^[\u0000-\u007F\s]+$/.test(input)) return input;
-  if (typeof window.transliterateToLatin === "function") {
-    return String(await window.transliterateToLatin(input, { signal }) || "").trim();
-  }
-  return input;
-}
-
-function _debounceByRaf(messageId, waitMs) {
+function _debounceByRaf(key, waitMs) {
   return new Promise(function (resolve) {
-    var prior = debounceHandles.get(messageId);
+    var prior = debounceHandles.get(key);
     if (prior && prior.rafId) cancelAnimationFrame(prior.rafId);
     var started = performance.now();
     function tick(now) {
       if ((now - started) >= waitMs) {
-        debounceHandles.delete(messageId);
+        debounceHandles.delete(key);
         resolve();
         return;
       }
       var rafId = requestAnimationFrame(tick);
-      debounceHandles.set(messageId, { rafId: rafId });
+      debounceHandles.set(key, { rafId: rafId });
     }
     var rafId = requestAnimationFrame(tick);
-    debounceHandles.set(messageId, { rafId: rafId });
+    debounceHandles.set(key, { rafId: rafId });
   });
 }
 
@@ -83,66 +42,92 @@ async function processMessage(message, config, options) {
   var text = message && message.text != null ? String(message.text) : "";
   var settings = config || {};
   var opts = options || {};
-  if (!messageId || !text.trim()) return null;
+  var mode = String(opts.mode || "translate");
+  var targetLanguage = String(settings.targetLanguage || "English");
+  var cacheKey = messageId + "::" + targetLanguage + "::" + mode;
 
-  if (translationCache.has(messageId)) return translationCache.get(messageId);
+  if (!messageId || !text.trim()) return null;
 
   var translateEnabled = settings.translateEnabled === true;
   var transliterateEnabled = settings.transliterateEnabled === true;
-  if (!translateEnabled && !transliterateEnabled) return null;
+  if (mode === "translate" && !translateEnabled && !opts.force) return null;
+  if (mode === "transliterate" && !transliterateEnabled && !opts.force) return null;
 
-  if (inProgressMessageIds.has(messageId)) return null;
-  inProgressMessageIds.add(messageId);
+  var cached = getCached(messageId, targetLanguage, mode);
+  if (cached) {
+    return {
+      translated: mode === "translate" ? cached.result : "",
+      transliterated: mode === "transliterate" ? cached.result : "",
+      detectedLang: cached.detectedLang || "",
+      unavailable: !!cached.unavailable,
+      fromCache: true
+    };
+  }
+
+  if (inProgressKeys.has(cacheKey)) return null;
+  inProgressKeys.add(cacheKey);
 
   try {
-    await _debounceByRaf(messageId, typeof opts.debounceMs === "number" ? opts.debounceMs : 300);
-    if ((settings.translateEnabled !== true) && (settings.transliterateEnabled !== true)) {
-      return null;
-    }
+    await _debounceByRaf(cacheKey, typeof opts.debounceMs === "number" ? opts.debounceMs : 300);
 
     var controller = new AbortController();
-    inFlightControllers.set(messageId, controller);
-    if (settings.panelOpen === false && settings.featureEnabled === false) {
-      controller.abort();
-      return null;
+    inFlightControllers.set(cacheKey, controller);
+    var detectedLang = await detectLanguage(text);
+    var output = null;
+    if (mode === "translate") {
+      output = await translateMessage(text, targetLanguage, {
+        messageId: messageId,
+        contextMessages: opts.contextMessages || []
+      });
+    } else {
+      output = await transliterateMessage(text, targetLanguage, {
+        messageId: messageId,
+        contextMessages: opts.contextMessages || []
+      });
     }
 
-    var detectedLang = _unicodeRangeDetectedLanguage(text);
-    var translated = "";
-    var transliterated = "";
-    var targetLanguage = String(settings.targetLanguage || "English");
+    if (!output) return { translated: "", transliterated: "", detectedLang: detectedLang, unavailable: true };
 
-    if (translateEnabled) {
-      translated = await _translateText(text, detectedLang, targetLanguage, controller.signal);
-    }
-    if (transliterateEnabled) {
-      var translitSource = translateEnabled ? translated : text;
-      transliterated = await _transliterateText(translitSource, controller.signal);
-    }
+    setCached(messageId, targetLanguage, mode, {
+      result: output,
+      detectedLang: detectedLang,
+      unavailable: false,
+      mode: mode
+    });
 
-    var result = {
-      translated: translated || "",
-      transliterated: transliterated || "",
-      detectedLang: detectedLang
+    return {
+      translated: mode === "translate" ? output : "",
+      transliterated: mode === "transliterate" ? output : "",
+      detectedLang: detectedLang,
+      unavailable: false
     };
-    translationCache.set(messageId, result);
-    return result;
   } catch (err) {
-    if (!(err && err.name === "AbortError")) console.warn("[Vaani] translation processing failed:", err);
     return null;
   } finally {
-    inProgressMessageIds.delete(messageId);
-    inFlightControllers.delete(messageId);
+    inProgressKeys.delete(cacheKey);
+    inFlightControllers.delete(cacheKey);
   }
 }
 
-function cancelMessageProcessing(messageId) {
-  var key = String(messageId || "");
+function cancelMessageProcessing(messageKey) {
+  var key = String(messageKey || "");
   if (!key) return;
   var controller = inFlightControllers.get(key);
   if (controller && typeof controller.abort === "function") controller.abort();
   inFlightControllers.delete(key);
-  inProgressMessageIds.delete(key);
+  inProgressKeys.delete(key);
 }
 
-export { processMessage, translationCache, clearCache, cancelMessageProcessing };
+const translationCache = {
+  get: function (compositeKey) {
+    var parts = String(compositeKey || "").split("::");
+    if (parts.length < 3) return null;
+    return getCached(parts[0], parts[1], parts[2]);
+  },
+  keys: function () {
+    return getCacheKeys();
+  }
+};
+
+export { processMessage, translationCache, clearCache, cancelMessageProcessing, getCached, setCached };
+export default cacheStore;
