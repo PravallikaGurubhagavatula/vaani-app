@@ -2772,14 +2772,14 @@ function _renderReplyBanner() {
           .then(function (result) {
             var existing = _translationResultsById.get(resolvedId) || {};
             if (!result) {
-              _translationResultsById.set(resolvedId, Object.assign({}, existing, { unavailable: true }));
+              _translationResultsById.set(resolvedId, Object.assign({}, existing, { unavailable: false }));
               return;
             }
             _translationResultsById.set(resolvedId, {
               translated: result.translated || "",
               transliterated: existing.transliterated || "",
               detectedLang: result.detectedLang || existing.detectedLang || "",
-              unavailable: !!result.unavailable
+              unavailable: false
             });
             _renderMessages(false);
           })
@@ -2865,9 +2865,9 @@ function _renderReplyBanner() {
     if (loadingState && (loadingState.translate || loadingState.transliterate)) {
       html += '<p class="vaani-tl-text">...</p>';
     }
-    if (translatedText) html += '<p class="vaani-tl-text">' + _esc(translatedText) + "</p>";
-    if (unavailable) html += '<p class="vaani-tl-text">Translation unavailable</p>';
     if (transliteratedText) html += '<p class="vaani-tl-romanized">' + _esc(transliteratedText) + "</p>";
+    if (translatedText) html += '<p class="vaani-tl-text">' + _esc(translatedText) + "</p>";
+    if (!translatedText && !transliteratedText && !loadingState) html += '<p class="vaani-tl-text">' + _esc(_messagePreviewText(msg)) + "</p>";
     layer.innerHTML = html;
 
     var detected = translationResult.detectedLang || (cachedTranslate && cachedTranslate.detectedLang) || "";
@@ -2892,7 +2892,7 @@ function _renderReplyBanner() {
         translated: cached.result || "",
         transliterated: (_translationResultsById.get(msgId) || {}).transliterated || "",
         detectedLang: cached.detectedLang || "",
-        unavailable: !!cached.unavailable
+        unavailable: false
       });
       var cachedBubble = bubble && bubble.isConnected ? bubble : document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
       if (cachedBubble) _appendTranslationLayer(cachedBubble, msg);
@@ -2910,7 +2910,7 @@ function _renderReplyBanner() {
           translated: result.translated || prior.translated || "",
           transliterated: prior.transliterated || "",
           detectedLang: result.detectedLang || prior.detectedLang || "",
-          unavailable: !!result.unavailable
+          unavailable: false
         });
         var activeBubble = bubble && bubble.isConnected
           ? bubble
@@ -2962,7 +2962,7 @@ function _renderReplyBanner() {
           translated: cached.result || "",
           transliterated: existing.transliterated || "",
           detectedLang: cached.detectedLang || existing.detectedLang || "",
-          unavailable: !!cached.unavailable
+          unavailable: false
         });
         _appendTranslationLayer(bubble, msg);
         return;
@@ -2973,14 +2973,14 @@ function _renderReplyBanner() {
         .then(function (result) {
           var existing = _translationResultsById.get(msgId) || {};
           if (!result) {
-            _translationResultsById.set(msgId, Object.assign({}, existing, { unavailable: true }));
+            _translationResultsById.set(msgId, Object.assign({}, existing, { unavailable: false }));
             return;
           }
           _translationResultsById.set(msgId, {
             translated: result.translated || "",
             transliterated: existing.transliterated || "",
             detectedLang: result.detectedLang || existing.detectedLang || "",
-            unavailable: !!result.unavailable
+            unavailable: false
           });
         })
         .finally(function () {
