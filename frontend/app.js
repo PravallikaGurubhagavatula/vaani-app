@@ -2133,7 +2133,15 @@ function _onPageActivate(page) {
   if (page === "History")    renderHistory();
   if (page === "Favourites") renderFavourites();
   if (page === "Settings")   renderSettingsPage();
-  if (page === "Chat" && window.vaaniChat) window.vaaniChat.open();
+  if (page === "Chat") _openChatWhenReady();
+}
+
+function _openChatWhenReady() {
+  if (window.vaaniChat && typeof window.vaaniChat.open === "function") {
+    window.vaaniChat.open();
+    return;
+  }
+  console.warn("[Vaani] Chat module not ready yet — waiting for vaani:ready");
 }
 
 async function openChat(uid) {
@@ -2158,6 +2166,11 @@ document.addEventListener("vaani:profile-action", function (event) {
   var uid = String(user.uid || "").trim();
   if (!uid) return;
   openChat(uid);
+});
+
+document.addEventListener("vaani:ready", function () {
+  var isChatPageActive = !!(document.getElementById("pageChat") && document.getElementById("pageChat").classList.contains("active"));
+  if (isChatPageActive) _openChatWhenReady();
 });
 
 window.addEventListener("popstate", (e) => {

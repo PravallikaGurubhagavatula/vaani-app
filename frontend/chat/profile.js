@@ -31,6 +31,11 @@ export function dispatchProfileAction(action, user) {
 (function () {
   "use strict";
 
+  var _resolveProfileReady = null;
+  var _profileReadyPromise = new Promise(function (resolve) {
+    _resolveProfileReady = resolve;
+  });
+
   var COLLECTION = "users";
   var _myProfileState = {
     isEditing: false,
@@ -494,6 +499,8 @@ export function dispatchProfileAction(action, user) {
   }
 
   window.vaaniProfile = {
+    ready: true,
+    readyPromise: _profileReadyPromise,
     get: async function (uid) {
       var db = _getDb();
       if (!db) {
@@ -549,7 +556,7 @@ export function dispatchProfileAction(action, user) {
       return false;
     },
 
-    async function (user, username, city) {
+    createProfile: async function (user, username, city) {
      var auth = _getAuth();
      if (!auth) throw new Error("Auth not available. Please refresh.");
      if (!user || !user.uid) throw new Error("Invalid user. Please sign in again.");
@@ -579,6 +586,13 @@ export function dispatchProfileAction(action, user) {
 
   window.saveProfile = saveProfile;
   window.getUserProfile = getUserProfile;
+  if (typeof _resolveProfileReady === "function") {
+    _resolveProfileReady(window.vaaniProfile);
+    _resolveProfileReady = null;
+  }
+  document.dispatchEvent(new CustomEvent("vaani:profile-ready", {
+    detail: { ready: true }
+  }));
 
   async function _setPresence(uid, isOnline) {
     if (!uid) return;
