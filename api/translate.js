@@ -5,7 +5,7 @@ export default async function handler(req, res) {
     const response = await fetch("https://api.sarvam.ai/translate", {
       method: "POST",
       headers: {
-        "api-subscription-key": process.env.sk_l241zl9n_aA223rcvg5j5bdf1unIS24kN,
+        "api-subscription-key": process.env.SARVAM_API_KEY,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
