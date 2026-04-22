@@ -42,6 +42,22 @@ RULE_BASED_WORDS = {
 
 
 @lru_cache(maxsize=1)
+
+def _indictrans2_transliterate(text: str, lang: str):
+    try:
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+        model_name = "ai4bharat/indictrans2-en-indic-1B"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+        inputs = tokenizer(text, return_tensors="pt", padding=True)
+        outputs = model.generate(**inputs, max_length=256)
+
+        return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    except Exception:
+        return None
+        
 def _load_indic_trans():
     try:
         from indic_transliteration import sanscript
@@ -81,5 +97,14 @@ def transliterate_romanized(text: str, detection: DetectionResult) -> Optional[s
         except Exception:
             pass
 
-    fallback = _rule_based_transliterate(text, target_lang)
-    return fallback if fallback != text else None
+    # 🔥 Try IndicTrans2 first
+indic_result = _indictrans2_transliterate(text, target_lang)
+if indic_result and indic_result != text:
+    return indic_result
+
+# 🔥 Try rule-based
+fallback = _rule_based_transliterate(text, target_lang)
+if fallback != text:
+    return fallback
+
+return None
