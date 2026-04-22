@@ -106,6 +106,7 @@ import { processMessage, translationCache, clearCache, cancelMessageProcessing, 
   };
   var _translationResultsById = new Map();
   var _translationLoadingById = new Map();
+  var _translationBatchToken = 0;
   var _translationContextMenuEl = null;
   var _translationContextDismissors = [];
   var _translationNoticeTimeout = null;
@@ -805,13 +806,23 @@ if (window.VaaniNav) window.VaaniNav.sync();
     _translationConfig = Object.assign({}, _translationConfig, patch || {});
     var languageChanged = previous.targetLanguage !== _translationConfig.targetLanguage;
     var translateTurnedOn = previous.translateEnabled !== true && _translationConfig.translateEnabled === true;
+    var translateTurnedOff = previous.translateEnabled === true && _translationConfig.translateEnabled !== true;
     if (languageChanged) {
       clearCache();
       _translationResultsById.clear();
     }
+    if (translateTurnedOff) {
+      _translationBatchToken += 1;
+      _translationLoadingById.clear();
+    }
     if (translateTurnedOn) _showGlobalTranslationIndicator("auto");
     if (_translationPanelController) _translationPanelController.update();
     _renderMessages();
+    if (_translationConfig.translateEnabled === true && (translateTurnedOn || languageChanged)) {
+      window.requestAnimationFrame(function () {
+        _translateAllRenderedMessages({ force: true, debounceMs: 0 });
+      });
+    }
   }
 
   function _showGlobalTranslationIndicator(sourceLang) {
@@ -2874,7 +2885,7 @@ function _renderReplyBanner() {
       bubble.appendChild(layer);
     }
     var loadingState = _translationLoadingById.get(msgId);
-    var isHidden = _translationConfig.showBelowOriginal === false || _translationConfig.featureEnabled === false || _translationConfig.translateEnabled === false;
+    var isHidden = _translationConfig.featureEnabled === false || _translationConfig.translateEnabled === false;
     layer.classList.toggle("vaani-tl-hidden", isHidden);
 
     var html = "";
@@ -2886,6 +2897,93 @@ function _renderReplyBanner() {
     if (!translatedText && !transliteratedText && !loadingState) html += '<p class="vaani-tl-text">' + _esc(_messagePreviewText(msg)) + "</p>";
     layer.innerHTML = html;
 
+  }
+
+  function _buildTranslationContextMessages(messages, currentMsg) {
+    var currentTs = currentMsg && currentMsg.timestamp && typeof currentMsg.timestamp.toMillis === "function"
+      ? currentMsg.timestamp.toMillis()
+      : Number(currentMsg && currentMsg._sortTs || 0);
+    return (messages || []).filter(function (m) {
+      var candidateTs = m && m.timestamp && typeof m.timestamp.toMillis === "function"
+        ? m.timestamp.toMillis()
+        : Number(m && m._sortTs || 0);
+      return String(m && m.senderId || "") === String(currentMsg && currentMsg.senderId || "") && candidateTs <= currentTs;
+    }).slice(-3, -1).map(function (m) { return _messagePreviewText(m); });
+  }
+
+  async function _translateAllRenderedMessages(options) {
+    if (_translationConfig.translateEnabled !== true || _translationConfig.featureEnabled === false) return;
+    var mergedMessages = _mergeMessagesForRender().filter(function (msg) {
+      return msg && msg.id && String(_messagePreviewText(msg) || "").trim();
+    });
+    if (!mergedMessages.length) return;
+    var opts = options || {};
+    var targetLanguage = String(_translationConfig.targetLanguage || "English");
+    var token = ++_translationBatchToken;
+    var batchConfig = Object.assign({}, _translationConfig, { translateEnabled: true, transliterateEnabled: false });
+    var maxConcurrent = 6;
+    var cursor = 0;
+
+    async function worker() {
+      while (cursor < mergedMessages.length) {
+        var index = cursor++;
+        var msg = mergedMessages[index];
+        var msgId = String(msg.id || "");
+        var msgText = _messagePreviewText(msg);
+        if (!msgId || !String(msgText || "").trim()) continue;
+        if (_translationBatchToken !== token || _translationConfig.translateEnabled !== true) return;
+
+        var cached = getCached(msgId, targetLanguage, "translate");
+        if (cached) {
+          var priorCached = _translationResultsById.get(msgId) || {};
+          _translationResultsById.set(msgId, {
+            translated: cached.result || "",
+            transliterated: priorCached.transliterated || "",
+            detectedLang: cached.detectedLang || priorCached.detectedLang || "",
+            unavailable: false
+          });
+          var cachedBubble = document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
+          if (cachedBubble) _appendTranslationLayer(cachedBubble, msg);
+          continue;
+        }
+
+        _translationLoadingById.set(msgId, { translate: true, transliterate: false });
+        var loadingBubble = document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
+        if (loadingBubble) _appendTranslationLayer(loadingBubble, msg);
+
+        try {
+          var result = await processMessage(
+            { id: msgId, text: msgText },
+            batchConfig,
+            {
+              mode: "translate",
+              force: !!opts.force,
+              debounceMs: typeof opts.debounceMs === "number" ? opts.debounceMs : 0,
+              contextMessages: _buildTranslationContextMessages(mergedMessages, msg)
+            }
+          );
+          if (_translationBatchToken !== token || _translationConfig.translateEnabled !== true) return;
+          var prior = _translationResultsById.get(msgId) || {};
+          if (result) {
+            _translationResultsById.set(msgId, {
+              translated: result.translated || prior.translated || "",
+              transliterated: prior.transliterated || "",
+              detectedLang: result.detectedLang || prior.detectedLang || "",
+              unavailable: false
+            });
+          }
+        } finally {
+          _translationLoadingById.set(msgId, { translate: false, transliterate: false });
+          var bubble = document.querySelector('#messagesContainer .vc-msg-bubble[data-message-id="' + msgId + '"]');
+          if (bubble) _appendTranslationLayer(bubble, msg);
+        }
+      }
+    }
+
+    var workers = [];
+    var count = Math.min(maxConcurrent, mergedMessages.length);
+    for (var i = 0; i < count; i++) workers.push(worker());
+    await Promise.all(workers);
   }
 
   function _processAndAppendMessageTranslation(msg, bubble, contextMessages) {
@@ -3213,11 +3311,7 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
       _attachTranslationContextMenuHandlers(bubble, msg);
 
       row.appendChild(bubble); container.appendChild(row);
-      var currentTs = msg && msg.timestamp && typeof msg.timestamp.toMillis === "function" ? msg.timestamp.toMillis() : Number(msg && msg._sortTs || 0);
-      var contextMessages = messages.filter(function (m) {
-        var candidateTs = m && m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : Number(m && m._sortTs || 0);
-        return String(m && m.senderId || "") === String(msg && msg.senderId || "") && candidateTs <= currentTs;
-      }).slice(-3, -1).map(function (m) { return _messagePreviewText(m); });
+      var contextMessages = _buildTranslationContextMessages(messages, msg);
       window.requestAnimationFrame(function () { _processAndAppendMessageTranslation(msg, bubble, contextMessages); });
     });
     if (stickToBottom) {

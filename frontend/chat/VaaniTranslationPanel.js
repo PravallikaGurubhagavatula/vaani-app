@@ -1,11 +1,12 @@
 const SUPPORTED_LANGUAGES = Array.from(new Set([
-  "Angika", "Assamese", "Awadhi", "Bagri", "Bengali", "Bhili", "Bhojpuri", "Bodo", "Braj", "Bundeli",
-  "Chakma", "Chhattisgarhi", "English", "Garhwali", "Garo", "Gondi", "Gujarati", "Halbi", "Haryanvi",
-  "Hindi", "Ho", "Jaintia", "Kannada", "Karbi", "Khasi", "Kodava", "Kokborok", "Kolami", "Konkani",
-  "Kui", "Kumaoni", "Kurukh", "Kutchi", "Lai", "Lambadi", "Lepcha", "Lotha", "Magahi", "Maithili",
-  "Malayalam", "Malvi", "Marathi", "Marwari", "Meitei", "Mewari", "Mishing", "Mizo", "Monpa", "Mundari",
-  "Nepali", "Nimadi", "Nyishi", "Odia", "Pahari", "Punjabi", "Rajasthani", "Santali", "Savara", "Sema",
-  "Tamil", "Tangkhul", "Telugu", "Thadou", "Tulu", "Urdu"
+  "Adi", "Angami", "Angika", "Ao", "Apatani", "Assamese", "Awadhi", "Bagri", "Balti", "Bengali", "Bhili",
+  "Bhojpuri", "Bhutia", "Bodo", "Braj", "Bundeli", "Chakma", "Chhattisgarhi", "Dogri", "French", "Garo",
+  "Garhwali", "Gondi", "Gujarati", "Halbi", "Haryanvi", "Hindi", "Ho", "Jaintia", "Kangri", "Kannada",
+  "Karbi", "Kashmiri", "Khasi", "Kinnauri", "Kodava", "Kokborok", "Konkani", "Kui", "Kumaoni", "Kurukh",
+  "Kutchi", "Ladakhi", "Lai", "Lambadi", "Lepcha", "Lotha", "Magahi", "Maithili", "Malayalam", "Malvi",
+  "Manipuri", "Marathi", "Marwari", "Meitei", "Mewari", "Mishing", "Mishmi", "Mizo", "Monpa", "Mundari",
+  "Nepali", "Nicobarese", "Nimadi", "Nyishi", "Odia", "Pahari", "Punjabi", "Savara", "Sema", "Santali",
+  "Tangkhul", "Tamil", "Telugu", "Thadou", "Tulu", "Urdu"
 ])).sort(function (a, b) { return a.localeCompare(b); });
 
 function createVaaniTranslationPanel(options) {
