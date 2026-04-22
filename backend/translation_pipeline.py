@@ -41,6 +41,16 @@ class _LRUCache:
 
     timestamp, value = hit
 
+    # TTL = 10 minutes
+    if time.time() - timestamp > 600:
+        self._store.pop(key, None)
+        return None
+
+    self._store.move_to_end(key)
+    return value
+
+    timestamp, value = hit
+
     # 🔥 TTL = 10 minutes (600 seconds)
     if time.time() - timestamp > 600:
         self._store.pop(key, None)
