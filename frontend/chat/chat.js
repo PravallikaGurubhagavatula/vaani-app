@@ -15,6 +15,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { createVaaniTranslationPanel } from "./VaaniTranslationPanel.js";
 import { processMessage, translationCache, clearCache, cancelMessageProcessing, getCached, setCached } from "./useTranslation.js";
+import { translatePipeline } from "../../backend/translation_engine.js";
+
+/* Owns chat message flow/rendering + translation wiring for this screen only.
+   Does not implement provider calls directly (delegates to translation_engine). */
 
 /* ================================================================
    Vaani — chat.js  v4.2
@@ -801,6 +805,34 @@ if (window.VaaniNav) window.VaaniNav.sync();
 
   function _setMessages(nextMessages)  { _messages      = Array.isArray(nextMessages) ? nextMessages : []; }
   function _setInputMessage(nextValue) { _inputMessage  = String(nextValue || ""); }
+
+  async function processMessages(messages, translateEnabled, targetLang) {
+    var safeMessages = Array.isArray(messages) ? messages : [];
+    if (translateEnabled !== true) return safeMessages;
+    return Promise.all(safeMessages.map(async function (msg) {
+      var sourceText = _messagePreviewText(msg);
+      var translatedText = await translatePipeline(sourceText, targetLang);
+      return Object.assign({}, msg, { translatedText: translatedText });
+    }));
+  }
+
+  async function onNewMessage(msg) {
+    if (!msg) return msg;
+    if (_translationConfig.translateEnabled !== true) return msg;
+    var translatedText = await translatePipeline(_messagePreviewText(msg), _translationConfig.targetLanguage);
+    return Object.assign({}, msg, { translatedText: translatedText });
+  }
+
+  function _refreshTranslationsForCurrentMessages() {
+    var currentBatch = ++_translationBatchToken;
+    processMessages(_messages, _translationConfig.translateEnabled, _translationConfig.targetLanguage)
+      .then(function (nextMessages) {
+        if (currentBatch !== _translationBatchToken) return;
+        _setServerMessages(nextMessages);
+        _renderMessages();
+      })
+      .catch(function () {});
+  }
   function _setTranslationConfig(patch) {
     var previous = Object.assign({}, _translationConfig);
     _translationConfig = Object.assign({}, _translationConfig, patch || {});
@@ -817,12 +849,7 @@ if (window.VaaniNav) window.VaaniNav.sync();
     }
     if (translateTurnedOn) _showGlobalTranslationIndicator("auto");
     if (_translationPanelController) _translationPanelController.update();
-    _renderMessages();
-    if (_translationConfig.translateEnabled === true && (translateTurnedOn || languageChanged)) {
-      window.requestAnimationFrame(function () {
-        _translateAllRenderedMessages({ force: true, debounceMs: 0 });
-      });
-    }
+    _refreshTranslationsForCurrentMessages();
   }
 
   function _showGlobalTranslationIndicator(sourceLang) {
@@ -1024,7 +1051,7 @@ if (window.VaaniNav) window.VaaniNav.sync();
 
     _unsubscribeConnections = db.collection(CONNECTIONS_COLLECTION)
       .where("users", "array-contains", currentUid)
-      .onSnapshot(function (snapshot) {
+      .onSnapshot(async function (snapshot) {
         var changed = false;
         snapshot.docChanges().forEach(function (change) {
           var doc = change.doc;
@@ -1116,7 +1143,7 @@ function _saveChatListCache(uid, data) {
     .where("participants", "array-contains", currentUid)
     .orderBy("updatedAt", "desc")
     .limit(20)
-    .onSnapshot(function (snapshot) {
+    .onSnapshot(async function (snapshot) {
       console.log("[Vaani] chat list snapshot:", snapshot.docs.length, "doc(s).");
 
       var byOtherUid = Object.create(null);
@@ -3225,8 +3252,15 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
         msgText.className = "vc-msg-text";
         msgText.textContent = _messagePreviewText(msg);
         bubble.appendChild(msgText);
+
+        var translatedText = String(msg.translatedText || "").trim();
+        if (_translationConfig.translateEnabled === true && translatedText) {
+          var translatedEl = document.createElement("div");
+          translatedEl.className = "vc-msg-text translated";
+          translatedEl.textContent = translatedText;
+          bubble.appendChild(translatedEl);
+        }
       }
-      _appendTranslationLayer(bubble, msg);
 
       if (msg.pending || msg.failed) {
         var stateRow = document.createElement("div");
@@ -3312,7 +3346,7 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
 
       row.appendChild(bubble); container.appendChild(row);
       var contextMessages = _buildTranslationContextMessages(messages, msg);
-      window.requestAnimationFrame(function () { _processAndAppendMessageTranslation(msg, bubble, contextMessages); });
+      void contextMessages;
     });
     if (stickToBottom) {
     _messagesContainerRef.scrollTop = _messagesContainerRef.scrollHeight;
@@ -3344,7 +3378,7 @@ if (_hasVoiceMessages) _destroyActiveVoicePlayback();
 
     _unsubscribeMessages = db.collection(CHATS_COLLECTION).doc(chatId).collection(MESSAGES_COLLECTION)
       .orderBy("timestamp", "asc")
-      .onSnapshot(function (snapshot) {
+      .onSnapshot(async function (snapshot) {
         if (_activeMessageListenerKey !== listenerKey) {
           console.warn("[Vaani] listenToMessages: stale snapshot discarded for", chatId); return;
         }
@@ -3362,8 +3396,9 @@ if (!firstFire && nextSig === _activeMessagesSignature && !hasPendingOptimistic)
 }
         firstFire = false; _activeMessagesSignature = nextSig;
         _cleanupOptimisticMessages(messages);
-        _setServerMessages(messages); _renderMessages();
-        console.log("[Vaani] listenToMessages: rendered", messages.length, "msg(s) for chatId:", chatId);
+        var hydratedMessages = await Promise.all(messages.map(function (msg) { return onNewMessage(msg); }));
+        _setServerMessages(hydratedMessages); _renderMessages();
+        console.log("[Vaani] listenToMessages: rendered", hydratedMessages.length, "msg(s) for chatId:", chatId);
       }, function (err) {
         console.error("[Vaani] listenToMessages: error for chatId:", chatId, err);
         if (_activeMessageListenerKey === listenerKey) {
