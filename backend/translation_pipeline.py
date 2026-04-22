@@ -35,11 +35,19 @@ class _LRUCache:
         self._store: OrderedDict[str, tuple[float, Dict]] = OrderedDict()
 
     def get(self, key: str):
-        hit = self._store.get(key)
-        if not hit:
-            return None
-        self._store.move_to_end(key)
-        return hit[1]
+    hit = self._store.get(key)
+    if not hit:
+        return None
+
+    timestamp, value = hit
+
+    # 🔥 TTL = 10 minutes (600 seconds)
+    if time.time() - timestamp > 600:
+        self._store.pop(key, None)
+        return None
+
+    self._store.move_to_end(key)
+    return value
 
     def set(self, key: str, value: Dict):
         self._store[key] = (time.time(), value)
