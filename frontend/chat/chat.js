@@ -108,6 +108,7 @@ import { processMessage, translationCache, clearCache, cancelMessageProcessing, 
   var _translationLoadingById = new Map();
   var _translationContextMenuEl = null;
   var _translationContextDismissors = [];
+  var _translationNoticeTimeout = null;
   var VOICE_UPLOAD_TIMEOUT_MS = 10000;
   var VOICE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -803,12 +804,27 @@ if (window.VaaniNav) window.VaaniNav.sync();
     var previous = Object.assign({}, _translationConfig);
     _translationConfig = Object.assign({}, _translationConfig, patch || {});
     var languageChanged = previous.targetLanguage !== _translationConfig.targetLanguage;
+    var translateTurnedOn = previous.translateEnabled !== true && _translationConfig.translateEnabled === true;
     if (languageChanged) {
       clearCache();
       _translationResultsById.clear();
     }
+    if (translateTurnedOn) _showGlobalTranslationIndicator("auto");
     if (_translationPanelController) _translationPanelController.update();
     _renderMessages();
+  }
+
+  function _showGlobalTranslationIndicator(sourceLang) {
+    var notice = document.getElementById("vaaniTranslationNotice");
+    if (!notice) return;
+    var source = String(sourceLang || "auto").toLowerCase();
+    notice.textContent = "(translated from " + source + ")";
+    notice.classList.add("is-visible");
+    if (_translationNoticeTimeout) clearTimeout(_translationNoticeTimeout);
+    _translationNoticeTimeout = setTimeout(function () {
+      notice.classList.remove("is-visible");
+      _translationNoticeTimeout = null;
+    }, 1000);
   }
 
   function openTranslationPanel() {
@@ -2870,16 +2886,6 @@ function _renderReplyBanner() {
     if (!translatedText && !transliteratedText && !loadingState) html += '<p class="vaani-tl-text">' + _esc(_messagePreviewText(msg)) + "</p>";
     layer.innerHTML = html;
 
-    var detected = translationResult.detectedLang || (cachedTranslate && cachedTranslate.detectedLang) || "";
-    if (detected) {
-      var indicator = document.createElement("span");
-      indicator.className = "vaani-tl-indicator";
-      indicator.textContent = "Translated from " + detected;
-      indicator.addEventListener("animationend", function () {
-        if (indicator.parentNode) indicator.parentNode.removeChild(indicator);
-      }, { once: true });
-      layer.appendChild(indicator);
-    }
   }
 
   function _processAndAppendMessageTranslation(msg, bubble, contextMessages) {
@@ -3341,6 +3347,7 @@ if (!firstFire && nextSig === _activeMessagesSignature && !hasPendingOptimistic)
               '<div class="vaani-tl-panel-host" id="vaaniTranslationPanelHost"></div>' +
             "</div></div>" +
           '<div class="vc-chat-messages chat-messages" id="messagesContainer"></div>' +
+          '<div id="vaaniTranslationNotice" class="vaani-tl-global-notice" aria-live="polite" aria-atomic="true"></div>' +
           '<div class="vc-chat-input-bar chat-input">' +
             '<div id="vcReplyBanner" class="vc-reply-banner" style="display:none;"></div>' +
             '<div class="vc-chat-input-row">' +

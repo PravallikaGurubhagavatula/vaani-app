@@ -1330,6 +1330,29 @@ body.vm-menu-open {
   margin-bottom: var(--vc-keyboard-offset);
 }
 
+#vaaniChat .vaani-tl-global-notice {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--vc-chat-input-safe-height) + 8px + var(--vc-keyboard-offset, 0px));
+  transform: translateX(-50%);
+  background: rgba(20, 20, 35, 0.92);
+  border: 1px solid rgba(127, 119, 221, 0.35);
+  color: rgba(236, 236, 255, 0.95);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 7px 12px;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  z-index: 12;
+  transition: opacity 160ms ease;
+}
+
+#vaaniChat .vaani-tl-global-notice.is-visible {
+  opacity: 1;
+}
+
 /* Compatibility aliases for production chat layout contract */
 #vaaniChat .screen,
 #vaaniChat .chat-wrapper {
@@ -3363,20 +3386,6 @@ body.vm-menu-open {
 
 #vaaniChat .vc-msg-other .vaani-tl-romanized {
   color: #8B83D9;
-}
-
-#vaaniChat .vaani-tl-indicator {
-  font-size: 10.5px;
-  color: rgba(127,119,221,0.6);
-  display: block;
-  margin-top: 4px;
-  animation: vaani-tl-fade 1500ms ease forwards;
-}
-
-@keyframes vaani-tl-fade {
-  0% { opacity: 1; }
-  70% { opacity: 1; }
-  100% { opacity: 0; }
 }
 
 #vaaniChat .vaani-tl-context-menu {
