@@ -92,11 +92,24 @@ def translate_pipeline(text: str, target_language: str, options: Optional[Dict] 
         if transliterated:
             text_for_translation = transliterated
 
+    # 🔥 Confidence-based routing
+if detection.confidence < 0.65:
+    source_language = "auto"
+
+translated, engine = route_translation(
+    text=text_for_translation,
+    source_language=source_language,
+    target_language=target,
+    confidence=detection.confidence,
+)
+
+# 🔥 Fallback if translation weak
+if not translated or translated.strip() == text_for_translation:
     translated, engine = route_translation(
-        text=text_for_translation,
-        source_language=source_language,
+        text=original,
+        source_language="auto",
         target_language=target,
-        confidence=detection.confidence,
+        confidence=0.5,
     )
 
     result = PipelineResult(
