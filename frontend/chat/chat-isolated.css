@@ -3143,6 +3143,12 @@ body.vm-menu-open {
   word-break: break-word;
 }
 
+#vaaniChat .vc-msg-text.translated {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(167, 139, 250, 0.95);
+}
+
 #vaaniChat .vc-msg-state {
   margin-top: 6px;
   font-size: 11px;

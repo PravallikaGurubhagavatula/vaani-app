@@ -1,4 +1,6 @@
-import { translateMessage, transliterateMessage, detectLanguage } from "../translationService.js";
+/* Owns UI-facing translation task coordination for chat helpers only.
+   Does not call translation providers directly (delegates to translation_engine). */
+import { translatePipeline } from "../../backend/translation_engine.js";
 import cacheStore, { getCached, setCached, clearCached, getCacheKeys } from "../translationCache.js";
 
 const inProgressKeys = new Set();
@@ -8,9 +10,6 @@ const debounceHandles = new Map();
 function clearCache() {
   clearCached();
   inProgressKeys.clear();
-  inFlightControllers.forEach(function (controller) {
-    if (controller && typeof controller.abort === "function") controller.abort();
-  });
   inFlightControllers.clear();
   debounceHandles.forEach(function (handle) {
     if (handle && typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle.rafId);
@@ -56,9 +55,9 @@ async function processMessage(message, config, options) {
   var cached = getCached(messageId, targetLanguage, mode);
   if (cached) {
     return {
-      translated: cached.translated || (mode === "translate" ? cached.result : ""),
-      transliterated: cached.transliterated || (mode === "transliterate" ? cached.result : ""),
-      detectedLang: cached.detectedLang || "",
+      translated: cached.translated || (mode === "translate" ? cached.result : text),
+      transliterated: cached.transliterated || "",
+      detectedLang: cached.detectedLang || "auto",
       confidence: Number(cached.confidence || 0),
       unavailable: false,
       fromCache: true
@@ -70,35 +69,24 @@ async function processMessage(message, config, options) {
 
   try {
     await _debounceByRaf(cacheKey, typeof opts.debounceMs === "number" ? opts.debounceMs : 220);
-
-    var detectedLang = await detectLanguage(text);
-    var result = mode === "translate"
-      ? await translateMessage(text, targetLanguage, { messageId: messageId, contextMessages: opts.contextMessages || [] })
-      : await transliterateMessage(text, targetLanguage, { messageId: messageId, contextMessages: opts.contextMessages || [] });
-
-    if (!result) {
-      return { translated: text, transliterated: "", detectedLang: detectedLang, confidence: 0, unavailable: false };
-    }
-
-    const payload = {
-      result: mode === "translate" ? (result.translated || text) : (result.transliterated || ""),
-      translated: result.translated || text,
-      transliterated: result.transliterated || "",
-      detectedLang: result.sourceLanguage || detectedLang,
-      confidence: Number(result.confidence || 0),
+    var translated = await translatePipeline(text, targetLanguage);
+    var payload = {
+      result: translated || text,
+      translated: translated || text,
+      transliterated: "",
+      detectedLang: "auto",
+      confidence: 0,
       mode: mode
     };
-
     setCached(messageId, targetLanguage, mode, payload);
-
     return {
-      translated: result.translated || text,
-      transliterated: result.transliterated || "",
-      detectedLang: result.sourceLanguage || detectedLang,
-      confidence: Number(result.confidence || 0),
+      translated: translated || text,
+      transliterated: "",
+      detectedLang: "auto",
+      confidence: 0,
       unavailable: false
     };
-  } catch (err) {
+  } catch (_err) {
     return { translated: text, transliterated: "", detectedLang: "auto", confidence: 0, unavailable: false };
   } finally {
     inProgressKeys.delete(cacheKey);
@@ -109,8 +97,6 @@ async function processMessage(message, config, options) {
 function cancelMessageProcessing(messageKey) {
   var key = String(messageKey || "");
   if (!key) return;
-  var controller = inFlightControllers.get(key);
-  if (controller && typeof controller.abort === "function") controller.abort();
   inFlightControllers.delete(key);
   inProgressKeys.delete(key);
 }
