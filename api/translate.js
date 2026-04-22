@@ -14,8 +14,8 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         input: text,
-        source_language: source,
-        target_language: target
+        source_language_code: source || "en",
+        target_language_code: target
       })
     });
 
