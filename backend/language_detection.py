@@ -103,9 +103,24 @@ def detect_language(text: str) -> DetectionResult:
     conf = ft_conf if ft_lang else 0.55
 
     indian_langs = {
-        "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "mai", "ml", "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur", "bho", "mni", "ks"
-    }
+    "as","bn","brx","doi","gu","hi","kn","kok","mai","ml","mr","ne","or","pa",
+    "sa","sat","sd","ta","te","ur","bho","mni","ks","raj","gom","tcy","lus",
+    "kha","gar","awa","mag","mai","hne","bpy","ang"
+}
     is_romanized = ascii_only and lang in indian_langs and lang != "en"
     is_mixed = ascii_only and bool(re.search(r"\b(and|but|bro|please|thanks|hey)\b", content.lower())) and is_romanized
 
-    return DetectionResult(lang, conf, is_romanized, is_mixed)
+    # 🔥 Boost confidence if heuristic + fasttext agree
+if hint_lang and ft_lang and hint_lang == ft_lang:
+    conf = max(conf, 0.85)
+
+# 🔥 If only heuristic
+if hint_lang and not ft_lang:
+    lang = hint_lang
+    conf = 0.72
+
+# 🔥 Final fallback
+if conf < 0.5:
+    lang = "en"
+
+return DetectionResult(lang, conf, is_romanized, is_mixed)
